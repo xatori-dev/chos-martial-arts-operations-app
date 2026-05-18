@@ -249,7 +249,7 @@ describe("post-login operations app", () => {
     expect(within(profileOverview).getByText("Head Coach & Manager")).toBeInTheDocument();
     expect(within(profileOverview).getByText("Team: Summer Champions")).toBeInTheDocument();
     expect(within(profileOverview).getByText("Member Since: May 2026")).toBeInTheDocument();
-    expect(within(profileOverview).getByText("Team Size: 2 Members")).toBeInTheDocument();
+    expect(within(profileOverview).getByText("Team Size: 9 Members")).toBeInTheDocument();
     expect(within(weeklySchedule).getByRole("heading", { name: "May 17 - 23, 2026" })).toBeInTheDocument();
     expect(within(weeklySchedule).getByRole("button", { name: "Select Monday, May 18, 2026" })).toHaveAttribute("aria-pressed", "true");
     expect(within(weeklySchedule).getByText("Monday, May 18, 2026")).toBeInTheDocument();
@@ -532,9 +532,12 @@ describe("post-login operations app", () => {
     expect(screen.queryByText("Use the icons to open messages, students, classes, scheduling, events, merchandise, and future reports.")).not.toBeInTheDocument();
 
     const launcher = screen.getByLabelText("Manager app launcher");
+    expect(launcher).toHaveClass("manager-launcher-sidebar");
+    expect(launcher).toHaveAttribute("data-orientation", "vertical");
+    expect(launcher.parentElement).toHaveClass("manager-launcher-body");
     const launcherLinks = within(launcher).getAllByRole("link");
 
-    expect(launcherLinks.map((link) => link.textContent?.trim())).toEqual([
+    const approvedIconOrder = [
       "Dashboard",
       "Messages",
       "Students",
@@ -543,19 +546,25 @@ describe("post-login operations app", () => {
       "Scheduling",
       "Merchandise",
       "Reports"
-    ]);
+    ];
+    expect(launcherLinks.map((link) => link.textContent?.trim())).toEqual(approvedIconOrder);
+    expect(launcherLinks.map((link) => link.getAttribute("title"))).toEqual(approvedIconOrder);
     expect(launcherLinks.map((link) => link.getAttribute("href"))).toEqual([
-      "/dashboard",
-      "/messages",
-      "/students",
-      "/classes",
-      "/events",
-      "/schedule",
-      "/merchandise",
-      "/reports"
+      "/manager?tool=dashboard",
+      "/manager?tool=messages",
+      "/manager?tool=students",
+      "/manager?tool=classes",
+      "/manager?tool=events",
+      "/manager?tool=scheduling",
+      "/manager?tool=merchandise",
+      "/manager?tool=reports"
     ]);
+    expect(within(launcher).getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
     const launcherImages = launcher.querySelectorAll("img.manager-launcher-image");
+    const launcherLabels = launcher.querySelectorAll(".manager-launcher-label");
     expect(launcherImages).toHaveLength(8);
+    expect(launcherLabels).toHaveLength(8);
+    expect(Array.from(launcherLabels).map((label) => label.textContent?.trim())).toEqual(approvedIconOrder);
     launcherImages.forEach((image) => {
       expect(image).toHaveAttribute("src", expect.stringContaining(".webp"));
       expect(image).not.toHaveAttribute("width");
@@ -567,12 +576,47 @@ describe("post-login operations app", () => {
     const studentsIcon = within(launcher).getByRole("link", { name: "Students" }).querySelector("img.manager-students-emblem");
     expect(studentsIcon).not.toBeNull();
     expect(studentsIcon).toHaveAttribute("src", expect.stringContaining("Students.webp"));
-    expect(screen.queryByLabelText("Live studio calendar")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Dashboard workspace")).toBeInTheDocument();
+    expect(screen.getByLabelText("Live studio calendar")).toBeInTheDocument();
+    fireEvent.click(within(launcher).getByRole("link", { name: "Students" }));
+    expect(screen.getByLabelText("Students workspace")).toBeInTheDocument();
+    expect(within(launcher).getByRole("link", { name: "Students" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByText("20 students listed by belt. Select a name to open student info.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Awakening Dojo" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Manager navigation")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Manager quick actions")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Student Management & Communication" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Quick Stats" })).not.toBeInTheDocument();
+  });
+
+  it("collapses and expands the manager launcher sidebar from the glowing rail", () => {
+    renderLoggedInApp("/manager");
+
+    const launcherBody = screen.getByLabelText("Manager launcher workspace frame");
+    const launcher = screen.getByLabelText("Manager app launcher");
+    const collapseRail = screen.getByRole("button", { name: "Collapse manager app launcher" });
+
+    expect(collapseRail).toHaveAttribute("aria-controls", "manager-launcher-sidebar");
+    expect(collapseRail).toHaveAttribute("aria-expanded", "true");
+    expect(collapseRail.querySelector(".manager-launcher-rail-toggle-bar")).toBeInTheDocument();
+    expect(launcherBody).not.toHaveClass("is-sidebar-collapsed");
+    expect(launcher).not.toHaveAttribute("hidden");
+    expect(within(launcher).getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
+
+    fireEvent.click(collapseRail);
+
+    const expandRail = screen.getByRole("button", { name: "Expand manager app launcher" });
+    expect(expandRail).toHaveAttribute("aria-expanded", "false");
+    expect(launcherBody).toHaveClass("is-sidebar-collapsed");
+    expect(launcher).toHaveAttribute("hidden");
+    expect(screen.getByLabelText("Dashboard workspace")).toBeInTheDocument();
+
+    fireEvent.click(expandRail);
+
+    expect(screen.getByRole("button", { name: "Collapse manager app launcher" })).toHaveAttribute("aria-expanded", "true");
+    expect(launcherBody).not.toHaveClass("is-sidebar-collapsed");
+    expect(launcher).not.toHaveAttribute("hidden");
+    expect(within(launcher).getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
   });
 
   it("keeps the Manager's Page Messages route focused on message tools", () => {
@@ -704,7 +748,8 @@ describe("post-login operations app", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Student" }));
 
     expect(screen.getByText("Ava Cho")).toBeInTheDocument();
-    expect(screen.getAllByText("White").length).toBeGreaterThan(0);
+    const whiteGroup = within(screen.getByLabelText("Student directory by belt")).getByRole("group", { name: "White belt students" });
+    expect(within(whiteGroup).getByRole("button", { name: "Open Ava Cho student info" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Create New Student" })).not.toBeInTheDocument();
     expect(screen.getByText(/Welcome Ava to Cho's/i)).toBeInTheDocument();
     expect(screen.getByText(/facebook.com\/chosmenomoneefalls/i)).toBeInTheDocument();
@@ -731,7 +776,7 @@ describe("post-login operations app", () => {
     }
   });
 
-  it("shows a sortable student directory instead of opening the student editor by default", () => {
+  it("shows compact belt blocks and opens student info from a name", () => {
     renderLoggedInApp("/students");
 
     expect(screen.getByRole("link", { name: "Back to Manager Page" })).toHaveAttribute("href", "/manager");
@@ -741,48 +786,161 @@ describe("post-login operations app", () => {
     expect(screen.queryByLabelText("Operations navigation")).not.toBeInTheDocument();
     const studentsHeader = screen.getByRole("heading", { name: "Students" }).closest(".operations-page-head");
     expect(studentsHeader).not.toBeNull();
-    expect(within(studentsHeader as HTMLElement).getByRole("button", { name: "Create New Student" })).toHaveClass("student-header-add");
+    expect(studentsHeader?.closest(".operations-page")).toHaveClass("operations-page--students");
+    const headerCreateButton = within(studentsHeader as HTMLElement).getByRole("button", { name: "Create New Student" });
+    expect(headerCreateButton).toHaveClass("student-header-add");
+    expect(headerCreateButton.closest(".operations-page-action")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Student Directory" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create New Student" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Create New Student" })).not.toBeInTheDocument();
 
-    const table = screen.getByRole("table", { name: "Student directory" });
-    expect(table.closest(".student-directory-panel")).toHaveClass("student-directory-panel--compact");
-    ["Name", "Age", "Gender", "Belt", "Tenure", "Classes"].forEach((label) => {
-      expect(within(table).getByRole("button", { name: label })).toBeInTheDocument();
-    });
-    expect(within(table).getAllByRole("separator")).toHaveLength(5);
-    expect(within(table).getByText("mason@example.com")).toHaveClass("student-directory-email");
-    expect(within(table).getByRole("separator", { name: "Resize Name column" })).toHaveClass("student-column-resizer--polished");
-    const nameColumn = within(table).getByTestId("student-column-name");
-    expect(nameColumn).toHaveStyle({ width: "260px" });
-    fireEvent.mouseDown(within(table).getByRole("separator", { name: "Resize Name column" }), { clientX: 100 });
-    fireEvent.mouseMove(window, { clientX: 160 });
-    fireEvent.mouseUp(window);
-    expect(nameColumn).toHaveStyle({ width: "320px" });
+    const directory = screen.getByLabelText("Student directory by belt");
+    expect(directory.closest(".student-directory-panel")).toHaveClass("student-directory-panel--compact");
+    expect(screen.queryByRole("table", { name: "Student directory" })).not.toBeInTheDocument();
+    expect(screen.getByText("20 students listed by belt. Select a name to open student info.")).toBeInTheDocument();
+    expect(within(directory).getAllByTestId("student-name-list-button")).toHaveLength(20);
+    expect(within(directory).queryByText("talia.brooks@example.com")).not.toBeInTheDocument();
+    expect(within(directory).queryByRole("img", { name: "Talia Brooks profile photo" })).not.toBeInTheDocument();
 
-    const names = () => within(table).getAllByTestId("student-table-name").map((item) => item.textContent);
-    expect(names()).toEqual(["Mason Lee", "Mina Cho"]);
+    const names = () =>
+      within(directory)
+        .getAllByTestId("student-name-list-button")
+        .map((item) => item.querySelector(".student-name-list-name")?.textContent);
+    expect(names()).toEqual([
+      "Marcus Reid",
+      "Talia Brooks",
+      "Evan Ramirez",
+      "Priya Shah",
+      "Elena Torres",
+      "Gia Patel",
+      "Jacob Ellis",
+      "Noah Bennett",
+      "Iris Morgan",
+      "Natalie Brooks",
+      "Caleb Nguyen",
+      "Victor Lane",
+      "Hannah Kim",
+      "Lila Thompson",
+      "Derek Miles",
+      "Owen Carter",
+      "Maya Robinson",
+      "Serena Park",
+      "Andre Coleman",
+      "Sophie Jensen"
+    ]);
 
-    fireEvent.click(within(table).getByRole("button", { name: "Classes" }));
-    expect(names()).toEqual(["Mason Lee", "Mina Cho"]);
+    fireEvent.click(within(directory).getByRole("button", { name: "Open Maya Robinson student info" }));
 
-    fireEvent.click(within(table).getByRole("button", { name: "Classes" }));
-    expect(names()).toEqual(["Mina Cho", "Mason Lee"]);
-
-    fireEvent.click(within(table).getByRole("button", { name: /Edit Mina Cho/i }));
-
-    expect(screen.getByRole("dialog", { name: "Edit Mina Cho" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Edit Mina Cho" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Maya Robinson Student Info" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Maya Robinson Student Info" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete Student" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Full Name")).toHaveValue("Mina Cho");
-    expect(screen.getByLabelText("Belt rank")).toHaveValue("Green");
+    expect(screen.getByLabelText("Full Name")).toHaveValue("Maya Robinson");
+    expect(screen.getByLabelText("Belt rank")).toHaveValue("Dark Brown");
+    expect(screen.getByRole("option", { name: "Dark Brown" })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Belt rank"), { target: { value: "Blue" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Student Changes" }));
 
-    expect(screen.getByText("Blue")).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Edit Mina Cho" })).not.toBeInTheDocument();
+    const blueGroup = within(directory).getByRole("group", { name: "Blue belt students" });
+    expect(within(blueGroup).getByRole("button", { name: "Open Maya Robinson student info" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Maya Robinson Student Info" })).not.toBeInTheDocument();
+  });
+
+  it("groups the student directory into belt category blocks", () => {
+    renderLoggedInApp("/students");
+
+    const directory = screen.getByLabelText("Student directory by belt");
+    const expectedGroups: Array<[string, Array<{ age: string; gender: string; name: string }>]> = [
+      [
+        "White",
+        [
+          { name: "Marcus Reid", gender: "Male", age: "22" },
+          { name: "Talia Brooks", gender: "Female", age: "6" }
+        ]
+      ],
+      [
+        "Yellow",
+        [
+          { name: "Evan Ramirez", gender: "Male", age: "7" },
+          { name: "Priya Shah", gender: "Female", age: "25" }
+        ]
+      ],
+      [
+        "Orange",
+        [
+          { name: "Elena Torres", gender: "Female", age: "28" },
+          { name: "Gia Patel", gender: "Female", age: "8" }
+        ]
+      ],
+      [
+        "Green",
+        [
+          { name: "Jacob Ellis", gender: "Male", age: "31" },
+          { name: "Noah Bennett", gender: "Male", age: "9" }
+        ]
+      ],
+      [
+        "Blue",
+        [
+          { name: "Iris Morgan", gender: "Female", age: "10" },
+          { name: "Natalie Brooks", gender: "Female", age: "34" }
+        ]
+      ],
+      [
+        "Purple",
+        [
+          { name: "Caleb Nguyen", gender: "Male", age: "11" },
+          { name: "Victor Lane", gender: "Male", age: "38" }
+        ]
+      ],
+      [
+        "Brown",
+        [
+          { name: "Hannah Kim", gender: "Female", age: "42" },
+          { name: "Lila Thompson", gender: "Female", age: "12" }
+        ]
+      ],
+      [
+        "Red",
+        [
+          { name: "Derek Miles", gender: "Male", age: "46" },
+          { name: "Owen Carter", gender: "Male", age: "14" }
+        ]
+      ],
+      [
+        "Dark Brown",
+        [
+          { name: "Maya Robinson", gender: "Female", age: "16" },
+          { name: "Serena Park", gender: "Female", age: "50" }
+        ]
+      ],
+      [
+        "Black",
+        [
+          { name: "Andre Coleman", gender: "Male", age: "18" },
+          { name: "Sophie Jensen", gender: "Female", age: "20" }
+        ]
+      ]
+    ];
+
+    expectedGroups.forEach(([belt, studentRows]) => {
+      const group = within(directory).getByRole("group", { name: `${belt} belt students` });
+
+      expect(within(group).getByRole("heading", { name: `${belt} Belt` })).toBeInTheDocument();
+      expect(within(group).getByText(`${studentRows.length} students`)).toBeInTheDocument();
+      expect(within(group).getByText("Name")).toHaveClass("student-name-list-column-label");
+      expect(within(group).getByText("Gender")).toHaveClass("student-name-list-column-label");
+      expect(within(group).getByText("Age")).toHaveClass("student-name-list-column-label");
+      studentRows.forEach(({ age, gender, name }) => {
+        const nameButton = within(group).getByRole("button", { name: `Open ${name} student info` });
+        expect(nameButton).toBeInTheDocument();
+        expect(within(nameButton).getByText(name)).toHaveClass("student-name-list-name");
+        expect(within(nameButton).getByText(gender)).toHaveClass("student-name-list-cell");
+        expect(within(nameButton).getByText(age)).toHaveClass("student-name-list-cell--age");
+        expect(nameButton.querySelector(".student-name-list-icon")).toBeInTheDocument();
+      });
+      expect(within(group).queryByText(/@example\.com/)).not.toBeInTheDocument();
+    });
   });
 
   it("lets managers create a new student from the restored students page", () => {
@@ -803,18 +961,18 @@ describe("post-login operations app", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Student" }));
 
     expect(screen.getByText("Leo Park")).toBeInTheDocument();
-    expect(screen.getAllByText("Active").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Open Leo Park student info" })).toBeInTheDocument();
   });
 
   it("lets managers delete a selected student from the restored students page", () => {
     renderLoggedInApp("/students");
 
-    expect(screen.getByText("Mina Cho")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Edit Mina Cho/i }));
+    expect(screen.getByText("Talia Brooks")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Talia Brooks student info" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete Student" }));
 
-    expect(screen.queryByText("Mina Cho")).not.toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Edit Mina Cho" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Talia Brooks")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Talia Brooks Student Info" })).not.toBeInTheDocument();
   });
 
   it("uses full-page manager chrome instead of a sidebar on tool pages", () => {
@@ -831,35 +989,47 @@ describe("post-login operations app", () => {
   it("lets staff create schedule items and studio events", () => {
     const { unmount } = renderLoggedInApp("/schedule");
 
-    fireEvent.change(screen.getByLabelText("Event title"), { target: { value: "Youth Testing Prep" } });
-    fireEvent.change(screen.getByLabelText("Schedule date"), { target: { value: "2026-05-22" } });
-    fireEvent.change(screen.getByLabelText("Schedule time"), { target: { value: "5:30 PM" } });
+    expect(screen.queryByRole("dialog", { name: "Add Schedule Event" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add Schedule Event" }));
+    const scheduleDialog = screen.getByRole("dialog", { name: "Add Schedule Event" });
+
+    fireEvent.change(within(scheduleDialog).getByLabelText("Event title"), { target: { value: "Youth Testing Prep" } });
+    fireEvent.change(within(scheduleDialog).getByLabelText("Schedule date"), { target: { value: "2026-05-22" } });
+    fireEvent.change(within(scheduleDialog).getByLabelText("Schedule time"), { target: { value: "5:30 PM" } });
+    fireEvent.click(within(scheduleDialog).getByRole("button", { name: "Add Schedule Event" }));
 
     expect(screen.getByText("Youth Testing Prep")).toBeInTheDocument();
     expect(screen.getByText("2026-05-22 at 5:30 PM")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Add Schedule Event" })).not.toBeInTheDocument();
 
     unmount();
     renderLoggedInApp("/events");
 
-    fireEvent.change(screen.getByLabelText("Event title"), { target: { value: "Black Belt Testing" } });
-    fireEvent.change(screen.getByLabelText("Event date"), { target: { value: "2026-06-01" } });
-    fireEvent.change(screen.getByLabelText("Event time"), { target: { value: "6:00 PM" } });
-    fireEvent.change(screen.getByLabelText("Event details"), { target: { value: "Testing date for eligible students." } });
+    expect(screen.queryByRole("dialog", { name: "Add Event" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add Event" }));
+    const eventDialog = screen.getByRole("dialog", { name: "Add Event" });
+
+    fireEvent.change(within(eventDialog).getByLabelText("Event title"), { target: { value: "Black Belt Testing" } });
+    fireEvent.change(within(eventDialog).getByLabelText("Event date"), { target: { value: "2026-06-01" } });
+    fireEvent.change(within(eventDialog).getByLabelText("Event time"), { target: { value: "6:00 PM" } });
+    fireEvent.change(within(eventDialog).getByLabelText("Event details"), { target: { value: "Testing date for eligible students." } });
+    fireEvent.click(within(eventDialog).getByRole("button", { name: "Add Event" }));
 
     expect(screen.getByText("Black Belt Testing")).toBeInTheDocument();
     expect(screen.getByText(/Testing date for eligible students/i)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Add Event" })).not.toBeInTheDocument();
   });
 
   it("lets staff make a schedule item recurring from the existing Scheduling page", () => {
     renderLoggedInApp("/schedule");
 
-    fireEvent.change(screen.getByLabelText("Event title"), { target: { value: "Friday Demo Class" } });
-    fireEvent.change(screen.getByLabelText("Schedule date"), { target: { value: "2026-05-15" } });
-    fireEvent.change(screen.getByLabelText("Schedule time"), { target: { value: "6:15 PM" } });
-    fireEvent.click(screen.getByLabelText("Recurring"));
     fireEvent.click(screen.getByRole("button", { name: "Add Schedule Event" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Schedule Event" });
+    fireEvent.change(within(dialog).getByLabelText("Event title"), { target: { value: "Friday Demo Class" } });
+    fireEvent.change(within(dialog).getByLabelText("Schedule date"), { target: { value: "2026-05-15" } });
+    fireEvent.change(within(dialog).getByLabelText("Schedule time"), { target: { value: "6:15 PM" } });
+    fireEvent.click(within(dialog).getByLabelText("Recurring"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Schedule Event" }));
 
     expect(screen.getByText("Repeats weekly")).toBeInTheDocument();
     expect(screen.getByText("Friday Demo Class")).toBeInTheDocument();
@@ -869,11 +1039,13 @@ describe("post-login operations app", () => {
   it("lets staff set a custom title color for schedule items", () => {
     renderLoggedInApp("/schedule");
 
-    fireEvent.change(screen.getByLabelText("Event title"), { target: { value: "Blue Team Class" } });
-    fireEvent.change(screen.getByLabelText("Schedule date"), { target: { value: "2026-05-29" } });
-    fireEvent.change(screen.getByLabelText("Schedule time"), { target: { value: "7:00 PM" } });
-    fireEvent.change(screen.getByLabelText("Title color"), { target: { value: "#7dd3fc" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Schedule Event" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Schedule Event" });
+    fireEvent.change(within(dialog).getByLabelText("Event title"), { target: { value: "Blue Team Class" } });
+    fireEvent.change(within(dialog).getByLabelText("Schedule date"), { target: { value: "2026-05-29" } });
+    fireEvent.change(within(dialog).getByLabelText("Schedule time"), { target: { value: "7:00 PM" } });
+    fireEvent.change(within(dialog).getByLabelText("Title color"), { target: { value: "#7dd3fc" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Schedule Event" }));
 
     expect(screen.getByText("Blue Team Class")).toHaveStyle({ color: "#7dd3fc" });
   });
@@ -881,10 +1053,12 @@ describe("post-login operations app", () => {
   it("lets staff create a custom schedule type and reuse it from the dropdown", () => {
     renderLoggedInApp("/schedule");
 
-    fireEvent.change(screen.getByLabelText("Event title"), { target: { value: "Demo Team Practice" } });
-    fireEvent.change(screen.getByLabelText("Schedule date"), { target: { value: "2026-05-24" } });
-    fireEvent.change(screen.getByLabelText("Schedule time"), { target: { value: "4:15 PM" } });
-    fireEvent.change(screen.getByLabelText("Schedule type"), { target: { value: "custom" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Schedule Event" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Schedule Event" });
+    fireEvent.change(within(dialog).getByLabelText("Event title"), { target: { value: "Demo Team Practice" } });
+    fireEvent.change(within(dialog).getByLabelText("Schedule date"), { target: { value: "2026-05-24" } });
+    fireEvent.change(within(dialog).getByLabelText("Schedule time"), { target: { value: "4:15 PM" } });
+    fireEvent.change(within(dialog).getByLabelText("Schedule type"), { target: { value: "custom" } });
     const customTypeDialog = screen.getByRole("dialog", { name: "Create schedule type" });
     expect(within(customTypeDialog).getByText("Name the new schedule type.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Custom schedule type")).not.toBeInTheDocument();
@@ -892,62 +1066,72 @@ describe("post-login operations app", () => {
     fireEvent.change(within(customTypeDialog).getByLabelText("New schedule type name"), { target: { value: "Demo Team" } });
     fireEvent.click(within(customTypeDialog).getByRole("button", { name: "Submit" }));
 
-    const scheduleType = screen.getByLabelText("Schedule type");
+    const scheduleType = within(dialog).getByLabelText("Schedule type");
     expect(scheduleType).toHaveValue("Demo Team");
     expect(within(scheduleType).getByRole("option", { name: "Demo Team" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add Schedule Event" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Schedule Event" }));
 
     expect(screen.getByText("Demo Team Practice")).toBeInTheDocument();
     expect(screen.getAllByText("Demo Team").length).toBeGreaterThan(0);
 
-    fireEvent.change(scheduleType, { target: { value: "Demo Team" } });
-    expect(scheduleType).toHaveValue("Demo Team");
+    fireEvent.click(screen.getByRole("button", { name: "Add Schedule Event" }));
+    const secondDialog = screen.getByRole("dialog", { name: "Add Schedule Event" });
+    const secondScheduleType = within(secondDialog).getByLabelText("Schedule type");
+    fireEvent.change(secondScheduleType, { target: { value: "Demo Team" } });
+    expect(secondScheduleType).toHaveValue("Demo Team");
   });
 
   it("lets managers create, edit, and remove recurring classes", () => {
     renderLoggedInApp("/classes");
 
     expect(screen.getByRole("heading", { name: "Classes" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Create Class" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Create Class" })).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Class name"), { target: { value: "Youth Sparring" } });
-    fireEvent.click(screen.getByLabelText("Monday"));
-    fireEvent.click(screen.getByLabelText("Wednesday"));
-    fireEvent.change(screen.getByLabelText("Start time"), { target: { value: "17:15" } });
-    fireEvent.change(screen.getByLabelText("End time"), { target: { value: "18:00" } });
-    fireEvent.change(screen.getByLabelText("Class notes"), { target: { value: "Pads, footwork, and controlled sparring." } });
-    fireEvent.click(screen.getByRole("button", { name: "Create Class" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Class" }));
+    const createDialog = screen.getByRole("dialog", { name: "Create Class" });
+    fireEvent.change(within(createDialog).getByLabelText("Class name"), { target: { value: "Youth Sparring" } });
+    fireEvent.click(within(createDialog).getByLabelText("Monday"));
+    fireEvent.click(within(createDialog).getByLabelText("Wednesday"));
+    fireEvent.change(within(createDialog).getByLabelText("Start time"), { target: { value: "17:15" } });
+    fireEvent.change(within(createDialog).getByLabelText("End time"), { target: { value: "18:00" } });
+    fireEvent.change(within(createDialog).getByLabelText("Class notes"), { target: { value: "Pads, footwork, and controlled sparring." } });
+    fireEvent.click(within(createDialog).getByRole("button", { name: "Create Class" }));
 
     expect(screen.getByText("Youth Sparring")).toBeInTheDocument();
     expect(screen.getByText("Monday, Wednesday")).toBeInTheDocument();
     expect(screen.getByText("5:15 PM - 6:00 PM")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Create Class" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Edit Youth Sparring/i }));
-    expect(screen.getByRole("heading", { name: "Edit Youth Sparring" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Class name"), { target: { value: "Advanced Sparring" } });
-    fireEvent.change(screen.getByLabelText("End time"), { target: { value: "18:30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Class Changes" }));
+    const editDialog = screen.getByRole("dialog", { name: "Edit Youth Sparring" });
+    expect(within(editDialog).getByRole("heading", { name: "Edit Youth Sparring" })).toBeInTheDocument();
+    fireEvent.change(within(editDialog).getByLabelText("Class name"), { target: { value: "Advanced Sparring" } });
+    fireEvent.change(within(editDialog).getByLabelText("End time"), { target: { value: "18:30" } });
+    fireEvent.click(within(editDialog).getByRole("button", { name: "Save Class Changes" }));
 
     expect(screen.getByText("Advanced Sparring")).toBeInTheDocument();
     expect(screen.getByText("5:15 PM - 6:30 PM")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Edit Advanced Sparring/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove Class" }));
+    const deleteDialog = screen.getByRole("dialog", { name: "Edit Advanced Sparring" });
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Remove Class" }));
 
     expect(screen.queryByText("Advanced Sparring")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Create Class" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Edit Advanced Sparring" })).not.toBeInTheDocument();
   });
 
   it("keeps recurring classes visible on the existing Classes page", () => {
     renderLoggedInApp("/classes");
 
     const todayWeekday = new Date().toLocaleDateString("en-US", { weekday: "long" });
-    fireEvent.change(screen.getByLabelText("Class name"), { target: { value: "Tiny Tigers" } });
-    fireEvent.click(screen.getByLabelText(todayWeekday));
-    fireEvent.change(screen.getByLabelText("Start time"), { target: { value: "16:00" } });
-    fireEvent.change(screen.getByLabelText("End time"), { target: { value: "16:45" } });
-    expect(screen.getByLabelText("Recurring")).toBeChecked();
-    fireEvent.click(screen.getByRole("button", { name: "Create Class" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Class" }));
+    const dialog = screen.getByRole("dialog", { name: "Create Class" });
+    fireEvent.change(within(dialog).getByLabelText("Class name"), { target: { value: "Tiny Tigers" } });
+    fireEvent.click(within(dialog).getByLabelText(todayWeekday));
+    fireEvent.change(within(dialog).getByLabelText("Start time"), { target: { value: "16:00" } });
+    fireEvent.change(within(dialog).getByLabelText("End time"), { target: { value: "16:45" } });
+    expect(within(dialog).getByLabelText("Recurring")).toBeChecked();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create Class" }));
 
     expect(screen.getByText("Tiny Tigers")).toBeInTheDocument();
     expect(screen.getByText(/4:00 PM - 4:45 PM/)).toBeInTheDocument();
@@ -957,16 +1141,70 @@ describe("post-login operations app", () => {
     renderLoggedInApp("/classes");
 
     const todayWeekday = new Date().toLocaleDateString("en-US", { weekday: "long" });
-    fireEvent.change(screen.getByLabelText("Class name"), { target: { value: "Drop In Clinic" } });
-    fireEvent.click(screen.getByLabelText(todayWeekday));
-    fireEvent.change(screen.getByLabelText("Start time"), { target: { value: "15:00" } });
-    fireEvent.change(screen.getByLabelText("End time"), { target: { value: "15:45" } });
-    fireEvent.change(screen.getByLabelText("Title color"), { target: { value: "#f9a8d4" } });
-    fireEvent.click(screen.getByLabelText("Recurring"));
-    fireEvent.click(screen.getByRole("button", { name: "Create Class" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Class" }));
+    const dialog = screen.getByRole("dialog", { name: "Create Class" });
+    fireEvent.change(within(dialog).getByLabelText("Class name"), { target: { value: "Drop In Clinic" } });
+    fireEvent.click(within(dialog).getByLabelText(todayWeekday));
+    fireEvent.change(within(dialog).getByLabelText("Start time"), { target: { value: "15:00" } });
+    fireEvent.change(within(dialog).getByLabelText("End time"), { target: { value: "15:45" } });
+    fireEvent.change(within(dialog).getByLabelText("Title color"), { target: { value: "#f9a8d4" } });
+    fireEvent.click(within(dialog).getByLabelText("Recurring"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create Class" }));
 
     expect(screen.getByText("Drop In Clinic")).toHaveStyle({ color: "#f9a8d4" });
     expect(screen.getByText("Not recurring on calendar")).toBeInTheDocument();
+  });
+
+  it("keeps manager workflow pages in compact directory-first layouts", () => {
+    const { unmount } = renderLoggedInApp("/classes");
+
+    const classesHeader = screen.getByRole("heading", { name: "Classes" }).closest(".operations-page-head");
+    expect(classesHeader?.closest(".operations-page")).toHaveClass("operations-page--workflow");
+    expect(within(classesHeader as HTMLElement).getByRole("button", { name: "New Class" }).closest(".operations-page-action")).toBeInTheDocument();
+    expect(screen.getByLabelText("Class directory")).toHaveClass("workflow-directory-grid");
+    expect(screen.queryByRole("dialog", { name: "Create Class" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Create Class" })).not.toBeInTheDocument();
+    const classDirectory = screen.getByLabelText("Class directory");
+    expect(within(classDirectory).getByText("Class")).toHaveClass("workflow-directory-column-label");
+    expect(within(classDirectory).getByText("Days")).toHaveClass("workflow-directory-column-label");
+    expect(within(classDirectory).getByText("Time")).toHaveClass("workflow-directory-column-label");
+    expect(within(classDirectory).getByRole("button", { name: "Edit Youth Foundations" })).toBeInTheDocument();
+
+    unmount();
+    const scheduleRender = renderLoggedInApp("/schedule");
+    const scheduleHeader = screen.getByRole("heading", { name: "Schedule" }).closest(".operations-page-head");
+    expect(scheduleHeader?.closest(".operations-page")).toHaveClass("operations-page--workflow");
+    expect(within(scheduleHeader as HTMLElement).getByRole("button", { name: "Add Schedule Event" }).closest(".operations-page-action")).toBeInTheDocument();
+    const scheduleDirectory = screen.getByLabelText("Schedule directory");
+    expect(scheduleDirectory).toHaveClass("workflow-directory-grid");
+    expect(screen.queryByRole("dialog", { name: "Add Schedule Event" })).not.toBeInTheDocument();
+    expect(within(scheduleDirectory).getByRole("group", { name: "Class schedule items" })).toBeInTheDocument();
+    expect(within(scheduleDirectory).getByRole("group", { name: "Private lesson schedule items" })).toBeInTheDocument();
+    expect(within(scheduleDirectory).getAllByText("Title")[0]).toHaveClass("workflow-directory-column-label");
+    expect(within(scheduleDirectory).getAllByText("Date")[0]).toHaveClass("workflow-directory-column-label");
+    expect(within(scheduleDirectory).getAllByText("Time")[0]).toHaveClass("workflow-directory-column-label");
+
+    scheduleRender.unmount();
+    const eventsRender = renderLoggedInApp("/events");
+    const eventsHeader = screen.getByRole("heading", { name: "Events" }).closest(".operations-page-head");
+    expect(eventsHeader?.closest(".operations-page")).toHaveClass("operations-page--workflow");
+    expect(within(eventsHeader as HTMLElement).getByRole("button", { name: "Add Event" }).closest(".operations-page-action")).toBeInTheDocument();
+    const eventDirectory = screen.getByLabelText("Event directory");
+    expect(eventDirectory).toHaveClass("workflow-directory-grid");
+    expect(screen.queryByRole("dialog", { name: "Add Event" })).not.toBeInTheDocument();
+    expect(within(eventDirectory).getByRole("group", { name: "Students events" })).toBeInTheDocument();
+    expect(within(eventDirectory).getByRole("group", { name: "Families events" })).toBeInTheDocument();
+
+    eventsRender.unmount();
+    renderLoggedInApp("/merchandise");
+    const merchandiseHeader = screen.getByRole("heading", { name: "Merchandise" }).closest(".operations-page-head");
+    expect(merchandiseHeader?.closest(".operations-page")).toHaveClass("operations-page--workflow");
+    expect(within(merchandiseHeader as HTMLElement).getByRole("button", { name: "Add New Merchandise" }).closest(".operations-page-action")).toBeInTheDocument();
+    const productDirectory = screen.getByLabelText("Product directory");
+    expect(productDirectory).toHaveClass("workflow-directory-grid");
+    expect(within(productDirectory).getByRole("group", { name: "Gloves merchandise" })).toBeInTheDocument();
+    expect(within(productDirectory).getByRole("group", { name: "Uniforms merchandise" })).toBeInTheDocument();
+    expect(within(productDirectory).getByRole("button", { name: "Edit Youth Boxing Gloves" })).toBeInTheDocument();
   });
 
   it("lets students check in and see rank progress", () => {
@@ -986,7 +1224,7 @@ describe("post-login operations app", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Send Missed-Class Follow-Ups" }));
 
-    expect(screen.getByText(/missed you in class/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/missed you in class/i).length).toBeGreaterThan(1);
     expect(screen.getAllByText(/missed 3 classes/i).length).toBeGreaterThan(0);
   });
 

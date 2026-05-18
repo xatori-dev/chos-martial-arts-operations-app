@@ -202,6 +202,7 @@ export interface StudentRecord {
   gender?: string;
   phone: string;
   email: string;
+  profileImagePath?: string;
   guardianName?: string;
   guardianPhone?: string;
   guardianEmail?: string;

@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Edit3,
   Mail,
   MapPin,
   MessageCircle,
@@ -25,7 +24,7 @@ import {
   Users,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent as ReactChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent as ReactChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import classesLauncherIcon from "./assets/manager-icons/Classes.webp";
 import dashboardLauncherIcon from "./assets/manager-icons/Dashboard.webp";
@@ -43,7 +42,7 @@ import { applyAppTheme, readStoredAppTheme, writeStoredAppTheme, type AppThemeMo
 import type { ClassWeekday, DirectMessage, MerchandiseItem, MessageLog, ScheduledClass, StudioClass, StudentRecord, StudioEvent } from "./types";
 import { formatMoney, validateEmail } from "./utils";
 
-const beltOptions = ["White", "Yellow", "Orange", "Green", "Blue", "Purple", "Brown", "Red", "Black"];
+const beltOptions = ["White", "Yellow", "Orange", "Green", "Blue", "Purple", "Brown", "Red", "Dark Brown", "Black"];
 const weekdayOptions: { value: ClassWeekday; label: string; short: string }[] = [
   { value: 0, label: "Sunday", short: "Sun" },
   { value: 1, label: "Monday", short: "Mon" },
@@ -61,7 +60,14 @@ const defaultScheduleTypeOptions = [
 
 type ManagerLauncherIconKind = "dashboard" | "messages" | "students" | "classes" | "events" | "scheduling" | "merchandise" | "reports";
 
-const managerLauncherItems: { path: string; label: string; icon: ManagerLauncherIconKind; future?: boolean }[] = [
+type ManagerLauncherItem = {
+  path: string;
+  label: string;
+  icon: ManagerLauncherIconKind;
+  future?: boolean;
+};
+
+const managerLauncherItems: ManagerLauncherItem[] = [
   { path: "/dashboard", label: "Dashboard", icon: "dashboard" },
   { path: "/messages", label: "Messages", icon: "messages" },
   { path: "/students", label: "Students", icon: "students" },
@@ -229,15 +235,15 @@ function StaffOperationsShell({
   );
 }
 
-function OperationsPage({ title, text, action, children }: { title: string; text: string; action?: ReactNode; children: ReactNode }) {
+function OperationsPage({ title, text, action, children, className }: { title: string; text: string; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className="operations-page">
+    <section className={`operations-page${className ? ` ${className}` : ""}`}>
       <div className="operations-page-head">
         <div className="operations-page-title-copy">
           <ManagerPageTitleFrame title={title} className="operations-page-title-frame" />
           <p>{text}</p>
         </div>
-        {action}
+        {action && <div className="operations-page-action">{action}</div>}
       </div>
       {children}
     </section>
@@ -566,6 +572,38 @@ function ManagerLauncherIcon({ icon }: { icon: ManagerLauncherIconKind }) {
       />
     </span>
   );
+}
+
+function managerLauncherPath(item: ManagerLauncherItem) {
+  return `/manager?tool=${item.icon}`;
+}
+
+function getSelectedManagerLauncherItem(search: string) {
+  const requestedTool = new URLSearchParams(search).get("tool");
+  return managerLauncherItems.find((item) => item.icon === requestedTool) ?? managerLauncherItems[0];
+}
+
+function ManagerLauncherWorkspace({ tool }: { tool: ManagerLauncherIconKind }) {
+  switch (tool) {
+    case "dashboard":
+      return <DashboardPage />;
+    case "messages":
+      return <MessagesPage />;
+    case "students":
+      return <StudentsPage />;
+    case "classes":
+      return <ClassesPage />;
+    case "events":
+      return <EventsPage />;
+    case "scheduling":
+      return <SchedulePage />;
+    case "merchandise":
+      return <MerchandisePage />;
+    case "reports":
+      return <ReportsPage />;
+    default:
+      return <DashboardPage />;
+  }
 }
 
 type ManagerHomeThread = {
@@ -1438,6 +1476,9 @@ function ManagerLauncherPage() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSettings, setProfileSettings] = useState(() => readManagerProfile(session?.email));
   const [profilePassword, setProfilePassword] = useState({ newPassword: "", confirmPassword: "" });
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const selectedLauncherItem = getSelectedManagerLauncherItem(location.search);
+  const sidebarToggleLabel = isSidebarCollapsed ? "Expand manager app launcher" : "Collapse manager app launcher";
 
   useEffect(() => {
     if (new URLSearchParams(location.search).get("profile") !== "settings") return;
@@ -1533,16 +1574,46 @@ function ManagerLauncherPage() {
             </button>
           </nav>
         </header>
-        <nav className="manager-launcher-grid" aria-label="Manager app launcher">
-          {managerLauncherItems.map((item) => {
-            return (
-              <Link className="manager-launcher-item" key={item.label} to={item.path} data-future={item.future ? "true" : undefined}>
-                <ManagerLauncherIcon icon={item.icon} />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
+        <div className={`manager-launcher-body${isSidebarCollapsed ? " is-sidebar-collapsed" : ""}`} role="group" aria-label="Manager launcher workspace frame">
+          <nav
+            className="manager-launcher-grid manager-launcher-sidebar"
+            id="manager-launcher-sidebar"
+            aria-label="Manager app launcher"
+            data-orientation="vertical"
+            hidden={isSidebarCollapsed}
+          >
+            {managerLauncherItems.map((item) => {
+              const isSelected = item.icon === selectedLauncherItem.icon;
+              return (
+                <Link
+                  className={`manager-launcher-item${isSelected ? " is-selected" : ""}`}
+                  key={item.label}
+                  to={managerLauncherPath(item)}
+                  title={item.label}
+                  aria-current={isSelected ? "page" : undefined}
+                  data-future={item.future ? "true" : undefined}
+                >
+                  <ManagerLauncherIcon icon={item.icon} />
+                  <span className="manager-launcher-label">{item.label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+          <button
+            className="manager-launcher-rail-toggle"
+            type="button"
+            aria-label={sidebarToggleLabel}
+            aria-controls="manager-launcher-sidebar"
+            aria-expanded={!isSidebarCollapsed}
+            title={sidebarToggleLabel}
+            onClick={() => setIsSidebarCollapsed((current) => !current)}
+          >
+            <span className="manager-launcher-rail-toggle-bar" aria-hidden="true" />
+          </button>
+          <section className="manager-launcher-workspace" aria-label={`${selectedLauncherItem.label} workspace`}>
+            <ManagerLauncherWorkspace tool={selectedLauncherItem.icon} />
+          </section>
+        </div>
       </main>
       {profileOpen && (
         <div className="modal-backdrop manager-profile-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeProfileSettings()}>
@@ -1665,7 +1736,7 @@ function DashboardPage() {
 
   return (
     <OperationsPage title="Dashboard" text="Review the live studio month calendar and jump into schedule management.">
-      <div className="manager-dashboard-calendar-page">
+      <div className="manager-dashboard-calendar-page manager-launcher-calendar">
         <ManagerLiveCalendar scheduledClasses={scheduledClasses} studioClasses={studioClasses} studioEvents={studioEvents} />
       </div>
     </OperationsPage>
@@ -1686,24 +1757,6 @@ function ReportsPage() {
 
 const genderOptions = ["Not specified", "Female", "Male", "Nonbinary", "Prefer not to say"];
 const statusOptions = ["Active", "Trial", "Paused", "Inactive"];
-type StudentSortKey = "name" | "age" | "gender" | "belt" | "tenure" | "classes";
-type StudentSortDirection = "asc" | "desc";
-
-const studentSortColumns: { key: StudentSortKey; label: string; defaultWidth: number; minWidth: number }[] = [
-  { key: "name", label: "Name", defaultWidth: 260, minWidth: 170 },
-  { key: "age", label: "Age", defaultWidth: 80, minWidth: 64 },
-  { key: "gender", label: "Gender", defaultWidth: 116, minWidth: 86 },
-  { key: "belt", label: "Belt", defaultWidth: 116, minWidth: 88 },
-  { key: "tenure", label: "Tenure", defaultWidth: 126, minWidth: 92 },
-  { key: "classes", label: "Classes", defaultWidth: 230, minWidth: 150 }
-];
-
-function defaultStudentColumnWidths() {
-  return studentSortColumns.reduce<Record<StudentSortKey, number>>((widths, column) => {
-    widths[column.key] = column.defaultWidth;
-    return widths;
-  }, {} as Record<StudentSortKey, number>);
-}
 
 function makeBlankStudentForm() {
   return {
@@ -1747,153 +1800,65 @@ function studentToForm(student: StudentRecord) {
   };
 }
 
-function beltOrder(rank: string) {
-  const index = beltOptions.findIndex((option) => option.toLowerCase() === rank.toLowerCase());
-  return index === -1 ? beltOptions.length : index;
+function slugClassName(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
-function parseStudentDate(value?: string) {
+function beltClassName(rank: string) {
+  return slugClassName(rank);
+}
+
+function audienceLabel(value: StudioEvent["audience"]) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+const studentDirectoryAgeReferenceDate = new Date("2026-05-17T00:00:00");
+
+function parseStudentBirthDate(value?: string) {
   if (!value) return undefined;
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? undefined : date;
+  const birthDate = new Date(`${value}T00:00:00`);
+  return Number.isNaN(birthDate.getTime()) ? undefined : birthDate;
 }
 
-function studentAge(student: StudentRecord) {
-  const birthDate = parseStudentDate(student.dateOfBirth);
-  if (!birthDate) return undefined;
-  const today = new Date();
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const birthdayPassed = today.getMonth() > birthDate.getMonth() || (today.getMonth() === birthDate.getMonth() && today.getDate() >= birthDate.getDate());
+function studentDirectoryAge(student: StudentRecord) {
+  const birthDate = parseStudentBirthDate(student.dateOfBirth);
+  if (!birthDate) return "Not set";
+
+  let age = studentDirectoryAgeReferenceDate.getFullYear() - birthDate.getFullYear();
+  const birthdayPassed =
+    studentDirectoryAgeReferenceDate.getMonth() > birthDate.getMonth() ||
+    (studentDirectoryAgeReferenceDate.getMonth() === birthDate.getMonth() && studentDirectoryAgeReferenceDate.getDate() >= birthDate.getDate());
   if (!birthdayPassed) age -= 1;
-  return age;
-}
 
-function formatStudentAge(student: StudentRecord) {
-  return studentAge(student)?.toString() ?? "Not set";
-}
-
-function studentTenureDays(student: StudentRecord) {
-  const enrollmentDate = parseStudentDate(student.enrollmentDate ?? student.joinedAt);
-  if (!enrollmentDate) return undefined;
-  const days = Math.max(0, Math.floor((Date.now() - enrollmentDate.getTime()) / 86400000));
-  return days;
-}
-
-function formatStudentTenure(student: StudentRecord) {
-  const days = studentTenureDays(student);
-  if (days === undefined) return "Not set";
-  if (days < 30) return `${days} day${days === 1 ? "" : "s"}`;
-  if (days < 365) {
-    const months = Math.max(1, Math.floor(days / 30));
-    return `${months} mo`;
-  }
-  const years = Math.floor(days / 365);
-  const months = Math.floor((days % 365) / 30);
-  return months ? `${years} yr ${months} mo` : `${years} yr`;
-}
-
-function studentSortValue(student: StudentRecord, key: StudentSortKey) {
-  if (key === "name") return fullName(student).toLowerCase();
-  if (key === "age") return studentAge(student) ?? Number.POSITIVE_INFINITY;
-  if (key === "gender") return student.gender?.toLowerCase() || "zzzz";
-  if (key === "belt") return beltOrder(student.beltRank);
-  if (key === "tenure") return studentTenureDays(student) ?? Number.POSITIVE_INFINITY;
-  return student.classesAttended;
-}
-
-function compareStudentSortValue(left: string | number, right: string | number) {
-  if (typeof left === "number" && typeof right === "number") return left - right;
-  return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
+  return age.toString();
 }
 
 function StudentsPage() {
-  const { students, scheduledClasses, messageLogs, addOperationsStudent, updateOperationsStudent, deleteOperationsStudent, showToast } = useAppState();
+  const { students, messageLogs, addOperationsStudent, updateOperationsStudent, deleteOperationsStudent, showToast } = useAppState();
   const [selectedStudentId, setSelectedStudentId] = useState("");
   const selectedStudent = students.find((student) => student.id === selectedStudentId);
   const [form, setForm] = useState(makeBlankStudentForm);
   const [studentModalMode, setStudentModalMode] = useState<"create" | "edit" | null>(null);
-  const [sortKey, setSortKey] = useState<StudentSortKey>("name");
-  const [sortDirection, setSortDirection] = useState<StudentSortDirection>("asc");
-  const [columnWidths, setColumnWidths] = useState(defaultStudentColumnWidths);
-  const resizeState = useRef<{ key: StudentSortKey; startX: number; startWidth: number } | null>(null);
   const welcomeLogs = messageLogs.filter((message) => message.kind === "welcome");
-  const classByStudent = useMemo(() => {
-    const classByStudent = new Map<string, ScheduledClass>();
-    scheduledClasses
-      .filter((item) => item.studentId)
-      .sort((left, right) => `${left.date} ${left.time}`.localeCompare(`${right.date} ${right.time}`))
-      .forEach((item) => {
-        if (item.studentId && !classByStudent.has(item.studentId)) {
-          classByStudent.set(item.studentId, item);
-        }
-      });
-    return classByStudent;
-  }, [scheduledClasses]);
 
-  const sortedStudents = useMemo(() => {
-    return [...students].sort((left, right) => {
-      const result = compareStudentSortValue(studentSortValue(left, sortKey), studentSortValue(right, sortKey)) || fullName(left).localeCompare(fullName(right));
-      return sortDirection === "asc" ? result : -result;
-    });
-  }, [sortDirection, sortKey, students]);
-
-  const toggleSort = (key: StudentSortKey) => {
-    if (sortKey === key) {
-      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
-      return;
-    }
-    setSortKey(key);
-    setSortDirection("asc");
-  };
-
-  const startColumnResize = (key: StudentSortKey, event: ReactMouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    resizeState.current = {
-      key,
-      startX: event.clientX,
-      startWidth: columnWidths[key]
-    };
-    document.body.classList.add("is-resizing-student-column");
-  };
-
-  const resizeColumnByKeyboard = (key: StudentSortKey, event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const column = studentSortColumns.find((item) => item.key === key);
-    const step = event.shiftKey ? 40 : 20;
-    const direction = event.key === "ArrowRight" ? 1 : -1;
-    setColumnWidths((current) => ({
-      ...current,
-      [key]: Math.max(column?.minWidth ?? 80, current[key] + step * direction)
-    }));
-  };
-
-  useEffect(() => {
-    const handleColumnResize = (event: MouseEvent) => {
-      const resizing = resizeState.current;
-      if (!resizing) return;
-      const column = studentSortColumns.find((item) => item.key === resizing.key);
-      const nextWidth = resizing.startWidth + event.clientX - resizing.startX;
-      setColumnWidths((current) => ({
-        ...current,
-        [resizing.key]: Math.max(column?.minWidth ?? 80, nextWidth)
+  const studentsByBelt = useMemo(() => {
+    const knownBelts = beltOptions.map((belt) => belt.toLowerCase());
+    const studentsByName = [...students].sort((left, right) => fullName(left).localeCompare(fullName(right), undefined, { sensitivity: "base" }));
+    const configuredGroups = beltOptions
+      .map((belt) => ({
+        belt,
+        students: studentsByName.filter((student) => student.beltRank.toLowerCase() === belt.toLowerCase())
+      }))
+      .filter((group) => group.students.length > 0);
+    const customGroups = Array.from(new Set(studentsByName.map((student) => student.beltRank).filter((rank) => !knownBelts.includes(rank.toLowerCase()))))
+      .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }))
+      .map((belt) => ({
+        belt,
+        students: studentsByName.filter((student) => student.beltRank === belt)
       }));
-    };
-    const stopColumnResize = () => {
-      resizeState.current = null;
-      document.body.classList.remove("is-resizing-student-column");
-    };
-    window.addEventListener("mousemove", handleColumnResize);
-    window.addEventListener("mouseup", stopColumnResize);
-    return () => {
-      window.removeEventListener("mousemove", handleColumnResize);
-      window.removeEventListener("mouseup", stopColumnResize);
-      document.body.classList.remove("is-resizing-student-column");
-    };
-  }, []);
 
-  const directoryTableWidth = studentSortColumns.reduce((total, column) => total + columnWidths[column.key], 0);
+    return [...configuredGroups, ...customGroups];
+  }, [students]);
 
   const selectStudent = (student: StudentRecord) => {
     setSelectedStudentId(student.id);
@@ -1947,82 +1912,58 @@ function StudentsPage() {
     showToast(`${fullName(deleted)} deleted from the student list.`);
   };
 
+  const renderStudentNameButton = (student: StudentRecord) => {
+    const studentName = fullName(student);
+    const genderLabel = student.gender?.trim() || "Not set";
+
+    return (
+      <button key={student.id} type="button" className="student-name-list-button" data-testid="student-name-list-button" aria-label={`Open ${studentName} student info`} onClick={() => selectStudent(student)}>
+        <span className="student-name-list-icon" aria-hidden="true" />
+        <span className="student-name-list-name">{studentName}</span>
+        <span className="student-name-list-cell student-name-list-cell--gender">{genderLabel}</span>
+        <span className="student-name-list-cell student-name-list-cell--age">{studentDirectoryAge(student)}</span>
+      </button>
+    );
+  };
+
   const headerAction = (
     <button type="button" className="operations-action student-header-add" onClick={openCreateStudent}>
       <Plus size={18} /> Create New Student
     </button>
   );
-  const modalTitle = selectedStudent ? `Edit ${fullName(selectedStudent)}` : "Create New Student";
+  const modalTitle = selectedStudent ? `${fullName(selectedStudent)} Student Info` : "Create New Student";
 
   return (
-    <OperationsPage title="Students" text="Review every student in one manager directory, sort each category, and click a student name to edit." action={headerAction}>
+    <OperationsPage className="operations-page--students" title="Students" text="Review each belt group as a compact student list, then select a student name to open their full info." action={headerAction}>
       <div className="students-workspace students-workspace--directory">
         <section className="operations-panel student-roster-panel student-directory-panel student-directory-panel--compact">
           <div className="student-roster-head">
             <div>
               <h2>Student Directory</h2>
-              <p>{students.length} student{students.length === 1 ? "" : "s"} listed with sortable manager categories.</p>
+              <p>{students.length} student{students.length === 1 ? "" : "s"} listed by belt. Select a name to open student info.</p>
             </div>
           </div>
-          <div className="student-directory-scroll">
-            <table className="student-directory-table" aria-label="Student directory" style={{ minWidth: `${directoryTableWidth}px` }}>
-              <colgroup>
-                {studentSortColumns.map((column) => (
-                  <col key={column.key} data-testid={`student-column-${column.key}`} style={{ width: `${columnWidths[column.key]}px` }} />
-                ))}
-              </colgroup>
-              <thead>
-                <tr>
-                  {studentSortColumns.map((column, index) => (
-                    <th key={column.key} aria-sort={sortKey === column.key ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}>
-                      <button type="button" onClick={() => toggleSort(column.key)}>
-                        {column.label}
-                        <span aria-hidden="true">{sortKey === column.key ? (sortDirection === "asc" ? " ↑" : " ↓") : ""}</span>
-                      </button>
-                      {index < studentSortColumns.length - 1 && (
-                        <button
-                          aria-label={`Resize ${column.label} column`}
-                          aria-orientation="vertical"
-                          aria-valuemax={520}
-                          aria-valuemin={column.minWidth}
-                          aria-valuenow={columnWidths[column.key]}
-                          className="student-column-resizer student-column-resizer--polished"
-                          onKeyDown={(event) => resizeColumnByKeyboard(column.key, event)}
-                          onMouseDown={(event) => startColumnResize(column.key, event)}
-                          role="separator"
-                          type="button"
-                        />
-                      )}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedStudents.map((student) => (
-                  <tr key={student.id}>
-                    <td>
-                      <button type="button" className="student-name-action" aria-label={`Edit ${fullName(student)}`} onClick={() => selectStudent(student)}>
-                        <span className="student-directory-name-wrap">
-                          <span data-testid="student-table-name">{fullName(student)}</span>
-                          <small className="student-directory-email">{student.email}</small>
-                        </span>
-                        <em>{student.status ?? "Active"}</em>
-                      </button>
-                    </td>
-                    <td>{formatStudentAge(student)}</td>
-                    <td>{student.gender ?? "Not set"}</td>
-                    <td>
-                      <span className="student-belt-pill">{student.beltRank}</span>
-                    </td>
-                    <td>{formatStudentTenure(student)}</td>
-                    <td>
-                      <strong>{student.classesAttended}</strong>
-                      <small>{classByStudent.get(student.id)?.title ?? student.program ?? "No assigned class"}</small>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="student-directory-scroll student-belt-directory-grid" aria-label="Student directory by belt">
+            {studentsByBelt.map(({ belt, students: beltStudents }) => (
+              <section key={belt} className={`student-belt-group student-belt-group--card student-belt-group--${beltClassName(belt)}`} role="group" aria-label={`${belt} belt students`}>
+                <div className="student-belt-group-head">
+                  <div>
+                    <span className="student-belt-group-swatch" aria-hidden="true" />
+                    <h3>{belt} Belt</h3>
+                  </div>
+                  <span>{beltStudents.length} student{beltStudents.length === 1 ? "" : "s"}</span>
+                </div>
+                <div className="student-name-list">
+                  <div className="student-name-list-head" aria-hidden="true">
+                    <span aria-hidden="true" />
+                    <span className="student-name-list-column-label">Name</span>
+                    <span className="student-name-list-column-label">Gender</span>
+                    <span className="student-name-list-column-label">Age</span>
+                  </div>
+                  {beltStudents.map(renderStudentNameButton)}
+                </div>
+              </section>
+            ))}
           </div>
         </section>
 
@@ -2045,7 +1986,7 @@ function StudentsPage() {
             <div className="student-modal-head">
               <div>
                 <h2 id="student-modal-title">{modalTitle}</h2>
-                <p>{selectedStudent ? "Update student records, contacts, enrollment, belt rank, and notes." : "Enter the full student profile before adding them to the directory."}</p>
+                <p>{selectedStudent ? "Review or update student records, contacts, enrollment, belt rank, and notes." : "Enter the full student profile before adding them to the directory."}</p>
               </div>
               <button type="button" className="student-modal-close" aria-label="Close student form" onClick={closeStudentModal}>
                 <X size={18} />
@@ -2192,19 +2133,16 @@ function studioClassToForm(studioClass: StudioClass) {
 }
 
 function ClassCard({ studioClass, onSelect }: { studioClass: StudioClass; onSelect: (studioClass: StudioClass) => void }) {
+  const className = studioClass.name;
+
   return (
-    <article className="operations-list-card class-list-card">
-      <div>
-        <strong style={studioClass.titleColor ? { color: studioClass.titleColor } : undefined}>{studioClass.name}</strong>
-        <span>{formatClassDays(studioClass.daysOfWeek)}</span>
-      </div>
-      <p>{formatClassTimeRange(studioClass)}</p>
-      <p>{studioClass.notes || "Recurring weekly class."}</p>
-      <p>{studioClass.recurring === false ? "Not recurring on calendar" : "Repeats weekly on calendar"}</p>
-      <button type="button" className="operations-action secondary" onClick={() => onSelect(studioClass)}>
-        <Edit3 size={17} /> Edit {studioClass.name}
-      </button>
-    </article>
+    <button type="button" className="workflow-directory-row workflow-directory-row--button workflow-directory-row--class" aria-label={`Edit ${className}`} onClick={() => onSelect(studioClass)}>
+      <span className="workflow-directory-icon workflow-directory-icon--class" style={studioClass.titleColor ? { "--workflow-accent": studioClass.titleColor } as CSSProperties : undefined} aria-hidden="true" />
+      <span className="workflow-directory-name" style={studioClass.titleColor ? { color: studioClass.titleColor } : undefined}>{className}</span>
+      <span className="workflow-directory-cell">{formatClassDays(studioClass.daysOfWeek)}</span>
+      <span className="workflow-directory-cell">{formatClassTimeRange(studioClass)}</span>
+      <span className="workflow-directory-cell">{studioClass.recurring === false ? "Not recurring on calendar" : "Repeats weekly on calendar"}</span>
+    </button>
   );
 }
 
@@ -2213,15 +2151,34 @@ function ClassesPage() {
   const [selectedClassId, setSelectedClassId] = useState("");
   const selectedClass = studioClasses.find((studioClass) => studioClass.id === selectedClassId);
   const [form, setForm] = useState(blankClassForm);
+  const [classModalOpen, setClassModalOpen] = useState(false);
+  const classGroups = useMemo(
+    () => [
+      { label: "Recurring Classes", items: studioClasses.filter((studioClass) => studioClass.recurring !== false) },
+      { label: "Calendar Off", items: studioClasses.filter((studioClass) => studioClass.recurring === false) }
+    ].filter((group) => group.items.length > 0),
+    [studioClasses]
+  );
 
   const resetForm = () => {
     setSelectedClassId("");
     setForm(blankClassForm);
   };
 
+  const openCreateClass = () => {
+    resetForm();
+    setClassModalOpen(true);
+  };
+
+  const closeClassModal = () => {
+    setClassModalOpen(false);
+    resetForm();
+  };
+
   const selectClass = (studioClass: StudioClass) => {
     setSelectedClassId(studioClass.id);
     setForm(studioClassToForm(studioClass));
+    setClassModalOpen(true);
   };
 
   const toggleDay = (day: ClassWeekday) => {
@@ -2244,6 +2201,7 @@ function ClassesPage() {
     }
     setSelectedClassId(savedClass.id);
     setForm(studioClassToForm(savedClass));
+    setClassModalOpen(false);
     showToast(`${savedClass.name} saved to Classes and added to the calendar.`);
   };
 
@@ -2251,82 +2209,126 @@ function ClassesPage() {
     if (!selectedClass) return;
     const removed = deleteStudioClass(selectedClass.id);
     if (!removed) return;
-    resetForm();
+    closeClassModal();
     showToast(`${removed.name} removed from Classes and calendar.`);
   };
+  const modalTitle = selectedClass ? `Edit ${selectedClass.name}` : "Create Class";
 
   return (
     <OperationsPage
+      className="operations-page--workflow"
       title="Classes"
       text="Create recurring weekly classes, edit class days, and set start/end times that flow into the main calendar."
       action={
-        <button type="button" className="student-header-add" onClick={resetForm}>
+        <button type="button" className="student-header-add" onClick={openCreateClass}>
           <Plus size={18} /> New Class
         </button>
       }
     >
-      <div className="operations-two-column">
-        <form className="operations-form-panel" onSubmit={submit}>
-          <h2>{selectedClass ? `Edit ${selectedClass.name}` : "Create Class"}</h2>
-          <label>
-            Class name
-            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
-          </label>
-          <fieldset className="class-day-picker">
-            <legend>Class days</legend>
-            {weekdayOptions.map((day) => (
-              <label key={day.value}>
-                <input type="checkbox" checked={form.daysOfWeek.includes(day.value)} onChange={() => toggleDay(day.value)} />
-                <span>{day.label}</span>
-              </label>
-            ))}
-          </fieldset>
-          <div className="class-time-grid">
-            <label>
-              Start time
-              <input type="time" value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} />
-            </label>
-            <label>
-              End time
-              <input type="time" value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} />
-            </label>
+      <section className="operations-panel workflow-directory-panel">
+        <div className="student-roster-head">
+          <div>
+            <h2>Class Directory</h2>
+            <p>{studioClasses.length} class{studioClasses.length === 1 ? "" : "es"} organized by calendar status. Select a class row to edit details.</p>
           </div>
-          <label>
-            Title color
-            <input type="color" value={form.titleColor} onChange={(event) => setForm({ ...form, titleColor: event.target.value })} />
-          </label>
-          <label className="operations-checkbox-row">
-            <input
-              type="checkbox"
-              checked={form.recurring}
-              onChange={(event) => setForm({ ...form, recurring: event.target.checked })}
-            />
-            Recurring
-          </label>
-          <label>
-            Class notes
-            <textarea value={form.notes} rows={3} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
-          </label>
-          <div className="student-editor-actions">
-            <button type="submit">
-              <CheckCircle2 size={18} /> {selectedClass ? "Save Class Changes" : "Create Class"}
-            </button>
-            {selectedClass && (
-              <button type="button" className="student-delete-action" onClick={removeSelectedClass}>
-                <Trash2 size={18} /> Remove Class
+        </div>
+        <div className="workflow-directory-grid" aria-label="Class directory">
+          {classGroups.map((group) => (
+            <section key={group.label} className={`workflow-directory-group workflow-directory-group--${slugClassName(group.label)}`} role="group" aria-label={`${group.label} class items`}>
+              <div className="workflow-directory-group-head">
+                <div>
+                  <span className="workflow-directory-swatch" aria-hidden="true" />
+                  <h3>{group.label}</h3>
+                </div>
+                <span>{group.items.length} class{group.items.length === 1 ? "" : "es"}</span>
+              </div>
+              <div className="workflow-directory-list workflow-directory-list--classes">
+                <div className="workflow-directory-list-head" aria-hidden="true">
+                  <span aria-hidden="true" />
+                  <span className="workflow-directory-column-label">Class</span>
+                  <span className="workflow-directory-column-label">Days</span>
+                  <span className="workflow-directory-column-label">Time</span>
+                  <span className="workflow-directory-column-label">Calendar</span>
+                </div>
+                {group.items.map((studioClass) => (
+                  <ClassCard key={studioClass.id} studioClass={studioClass} onSelect={selectClass} />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </section>
+      {classModalOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeClassModal()}>
+          <form
+            aria-labelledby="class-modal-title"
+            aria-modal="true"
+            className="modal-card modal-form operations-form-panel student-modal-card workflow-modal-card"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={submit}
+          >
+            <div className="student-modal-head">
+              <div>
+                <h2 id="class-modal-title">{modalTitle}</h2>
+                <p>Manage class days, times, calendar recurrence, and display color.</p>
+              </div>
+              <button type="button" className="student-modal-close" aria-label="Close class editor" onClick={closeClassModal}>
+                <X size={18} />
               </button>
-            )}
-          </div>
-        </form>
-        <section className="operations-panel">
-          <h2>Recurring Classes</h2>
-          <div className="operations-list compact">
-            {studioClasses.map((studioClass) => (
-              <ClassCard key={studioClass.id} studioClass={studioClass} onSelect={selectClass} />
-            ))}
-          </div>
-        </section>
-      </div>
+            </div>
+            <label>
+              Class name
+              <input autoFocus value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+            </label>
+            <fieldset className="class-day-picker">
+              <legend>Class days</legend>
+              {weekdayOptions.map((day) => (
+                <label key={day.value}>
+                  <input type="checkbox" checked={form.daysOfWeek.includes(day.value)} onChange={() => toggleDay(day.value)} />
+                  <span>{day.label}</span>
+                </label>
+              ))}
+            </fieldset>
+            <div className="class-time-grid">
+              <label>
+                Start time
+                <input type="time" value={form.startTime} onChange={(event) => setForm({ ...form, startTime: event.target.value })} />
+              </label>
+              <label>
+                End time
+                <input type="time" value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} />
+              </label>
+            </div>
+            <label>
+              Title color
+              <input type="color" value={form.titleColor} onChange={(event) => setForm({ ...form, titleColor: event.target.value })} />
+            </label>
+            <label className="operations-checkbox-row">
+              <input
+                type="checkbox"
+                checked={form.recurring}
+                onChange={(event) => setForm({ ...form, recurring: event.target.checked })}
+              />
+              Recurring
+            </label>
+            <label>
+              Class notes
+              <textarea value={form.notes} rows={3} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+            </label>
+            <div className="student-editor-actions">
+              <button type="submit">
+                <CheckCircle2 size={18} /> {selectedClass ? "Save Class Changes" : "Create Class"}
+              </button>
+              {selectedClass && (
+                <button type="button" className="student-delete-action" onClick={removeSelectedClass}>
+                  <Trash2 size={18} /> Remove Class
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+      )}
     </OperationsPage>
   );
 }
@@ -2334,14 +2336,18 @@ function ClassesPage() {
 function ScheduleCard({ item, students }: { item: ScheduledClass; students: StudentRecord[] }) {
   const student = item.studentId ? students.find((entry) => entry.id === item.studentId) : undefined;
   return (
-    <article className="operations-list-card">
-      <div>
-        <strong style={item.titleColor ? { color: item.titleColor } : undefined}>{item.title}</strong>
-        <span>{scheduleTypeLabel(item.type)}</span>
-      </div>
-      <p>{item.date} at {item.time}</p>
-      {item.recurring && <p>Repeats weekly</p>}
-      <p>{student ? `Student: ${fullName(student)}` : item.notes || "Open class item"}</p>
+    <article className="workflow-directory-row workflow-directory-row--schedule">
+      <span className="workflow-directory-icon workflow-directory-icon--schedule" style={item.titleColor ? { "--workflow-accent": item.titleColor } as CSSProperties : undefined} aria-hidden="true" />
+      <span className="workflow-directory-name" style={item.titleColor ? { color: item.titleColor } : undefined}>
+        {item.title}
+        <small>{student ? `Student: ${fullName(student)}` : item.notes || scheduleTypeLabel(item.type)}</small>
+      </span>
+      <span className="workflow-directory-cell">{item.date}</span>
+      <span className="workflow-directory-cell">{item.time}</span>
+      <span className="workflow-directory-cell">
+        <span>{item.date} at {item.time}</span>
+        {item.recurring && <small>Repeats weekly</small>}
+      </span>
     </article>
   );
 }
@@ -2349,6 +2355,7 @@ function ScheduleCard({ item, students }: { item: ScheduledClass; students: Stud
 function SchedulePage() {
   const { students, scheduledClasses, addScheduledClass, showToast } = useAppState();
   const [form, setForm] = useState({ title: "", date: "2026-05-22", time: "5:30 PM", type: "class", titleColor: "#b8f5e2", recurring: false, studentId: "", notes: "" });
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [customScheduleTypes, setCustomScheduleTypes] = useState<string[]>([]);
   const [isCustomTypeDialogOpen, setIsCustomTypeDialogOpen] = useState(false);
   const [newScheduleTypeName, setNewScheduleTypeName] = useState("");
@@ -2367,10 +2374,29 @@ function SchedulePage() {
     });
     return [...options.values()];
   }, [customScheduleTypes, scheduledClasses]);
+  const scheduleGroups = useMemo(
+    () => scheduleTypeOptions
+      .map((option) => ({
+        label: option.label,
+        value: option.value,
+        items: scheduledClasses.filter((item) => item.type === option.value)
+      }))
+      .filter((group) => group.items.length > 0),
+    [scheduleTypeOptions, scheduledClasses]
+  );
 
   const closeCustomTypeDialog = () => {
     setIsCustomTypeDialogOpen(false);
     setNewScheduleTypeName("");
+  };
+
+  const openScheduleModal = () => {
+    setScheduleModalOpen(true);
+  };
+
+  const closeScheduleModal = () => {
+    setScheduleModalOpen(false);
+    setForm({ title: "", date: form.date, time: form.time, type: "class", titleColor: "#b8f5e2", recurring: false, studentId: "", notes: "" });
   };
 
   const submitCustomScheduleType = (event: FormEvent) => {
@@ -2411,14 +2437,71 @@ function SchedulePage() {
       return;
     }
     setForm({ title: "", date: form.date, time: form.time, type: "class", titleColor: "#b8f5e2", recurring: false, studentId: "", notes: "" });
+    setScheduleModalOpen(false);
     showToast(`${created.title} added to schedule.`);
   };
 
   return (
-    <OperationsPage title="Schedule" text="Create class, private lesson, and testing-prep schedule items.">
-      <div className="operations-two-column">
-        <form className="operations-form-panel" onSubmit={submit}>
-          <h2>Add Schedule Event</h2>
+    <OperationsPage
+      className="operations-page--workflow"
+      title="Schedule"
+      text="Create class, private lesson, and testing-prep schedule items."
+      action={
+        <button type="button" className="operations-action student-header-add" onClick={openScheduleModal}>
+          <Plus size={18} /> Add Schedule Event
+        </button>
+      }
+    >
+      <section className="operations-panel workflow-directory-panel">
+        <div className="student-roster-head">
+          <div>
+            <h2>Upcoming Schedule</h2>
+            <p>{scheduledClasses.length} schedule item{scheduledClasses.length === 1 ? "" : "s"} grouped by type for quick scanning.</p>
+          </div>
+        </div>
+        <div className="workflow-directory-grid" aria-label="Schedule directory">
+          {scheduleGroups.map((group) => (
+            <section key={group.value} className={`workflow-directory-group workflow-directory-group--${slugClassName(group.label)}`} role="group" aria-label={`${group.label} schedule items`}>
+              <div className="workflow-directory-group-head">
+                <div>
+                  <span className="workflow-directory-swatch" aria-hidden="true" />
+                  <h3>{group.label}</h3>
+                </div>
+                <span>{group.items.length} item{group.items.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="workflow-directory-list workflow-directory-list--schedule">
+                <div className="workflow-directory-list-head" aria-hidden="true">
+                  <span aria-hidden="true" />
+                  <span className="workflow-directory-column-label">Title</span>
+                  <span className="workflow-directory-column-label">Date</span>
+                  <span className="workflow-directory-column-label">Time</span>
+                  <span className="workflow-directory-column-label">Status</span>
+                </div>
+                {group.items.map((item) => <ScheduleCard key={item.id} item={item} students={students} />)}
+              </div>
+            </section>
+          ))}
+        </div>
+      </section>
+      {scheduleModalOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeScheduleModal()}>
+          <form
+            aria-labelledby="schedule-modal-title"
+            aria-modal="true"
+            className="modal-card modal-form operations-form-panel student-modal-card workflow-modal-card"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={submit}
+          >
+          <div className="student-modal-head">
+            <div>
+              <h2 id="schedule-modal-title">Add Schedule Event</h2>
+              <p>Create a one-time or recurring schedule item for the calendar.</p>
+            </div>
+            <button type="button" className="student-modal-close" aria-label="Close schedule editor" onClick={closeScheduleModal}>
+              <X size={18} />
+            </button>
+          </div>
           <label>
             Event title
             <input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
@@ -2475,13 +2558,8 @@ function SchedulePage() {
             <Plus size={18} /> Add Schedule Event
           </button>
         </form>
-        <section className="operations-panel">
-          <h2>Upcoming Schedule</h2>
-          <div className="operations-list compact">
-            {scheduledClasses.map((item) => <ScheduleCard key={item.id} item={item} students={students} />)}
-          </div>
-        </section>
       </div>
+      )}
       {isCustomTypeDialogOpen && (
         <div className="modal-backdrop">
           <form
@@ -2933,13 +3011,15 @@ function CheckInsPage() {
 
 function EventCard({ event }: { event: StudioEvent }) {
   return (
-    <article className="operations-list-card">
-      <div>
-        <strong>{event.title}</strong>
-        <span>{event.audience}</span>
-      </div>
-      <p>{event.date} at {event.time}</p>
-      <p>{event.details}</p>
+    <article className="workflow-directory-row workflow-directory-row--event">
+      <span className="workflow-directory-icon workflow-directory-icon--event" aria-hidden="true" />
+      <span className="workflow-directory-name">
+        {event.title}
+        <small>{event.details}</small>
+      </span>
+      <span className="workflow-directory-cell">{event.date}</span>
+      <span className="workflow-directory-cell">{event.time}</span>
+      <span className="workflow-directory-cell">{audienceLabel(event.audience)}</span>
     </article>
   );
 }
@@ -2947,7 +3027,27 @@ function EventCard({ event }: { event: StudioEvent }) {
 function EventsPage() {
   const { accountRole, studioEvents, addStudioEvent, showToast } = useAppState();
   const [form, setForm] = useState({ title: "", date: "2026-06-01", time: "6:00 PM", details: "", audience: "students" as StudioEvent["audience"] });
+  const [eventModalOpen, setEventModalOpen] = useState(false);
   const isStudent = accountRole === "student";
+  const eventGroups = useMemo(
+    () => Array.from(new Set(studioEvents.map((event) => event.audience)))
+      .sort((left, right) => audienceLabel(left).localeCompare(audienceLabel(right), undefined, { sensitivity: "base" }))
+      .map((audience) => ({
+        audience,
+        label: audienceLabel(audience),
+        items: studioEvents.filter((event) => event.audience === audience)
+      })),
+    [studioEvents]
+  );
+
+  const openEventModal = () => {
+    setEventModalOpen(true);
+  };
+
+  const closeEventModal = () => {
+    setEventModalOpen(false);
+    setForm({ title: "", date: form.date, time: form.time, details: "", audience: "students" });
+  };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -2957,15 +3057,71 @@ function EventsPage() {
       return;
     }
     setForm({ title: "", date: form.date, time: form.time, details: "", audience: "students" });
+    setEventModalOpen(false);
     showToast(`${created.title} added to events.`);
   };
 
   return (
-    <OperationsPage title="Events" text="Keep students up to date on testing dates, movie night, and special studio events.">
-      <div className={isStudent ? "operations-single-column" : "operations-two-column"}>
-        {!isStudent && (
-          <form className="operations-form-panel" onSubmit={submit}>
-            <h2>Add Event</h2>
+    <OperationsPage
+      className="operations-page--workflow"
+      title="Events"
+      text="Keep students up to date on testing dates, movie night, and special studio events."
+      action={!isStudent && (
+        <button type="button" className="operations-action student-header-add" onClick={openEventModal}>
+          <Plus size={18} /> Add Event
+        </button>
+      )}
+    >
+      <section className="operations-panel workflow-directory-panel">
+        <div className="student-roster-head">
+          <div>
+            <h2>Studio Event Board</h2>
+            <p>{studioEvents.length} event{studioEvents.length === 1 ? "" : "s"} grouped by audience.</p>
+          </div>
+        </div>
+        <div className="workflow-directory-grid" aria-label="Event directory">
+          {eventGroups.map((group) => (
+            <section key={group.audience} className={`workflow-directory-group workflow-directory-group--${slugClassName(group.label)}`} role="group" aria-label={`${group.label} events`}>
+              <div className="workflow-directory-group-head">
+                <div>
+                  <span className="workflow-directory-swatch" aria-hidden="true" />
+                  <h3>{group.label}</h3>
+                </div>
+                <span>{group.items.length} event{group.items.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="workflow-directory-list workflow-directory-list--events">
+                <div className="workflow-directory-list-head" aria-hidden="true">
+                  <span aria-hidden="true" />
+                  <span className="workflow-directory-column-label">Event</span>
+                  <span className="workflow-directory-column-label">Date</span>
+                  <span className="workflow-directory-column-label">Time</span>
+                  <span className="workflow-directory-column-label">Audience</span>
+                </div>
+                {group.items.map((event) => <EventCard key={event.id} event={event} />)}
+              </div>
+            </section>
+          ))}
+        </div>
+      </section>
+      {eventModalOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeEventModal()}>
+          <form
+            aria-labelledby="event-modal-title"
+            aria-modal="true"
+            className="modal-card modal-form operations-form-panel student-modal-card workflow-modal-card"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={submit}
+          >
+            <div className="student-modal-head">
+              <div>
+                <h2 id="event-modal-title">Add Event</h2>
+                <p>Create a studio event for students, families, or staff.</p>
+              </div>
+              <button type="button" className="student-modal-close" aria-label="Close event editor" onClick={closeEventModal}>
+                <X size={18} />
+              </button>
+            </div>
             <label>
               Event title
               <input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
@@ -2986,14 +3142,8 @@ function EventsPage() {
               <Plus size={18} /> Add Event
             </button>
           </form>
-        )}
-        <section className="operations-panel">
-          <h2>Studio Event Board</h2>
-          <div className="operations-list compact">
-            {studioEvents.map((event) => <EventCard key={event.id} event={event} />)}
-          </div>
-        </section>
-      </div>
+        </div>
+      )}
     </OperationsPage>
   );
 }
@@ -3020,23 +3170,17 @@ function merchandiseItemToForm(item: MerchandiseItem) {
 
 function MerchandiseCard({ item, onEdit }: { item: MerchandiseItem; onEdit: (item: MerchandiseItem) => void }) {
   return (
-    <article className="merchandise-card">
-      <div className="merchandise-image">
+    <button type="button" className="workflow-directory-row workflow-directory-row--button workflow-directory-row--merchandise" aria-label={`Edit ${item.name}`} onClick={() => onEdit(item)}>
+      <span className="workflow-directory-product-image">
         {item.imageDataUrl ? <img src={item.imageDataUrl} alt={item.name} /> : <ShoppingCart aria-hidden="true" size={24} />}
-      </div>
-      <strong>{item.name}</strong>
-      <span>{item.category}</span>
-      <p>{item.description}</p>
-      <div className="merchandise-card-price">
-        <b>{formatMoney(item.price)}</b>
-        <small>{item.stock} in stock</small>
-      </div>
-      <div className="merchandise-card-actions">
-        <button type="button" className="operations-action secondary" aria-label={`Edit ${item.name}`} onClick={() => onEdit(item)}>
-          <Edit3 size={16} /> Edit
-        </button>
-      </div>
-    </article>
+      </span>
+      <span className="workflow-directory-name">
+        {item.name}
+        <small>{item.description}</small>
+      </span>
+      <span className="workflow-directory-cell">{formatMoney(item.price)}</span>
+      <span className="workflow-directory-cell">{item.stock} in stock</span>
+    </button>
   );
 }
 
@@ -3047,6 +3191,15 @@ function MerchandisePage() {
   const [selectedMerchandiseId, setSelectedMerchandiseId] = useState("");
   const selectedMerchandise = merchandiseItems.find((item) => item.id === selectedMerchandiseId);
   const inventoryValue = useMemo(() => merchandiseItems.reduce((sum, item) => sum + item.price * item.stock, 0), [merchandiseItems]);
+  const merchandiseGroups = useMemo(
+    () => Array.from(new Set(merchandiseItems.map((item) => item.category)))
+      .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }))
+      .map((category) => ({
+        category,
+        items: merchandiseItems.filter((item) => item.category === category).sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }))
+      })),
+    [merchandiseItems]
+  );
 
   const closeMerchandiseModal = () => {
     setModalMode(null);
@@ -3109,6 +3262,7 @@ function MerchandisePage() {
 
   return (
     <OperationsPage
+      className="operations-page--workflow"
       title="Merchandise"
       text="Upload and browse gloves, uniforms, sparring equipment, and Cho's apparel."
       action={
@@ -3122,11 +3276,30 @@ function MerchandisePage() {
         <StatCard label="Inventory value" value={formatMoney(inventoryValue)} icon={<Target />} />
       </div>
       <div className="operations-single-column">
-        <section className="operations-panel merchandise-manager-panel">
+        <section className="operations-panel merchandise-manager-panel workflow-directory-panel">
           <h2>Product List</h2>
-          <div className="merchandise-grid">
-            {merchandiseItems.map((item) => (
-              <MerchandiseCard key={item.id} item={item} onEdit={openEditMerchandise} />
+          <div className="workflow-directory-grid" aria-label="Product directory">
+            {merchandiseGroups.map((group) => (
+              <section key={group.category} className={`workflow-directory-group workflow-directory-group--${slugClassName(group.category)}`} role="group" aria-label={`${group.category} merchandise`}>
+                <div className="workflow-directory-group-head">
+                  <div>
+                    <span className="workflow-directory-swatch" aria-hidden="true" />
+                    <h3>{group.category}</h3>
+                  </div>
+                  <span>{group.items.length} product{group.items.length === 1 ? "" : "s"}</span>
+                </div>
+                <div className="workflow-directory-list workflow-directory-list--merchandise">
+                  <div className="workflow-directory-list-head" aria-hidden="true">
+                    <span aria-hidden="true" />
+                    <span className="workflow-directory-column-label">Product</span>
+                    <span className="workflow-directory-column-label">Price</span>
+                    <span className="workflow-directory-column-label">Stock</span>
+                  </div>
+                  {group.items.map((item) => (
+                    <MerchandiseCard key={item.id} item={item} onEdit={openEditMerchandise} />
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         </section>
