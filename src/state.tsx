@@ -16,11 +16,15 @@ import type {
   Order,
   StudioClass,
   ScheduledClass,
+  StudyGuideFolder,
+  StudyGuideMaterial,
   StudentCheckIn,
   StudentRecord,
-  StudioEvent
+  StudioEvent,
+  TrainingVideo,
+  TrainingVideoFolder
 } from "./types";
-import { applyCoupon, calculateTotals, createOrder, prototypeManagerLogin } from "./utils";
+import { applyCoupon, calculateTotals, createOrder, prototypeManagerLogin, prototypeParentLogin, prototypeStudentLogin } from "./utils";
 
 const keys = {
   cart: "chos.cart.v1",
@@ -40,7 +44,11 @@ const keys = {
   directMessages: "chos.operations.directMessages.v1",
   studioEvents: "chos.operations.events.v1",
   merchandiseItems: "chos.operations.merchandise.v1",
-  checkIns: "chos.operations.checkins.v1"
+  checkIns: "chos.operations.checkins.v1",
+  videoFolders: "chos.operations.videoFolders.v1",
+  videos: "chos.operations.videos.v1",
+  studyGuideFolders: "chos.operations.studyGuideFolders.v1",
+  studyGuideMaterials: "chos.operations.studyGuideMaterials.v1"
 } as const;
 
 const seedStudents: StudentRecord[] = [
@@ -653,6 +661,27 @@ type StudioClassInput = {
   notes?: string;
 };
 
+const seedChildAccounts: ChildAccount[] = [
+  {
+    id: "child-mina-cho",
+    parentEmail: prototypeParentLogin.email,
+    name: "Mina Cho",
+    username: "mina-cho.child",
+    age: "8",
+    beltSlug: "green",
+    createdAt: "2026-05-01T10:00:00.000Z"
+  },
+  {
+    id: "child-eli-cho",
+    parentEmail: prototypeParentLogin.email,
+    name: "Eli Cho",
+    username: "eli-cho.child",
+    age: "5",
+    beltSlug: "white",
+    createdAt: "2026-05-01T10:05:00.000Z"
+  }
+];
+
 type StudentInput = {
   fullName: string;
   dateOfBirth?: string;
@@ -681,6 +710,39 @@ type MerchandiseInput = {
   imageDataUrl?: string;
 };
 
+type TrainingVideoFolderInput = {
+  name: string;
+  subject: string;
+  description?: string;
+};
+
+type TrainingVideoInput = {
+  folderId: string;
+  title: string;
+  description?: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  videoDataUrl: string;
+};
+
+type StudyGuideFolderInput = {
+  name: string;
+  subject: string;
+  parentId?: string;
+  description?: string;
+};
+
+type StudyGuideMaterialInput = {
+  folderId: string;
+  title: string;
+  description?: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  fileDataUrl: string;
+};
+
 interface AppState {
   cart: CartItem[];
   coupon?: Coupon;
@@ -701,6 +763,10 @@ interface AppState {
   studioEvents: StudioEvent[];
   merchandiseItems: MerchandiseItem[];
   checkIns: StudentCheckIn[];
+  trainingVideoFolders: TrainingVideoFolder[];
+  trainingVideos: TrainingVideo[];
+  studyGuideFolders: StudyGuideFolder[];
+  studyGuideMaterials: StudyGuideMaterial[];
   toasts: Toast[];
   showToast: (message: string, actionLabel?: string, onAction?: () => void) => void;
   dismissToast: (id: string) => void;
@@ -720,6 +786,7 @@ interface AppState {
   register: (email: string) => void;
   setAccountRole: (role: AccountRole) => void;
   addChildAccount: (child: { name: string; age: string; beltSlug: string }) => ChildAccount | undefined;
+  updateChildAccount: (childId: string, child: { name: string; age: string; beltSlug: string }) => ChildAccount | undefined;
   addOperationsStudent: (student: StudentInput) => StudentRecord | undefined;
   updateOperationsStudent: (studentId: string, student: StudentInput) => StudentRecord | undefined;
   deleteOperationsStudent: (studentId: string) => StudentRecord | undefined;
@@ -728,6 +795,10 @@ interface AppState {
   deleteStudioClass: (classId: string) => StudioClass | undefined;
   addScheduledClass: (scheduledClass: { title: string; date: string; time: string; type: string; recurring?: boolean; titleColor?: string; studentId?: string; notes?: string }) => ScheduledClass | undefined;
   addStudioEvent: (event: { title: string; date: string; time: string; details: string; audience: StudioEvent["audience"] }) => StudioEvent | undefined;
+  addTrainingVideoFolder: (folder: TrainingVideoFolderInput) => TrainingVideoFolder | undefined;
+  addTrainingVideo: (video: TrainingVideoInput) => TrainingVideo | undefined;
+  addStudyGuideFolder: (folder: StudyGuideFolderInput) => StudyGuideFolder | undefined;
+  addStudyGuideMaterial: (material: StudyGuideMaterialInput) => StudyGuideMaterial | undefined;
   addMerchandiseItem: (item: MerchandiseInput) => MerchandiseItem | undefined;
   updateMerchandiseItem: (itemId: string, item: MerchandiseInput) => MerchandiseItem | undefined;
   deleteMerchandiseItem: (itemId: string) => MerchandiseItem | undefined;
@@ -786,7 +857,19 @@ function readPrototypeSession() {
   const session = readStorage<AccountSession | undefined>(keys.session, undefined);
   if (!session?.email) return undefined;
   if (session.email.toLowerCase() === prototypeManagerLogin.email.toLowerCase()) return session;
+  if (session.email.toLowerCase() === prototypeStudentLogin.email.toLowerCase()) return session;
+  if (session.email.toLowerCase() === prototypeParentLogin.email.toLowerCase()) return session;
+  if (session.email.toLowerCase().endsWith(".child")) return session;
   removeStorage(keys.session);
+  return undefined;
+}
+
+function inferPrototypeAccountRole(email: string): AccountRole | undefined {
+  const normalizedEmail = email.toLowerCase();
+  if (normalizedEmail === prototypeManagerLogin.email.toLowerCase()) return "staff";
+  if (normalizedEmail === prototypeStudentLogin.email.toLowerCase()) return "student";
+  if (normalizedEmail === prototypeParentLogin.email.toLowerCase()) return "guardian";
+  if (normalizedEmail.endsWith(".child")) return "student";
   return undefined;
 }
 
@@ -882,7 +965,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useSessionState();
   const [accounts, setAccounts] = useStoredState<AccountRecord[]>(keys.accounts, []);
   const [accountRoles, setAccountRoles] = useStoredState<AccountRoleRecord[]>(keys.accountRoles, []);
-  const [childAccounts, setChildAccounts] = useStoredState<ChildAccount[]>(keys.childAccounts, []);
+  const [childAccounts, setChildAccounts] = useStoredState<ChildAccount[]>(keys.childAccounts, seedChildAccounts);
   const [coupon, setCoupon] = useStoredState<Coupon | undefined>(keys.coupon, undefined);
   const [students, setStudents] = useStoredState<StudentRecord[]>(keys.students, seedStudents);
   const [studioClasses, setStudioClasses] = useStoredState<StudioClass[]>(keys.studioClasses, seedStudioClasses);
@@ -893,6 +976,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const [studioEvents, setStudioEvents] = useStoredState<StudioEvent[]>(keys.studioEvents, seedStudioEvents);
   const [merchandiseItems, setMerchandiseItems] = useStoredState<MerchandiseItem[]>(keys.merchandiseItems, seedMerchandiseItems);
   const [checkIns, setCheckIns] = useStoredState<StudentCheckIn[]>(keys.checkIns, []);
+  const [trainingVideoFolders, setTrainingVideoFolders] = useStoredState<TrainingVideoFolder[]>(keys.videoFolders, []);
+  const [trainingVideos, setTrainingVideos] = useStoredState<TrainingVideo[]>(keys.videos, []);
+  const [studyGuideFolders, setStudyGuideFolders] = useStoredState<StudyGuideFolder[]>(keys.studyGuideFolders, []);
+  const [studyGuideMaterials, setStudyGuideMaterials] = useStoredState<StudyGuideMaterial[]>(keys.studyGuideMaterials, []);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastTimersRef = useRef<Map<string, number>>(new Map());
 
@@ -922,7 +1009,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   );
 
   const totals = useMemo(() => calculateTotals(cart, coupon), [cart, coupon]);
-  const accountRole = useMemo(() => (session ? accountRoles.find((record) => record.email.toLowerCase() === session.email.toLowerCase())?.role : undefined), [accountRoles, session]);
+  const accountRole = useMemo(() => {
+    if (!session) return undefined;
+    const normalizedEmail = session.email.toLowerCase();
+    return accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role ?? inferPrototypeAccountRole(session.email);
+  }, [accountRoles, session]);
   const guardianChildren = useMemo(
     () => (session ? childAccounts.filter((child) => child.parentEmail.toLowerCase() === session.email.toLowerCase()) : []),
     [childAccounts, session]
@@ -1082,6 +1173,25 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       return createdChild;
     },
     [saveRoleForEmail, session, setChildAccounts]
+  );
+
+  const updateChildAccount = useCallback(
+    (childId: string, child: { name: string; age: string; beltSlug: string }) => {
+      if (!session) return undefined;
+      const existingChild = childAccounts.find((item) => item.id === childId && item.parentEmail.toLowerCase() === session.email.toLowerCase());
+      if (!existingChild) return undefined;
+      const cleanedName = child.name.trim();
+      if (!cleanedName) return undefined;
+      const updatedChild: ChildAccount = {
+        ...existingChild,
+        name: cleanedName,
+        age: child.age.trim(),
+        beltSlug: child.beltSlug
+      };
+      setChildAccounts((current) => current.map((item) => (item.id === childId ? updatedChild : item)));
+      return updatedChild;
+    },
+    [childAccounts, session, setChildAccounts]
   );
 
   const loginChildAccount = useCallback(
@@ -1250,6 +1360,93 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       return createdEvent;
     },
     [setStudioEvents]
+  );
+
+  const addTrainingVideoFolder = useCallback(
+    (folder: TrainingVideoFolderInput) => {
+      const name = folder.name.trim();
+      const subject = folder.subject.trim();
+      if (!name || !subject) return undefined;
+      const createdFolder: TrainingVideoFolder = {
+        id: createPrototypeId("video-folder"),
+        name,
+        subject,
+        description: folder.description?.trim() || undefined,
+        createdAt: new Date().toISOString()
+      };
+      setTrainingVideoFolders((current) => [...current, createdFolder]);
+      return createdFolder;
+    },
+    [setTrainingVideoFolders]
+  );
+
+  const addTrainingVideo = useCallback(
+    (video: TrainingVideoInput) => {
+      const title = video.title.trim();
+      const fileName = video.fileName.trim();
+      const mimeType = video.mimeType.trim() || "video/mp4";
+      const folderExists = trainingVideoFolders.some((folder) => folder.id === video.folderId);
+      if (!title || !folderExists || !fileName || !video.videoDataUrl.startsWith("data:video/")) return undefined;
+      const createdVideo: TrainingVideo = {
+        id: createPrototypeId("video"),
+        folderId: video.folderId,
+        title,
+        description: video.description?.trim() || undefined,
+        fileName,
+        mimeType,
+        size: Number.isFinite(video.size) && video.size >= 0 ? video.size : 0,
+        videoDataUrl: video.videoDataUrl,
+        createdAt: new Date().toISOString()
+      };
+      setTrainingVideos((current) => [...current, createdVideo]);
+      return createdVideo;
+    },
+    [setTrainingVideos, trainingVideoFolders]
+  );
+
+  const addStudyGuideFolder = useCallback(
+    (folder: StudyGuideFolderInput) => {
+      const name = folder.name.trim();
+      const subject = folder.subject.trim();
+      const parentId = folder.parentId?.trim() || undefined;
+      const parentExists = !parentId || studyGuideFolders.some((currentFolder) => currentFolder.id === parentId);
+      if (!name || !subject || !parentExists) return undefined;
+      const createdFolder: StudyGuideFolder = {
+        id: createPrototypeId("study-folder"),
+        name,
+        subject,
+        parentId,
+        description: folder.description?.trim() || undefined,
+        createdAt: new Date().toISOString()
+      };
+      setStudyGuideFolders((current) => [...current, createdFolder]);
+      return createdFolder;
+    },
+    [setStudyGuideFolders, studyGuideFolders]
+  );
+
+  const addStudyGuideMaterial = useCallback(
+    (material: StudyGuideMaterialInput) => {
+      const title = material.title.trim();
+      const fileName = material.fileName.trim();
+      const mimeType = material.mimeType.trim() || "application/octet-stream";
+      const folderExists = studyGuideFolders.some((folder) => folder.id === material.folderId);
+      if (!title || !folderExists || !fileName || !material.fileDataUrl.startsWith("data:")) return undefined;
+      const createdMaterial: StudyGuideMaterial = {
+        id: createPrototypeId("study-material"),
+        folderId: material.folderId,
+        title,
+        description: material.description?.trim() || undefined,
+        fileName,
+        mimeType,
+        size: Number.isFinite(material.size) && material.size >= 0 ? material.size : 0,
+        fileDataUrl: material.fileDataUrl,
+        createdAt: new Date().toISOString()
+      };
+      setStudyGuideMaterials((current) => [...current, createdMaterial]);
+      return createdMaterial;
+    },
+    [setStudyGuideMaterials, studyGuideFolders]
   );
 
   const addMerchandiseItem = useCallback(
@@ -1429,6 +1626,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     studioEvents,
     merchandiseItems,
     checkIns,
+    trainingVideoFolders,
+    trainingVideos,
+    studyGuideFolders,
+    studyGuideMaterials,
     toasts,
     showToast,
     dismissToast,
@@ -1448,6 +1649,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     register,
     setAccountRole,
     addChildAccount,
+    updateChildAccount,
     addOperationsStudent,
     updateOperationsStudent,
     deleteOperationsStudent,
@@ -1456,6 +1658,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     deleteStudioClass,
     addScheduledClass,
     addStudioEvent,
+    addTrainingVideoFolder,
+    addTrainingVideo,
+    addStudyGuideFolder,
+    addStudyGuideMaterial,
     addMerchandiseItem,
     updateMerchandiseItem,
     deleteMerchandiseItem,

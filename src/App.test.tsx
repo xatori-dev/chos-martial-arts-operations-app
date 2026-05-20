@@ -49,9 +49,15 @@ function stubResizeObserver(height = 360) {
   });
 }
 
-function renderLoggedInApp(path = "/", role: "staff" | "student" = "staff") {
-  window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "manager123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
-  window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "manager123@chos.prototype", role }]));
+function renderLoggedInApp(path = "/", role: "staff" | "student" | "guardian" = "staff") {
+  const email =
+    role === "guardian"
+      ? "parent123@chos.prototype"
+      : role === "student"
+        ? "student123@chos.prototype"
+        : "manager123@chos.prototype";
+  window.localStorage.setItem("chos.session.v1", JSON.stringify({ email, remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+  window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email, role }]));
 
   return render(
     <MemoryRouter initialEntries={[path]}>
@@ -60,6 +66,15 @@ function renderLoggedInApp(path = "/", role: "staff" | "student" = "staff") {
       </AppStateProvider>
     </MemoryRouter>
   );
+}
+
+function scopedProfileKey(scope: "manager" | "student", email: string) {
+  const keyEmail = email
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `chos.profile.${scope}.${keyEmail}.v1`;
 }
 
 function renderLoggedOutApp(path = "/") {
@@ -105,6 +120,36 @@ describe("login landing", () => {
     expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "manager123@chos.prototype", role: "staff" });
   });
 
+  it("signs the prototype student credential directly into the student Profile page", async () => {
+    const { container } = renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "Student123" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(container.querySelector(".authenticated-app-shell")).toHaveClass("is-login-transitioning");
+    expect(await screen.findByLabelText("Student profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "student123@chos.prototype", remembered: true });
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "student123@chos.prototype", role: "student" });
+  });
+
+  it("signs the prototype parent credential directly into the Parent Profile page", async () => {
+    const { container } = renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "Parent123" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(container.querySelector(".authenticated-app-shell")).toHaveClass("is-login-transitioning");
+    expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parent Profile" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Parent child profiles")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "parent123@chos.prototype", remembered: true });
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "parent123@chos.prototype", role: "guardian" });
+  });
+
   it("returns refreshed guest sessions to the opening login animation", () => {
     window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "guest@chos.prototype", remembered: false, createdAt: "2026-05-16T00:00:00.000Z" }));
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "guest@chos.prototype", role: "staff" }]));
@@ -127,6 +172,28 @@ describe("login landing", () => {
     expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "manager123@chos.prototype", remembered: true });
+  });
+
+  it("keeps a refreshed Student123 session in student mode when role storage is missing", () => {
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "student123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" }));
+
+    renderLoggedOutApp("/");
+
+    expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Student profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a refreshed Parent123 session in guardian mode when role storage is missing", () => {
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" }));
+
+    renderLoggedOutApp("/");
+
+    expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parent Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
   });
 
   it("keeps the portrait available on the reduced-motion login screen", () => {
@@ -330,6 +397,129 @@ describe("post-login operations app", () => {
 
     expect(screen.getByLabelText("Manager app launcher")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "MANAGER PANEL" })).toBeInTheDocument();
+  });
+
+  it("opens a student Profile page with profile, schedule, and messages for student accounts", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T12:00:00-05:00"));
+    renderLoggedInApp("/", "student");
+
+    expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    const profileTitleHeader = screen.getByLabelText("Student profile page header");
+    expect(profileTitleHeader.querySelector(".manager-home-profile-title-frame")).toBeInTheDocument();
+    expect(profileTitleHeader.querySelectorAll("svg.manager-home-title-rule-art")).toHaveLength(2);
+    expect(within(profileTitleHeader).queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+    expect(within(profileTitleHeader).getByRole("link", { name: "Student's Panel" })).toHaveAttribute("href", "/manager");
+    expect(within(profileTitleHeader).getByRole("button", { name: "Log Out" })).toBeInTheDocument();
+
+    const homeOverview = screen.getByLabelText("Student profile overview section");
+    const profileOverview = within(homeOverview).getByLabelText("Student profile overview");
+    const studentSchedule = within(homeOverview).getByLabelText("Student month schedule");
+    expect(profileOverview.compareDocumentPosition(studentSchedule) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(studentSchedule.compareDocumentPosition(screen.getByLabelText("Messages and event notifications")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(profileOverview).getByRole("img", { name: "Talia Brooks profile portrait" })).toHaveAttribute("src", expect.stringContaining("assets/student-profiles/talia-brooks.webp"));
+    expect(within(profileOverview).getByRole("heading", { name: "Talia Brooks" })).toBeInTheDocument();
+    expect(within(profileOverview).getByText("Little Dragons Student")).toBeInTheDocument();
+    expect(within(profileOverview).getByText("Rank: White Belt")).toBeInTheDocument();
+    expect(within(profileOverview).getByText("Member Since: April 2026")).toBeInTheDocument();
+    expect(within(studentSchedule).getByRole("heading", { name: "May 17 - 23, 2026" })).toBeInTheDocument();
+    expect(within(studentSchedule).getByRole("button", { name: "Select Monday, May 18, 2026" })).toHaveAttribute("aria-pressed", "true");
+
+    expect(screen.getByText("4 Messages")).toBeInTheDocument();
+    expect(screen.getByText("2 Event Notifications")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open search messages and event notifications" }));
+    expect(screen.getByRole("searchbox", { name: "Search messages and event notifications" })).toHaveAttribute("placeholder", "Search messages and event notifications...");
+
+    const testingEventRow = screen.getByRole("button", { name: /Event Team.*Upcoming Event: Color Belt Testing/i });
+    fireEvent.click(testingEventRow);
+    expect(testingEventRow).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("heading", { name: "Upcoming Event: Color Belt Testing" })).toBeInTheDocument();
+    expect(screen.getByText("Date: July 25 - July 27, 2026")).toBeInTheDocument();
+
+    fireEvent.click(within(profileOverview).getByRole("button", { name: "Profile Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Student profile settings" });
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Kai Student" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Profile Settings" }));
+    expect(JSON.parse(window.localStorage.getItem(scopedProfileKey("student", "student123@chos.prototype")) ?? "{}")).toMatchObject({ name: "Kai Student" });
+    expect(window.localStorage.getItem("chos.profile.v1")).toBeNull();
+  });
+
+  it("keeps student profile defaults isolated from saved manager profile settings", () => {
+    window.localStorage.setItem("chos.profile.v1", JSON.stringify({
+      name: "Master Cho",
+      username: "master-cho",
+      email: "manager123@chos.prototype",
+      phone: "(262) 555-0199",
+      updates: true,
+      theme: "dark",
+      photoDataUrl: "data:image/png;base64,manager-photo"
+    }));
+
+    renderLoggedInApp("/", "student");
+
+    const profileOverview = screen.getByLabelText("Student profile overview");
+    expect(within(profileOverview).getByRole("heading", { name: "Talia Brooks" })).toBeInTheDocument();
+    expect(within(profileOverview).queryByRole("heading", { name: "Master Cho" })).not.toBeInTheDocument();
+    expect(within(profileOverview).getByRole("img", { name: "Talia Brooks profile portrait" })).toHaveAttribute("src", expect.stringContaining("assets/student-profiles/talia-brooks.webp"));
+  });
+
+  it("opens a Parent Profile page with child dashboards, tools, messages, notifications, and editable kids profiles", () => {
+    renderLoggedInApp("/", "guardian");
+
+    expect(screen.getByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parent Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Student's Panel" })).not.toBeInTheDocument();
+
+    const childProfiles = screen.getByLabelText("Parent child profiles");
+    expect(within(childProfiles).getByRole("button", { name: "Select Mina Cho profile" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(childProfiles).getByRole("button", { name: "Select Eli Cho profile" })).toBeInTheDocument();
+    fireEvent.click(within(childProfiles).getByRole("group", { name: "Eli Cho profile card" }));
+    expect(within(childProfiles).getByRole("button", { name: "Select Eli Cho profile" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByLabelText("Selected child workspace")).getByRole("heading", { name: "Eli Cho" })).toBeInTheDocument();
+    const familyTotals = screen.getByLabelText("Parent family totals");
+    expect(familyTotals).toHaveTextContent(/2\s*Child Profiles/);
+    expect(familyTotals).toHaveTextContent(/4\s*Messages/);
+    expect(familyTotals).toHaveTextContent(/4\s*Notifications/);
+
+    const parentTools = screen.getByLabelText("Parent student tools");
+    expect(within(parentTools).getAllByRole("button").map((button) => button.textContent)).toEqual(["Dashboard", "Classes", "Study", "Test", "Messages", "Notifications"]);
+
+    fireEvent.click(within(parentTools).getByRole("button", { name: "Classes" }));
+    expect(screen.getByLabelText("Parent classes view")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Classes" })).toBeInTheDocument();
+
+    fireEvent.click(within(parentTools).getByRole("button", { name: "Messages" }));
+    expect(screen.getByLabelText("Parent messages view")).toBeInTheDocument();
+    expect(screen.getByText("Practice Session Reminder")).toBeInTheDocument();
+
+    fireEvent.click(within(parentTools).getByRole("button", { name: "Notifications" }));
+    expect(screen.getByLabelText("Parent notifications view")).toBeInTheDocument();
+    expect(screen.getByText("Upcoming Event: Color Belt Testing")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Child Profile" }));
+    let dialog = screen.getByRole("dialog", { name: "Add Child Profile" });
+    fireEvent.change(within(dialog).getByLabelText("Child name"), { target: { value: "Kai Cho" } });
+    fireEvent.change(within(dialog).getByLabelText("Child age"), { target: { value: "7" } });
+    fireEvent.change(within(dialog).getByLabelText("Current belt"), { target: { value: "yellow" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Child Profile" }));
+
+    expect(screen.queryByRole("dialog", { name: "Add Child Profile" })).not.toBeInTheDocument();
+    expect(within(childProfiles).getByRole("button", { name: "Select Kai Cho profile" })).toHaveAttribute("aria-pressed", "true");
+    expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ parentEmail: "parent123@chos.prototype", name: "Kai Cho", age: "7", beltSlug: "yellow" })
+    ]));
+
+    fireEvent.click(within(childProfiles).getByRole("button", { name: "Edit Kai Cho profile" }));
+    dialog = screen.getByRole("dialog", { name: "Edit Child Profile" });
+    fireEvent.change(within(dialog).getByLabelText("Child name"), { target: { value: "Kai Bennett" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Child Profile" }));
+
+    expect(within(childProfiles).getByRole("button", { name: "Select Kai Bennett profile" })).toHaveAttribute("aria-pressed", "true");
+    expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ parentEmail: "parent123@chos.prototype", name: "Kai Bennett", age: "7", beltSlug: "yellow" })
+    ]));
   });
 
   it("filters the Home feed by message and event notification count controls", () => {
@@ -656,9 +846,11 @@ describe("post-login operations app", () => {
       "Messages",
       "Students",
       "Classes",
+      "Study Guide",
       "Events",
       "Scheduling",
       "Merchandise",
+      "Videos",
       "Reports"
     ];
     expect(launcherLinks.map((link) => link.textContent?.trim())).toEqual(approvedIconOrder);
@@ -668,16 +860,20 @@ describe("post-login operations app", () => {
       "/manager?tool=messages",
       "/manager?tool=students",
       "/manager?tool=classes",
+      "/manager?tool=studyGuide",
       "/manager?tool=events",
       "/manager?tool=scheduling",
       "/manager?tool=merchandise",
+      "/manager?tool=videos",
       "/manager?tool=reports"
     ]);
     expect(within(launcher).getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
     const launcherImages = launcher.querySelectorAll("img.manager-launcher-image");
     const launcherLabels = launcher.querySelectorAll(".manager-launcher-label");
     expect(launcherImages).toHaveLength(8);
-    expect(launcherLabels).toHaveLength(8);
+    expect(launcher.querySelector(".manager-launcher-symbol--studyGuide")).toBeInTheDocument();
+    expect(launcher.querySelector(".manager-launcher-symbol--videos")).toBeInTheDocument();
+    expect(launcherLabels).toHaveLength(10);
     expect(Array.from(launcherLabels).map((label) => label.textContent?.trim())).toEqual(approvedIconOrder);
     launcherImages.forEach((image) => {
       expect(image).toHaveAttribute("src", expect.stringContaining(".webp"));
@@ -701,6 +897,110 @@ describe("post-login operations app", () => {
     expect(screen.queryByLabelText("Manager quick actions")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Student Management & Communication" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Quick Stats" })).not.toBeInTheDocument();
+  });
+
+  it("lets managers publish study guide folders, subfolders, and files into the student Study panel", async () => {
+    const { unmount } = renderLoggedInApp("/manager?tool=studyGuide");
+
+    const managerLauncher = screen.getByLabelText("Manager app launcher");
+    expect(within(managerLauncher).getByRole("link", { name: "Study Guide" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByLabelText("Study Guide workspace")).toBeInTheDocument();
+    expect(screen.getByLabelText("Manager study guide library")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Folder name"), { target: { value: "White Belt Basics" } });
+    fireEvent.change(screen.getByLabelText("Folder subject"), { target: { value: "Foundations" } });
+    fireEvent.change(screen.getByLabelText("Folder description"), { target: { value: "Start here for first-rank review." } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Folder" }));
+
+    const rootFolder = JSON.parse(window.localStorage.getItem("chos.operations.studyGuideFolders.v1") ?? "[]")[0];
+    expect(rootFolder).toEqual(expect.objectContaining({ name: "White Belt Basics", subject: "Foundations" }));
+
+    fireEvent.change(screen.getByLabelText("Folder name"), { target: { value: "Kicks" } });
+    fireEvent.change(screen.getByLabelText("Folder subject"), { target: { value: "Front Kick" } });
+    fireEvent.change(screen.getByLabelText("Parent folder"), { target: { value: rootFolder.id } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Folder" }));
+
+    const folders = JSON.parse(window.localStorage.getItem("chos.operations.studyGuideFolders.v1") ?? "[]");
+    const kicksFolder = folders.find((folder: { name: string }) => folder.name === "Kicks");
+    expect(kicksFolder).toEqual(expect.objectContaining({ parentId: rootFolder.id, subject: "Front Kick" }));
+
+    fireEvent.change(screen.getByLabelText("Material title"), { target: { value: "Front Kick Checklist" } });
+    fireEvent.change(screen.getByLabelText("Material folder"), { target: { value: kicksFolder.id } });
+    fireEvent.change(screen.getByLabelText("Material description"), { target: { value: "Read before practicing front kicks at home." } });
+    fireEvent.change(screen.getByLabelText("Upload study material file"), {
+      target: {
+        files: [new File(["front-kick-checklist"], "front-kick-notes.pdf", { type: "application/pdf" })]
+      }
+    });
+
+    await waitFor(() => expect(screen.getByText("front-kick-notes.pdf ready to publish.")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Publish Study Material" }));
+
+    expect(screen.getByText("Front Kick Checklist")).toBeInTheDocument();
+    expect(screen.getByText("Read before practicing front kicks at home.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.studyGuideMaterials.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "Front Kick Checklist", fileName: "front-kick-notes.pdf", mimeType: "application/pdf", folderId: kicksFolder.id })
+    ]));
+
+    unmount();
+    renderLoggedInApp("/manager?tool=study", "student");
+
+    const studentLauncher = screen.getByLabelText("Student app launcher");
+    expect(within(studentLauncher).getByRole("link", { name: "Study" })).toHaveAttribute("aria-current", "page");
+    const studentStudyMaterials = screen.getByLabelText("Student study guide materials");
+    expect(studentStudyMaterials).toBeInTheDocument();
+    expect(within(studentStudyMaterials).getByText("White Belt Basics")).toBeInTheDocument();
+    expect(within(studentStudyMaterials).getByText("Kicks")).toBeInTheDocument();
+    expect(within(studentStudyMaterials).getByText("Front Kick Checklist")).toBeInTheDocument();
+    expect(within(studentStudyMaterials).getByText("Read before practicing front kicks at home.")).toBeInTheDocument();
+    expect(within(studentStudyMaterials).getByRole("link", { name: "Open Front Kick Checklist" })).toHaveAttribute("href", expect.stringContaining("data:application/pdf"));
+  });
+
+  it("lets managers upload categorized videos that appear in the student Videos panel", async () => {
+    const { unmount } = renderLoggedInApp("/manager?tool=videos");
+
+    const managerLauncher = screen.getByLabelText("Manager app launcher");
+    expect(within(managerLauncher).getByRole("link", { name: "Videos" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByLabelText("Videos workspace")).toBeInTheDocument();
+    expect(screen.getByLabelText("Manager video library")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Folder name"), { target: { value: "Forms" } });
+    fireEvent.change(screen.getByLabelText("Folder subject"), { target: { value: "Beginner Forms" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Folder" }));
+
+    expect(screen.getAllByText("Forms").length).toBeGreaterThan(0);
+    expect(screen.getByText("Beginner Forms")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Video title"), { target: { value: "Roundhouse Basics" } });
+    fireEvent.change(screen.getByLabelText("Video description"), { target: { value: "Practice chamber, pivot, and clean retraction." } });
+    fireEvent.change(screen.getByLabelText("Upload video file"), {
+      target: {
+        files: [new File(["roundhouse-demo"], "roundhouse-demo.mp4", { type: "video/mp4" })]
+      }
+    });
+
+    await waitFor(() => expect(screen.getByText("roundhouse-demo.mp4 ready to publish.")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Publish Video" }));
+
+    expect(screen.getByText("Roundhouse Basics")).toBeInTheDocument();
+    expect(screen.getByText("Practice chamber, pivot, and clean retraction.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.videoFolders.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "Forms", subject: "Beginner Forms" })
+    ]));
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.videos.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "Roundhouse Basics", fileName: "roundhouse-demo.mp4", mimeType: "video/mp4" })
+    ]));
+
+    unmount();
+    renderLoggedInApp("/manager?tool=videos", "student");
+
+    const studentLauncher = screen.getByLabelText("Student app launcher");
+    expect(within(studentLauncher).getByRole("link", { name: "Videos" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByLabelText("Student video library")).toBeInTheDocument();
+    expect(screen.getByText("Roundhouse Basics")).toBeInTheDocument();
+    expect(screen.getAllByText("Forms").length).toBeGreaterThan(0);
+    expect(screen.getByText("Practice chamber, pivot, and clean retraction.")).toBeInTheDocument();
+    expect(screen.getByTitle("Roundhouse Basics video player")).toHaveAttribute("src", expect.stringContaining("data:video/mp4"));
   });
 
   it("collapses and expands the manager launcher sidebar from the glowing rail", () => {
@@ -770,14 +1070,52 @@ describe("post-login operations app", () => {
     expect(within(liveCalendar).getByRole("link", { name: "Manage Schedule" })).toHaveAttribute("href", "/schedule");
   });
 
-  it("keeps the manager launcher frame even when a saved account is student mode", () => {
+  it("opens a student panel launcher with student-only destinations when a saved account is student mode", () => {
     renderLoggedInApp("/manager", "student");
 
-    expect(screen.getByLabelText("Manager app launcher")).toBeInTheDocument();
+    const panelHeader = screen.getByLabelText("Student panel page header");
+    expect(within(panelHeader).getByRole("heading", { name: "Student's Panel" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Student app launcher")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Manager app launcher")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Manager navigation")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Cho's Operations home")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Operations navigation")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Cho's Operations" })).not.toBeInTheDocument();
+
+    const studentLauncher = screen.getByLabelText("Student app launcher");
+    const studentLinks = within(studentLauncher).getAllByRole("link");
+    expect(studentLinks.map((link) => link.textContent)).toEqual(["Dashboard", "Classes", "Study", "Test", "Videos"]);
+    expect(studentLinks.map((link) => link.getAttribute("href"))).toEqual([
+      "/manager?tool=dashboard",
+      "/manager?tool=classes",
+      "/manager?tool=study",
+      "/manager?tool=test",
+      "/manager?tool=videos"
+    ]);
+    expect(screen.queryByRole("link", { name: "Messages" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Students" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Scheduling" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Merchandise" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Reports" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Dashboard workspace")).toBeInTheDocument();
+  });
+
+  it("redirects student accounts away from staff-only direct operation routes", () => {
+    renderLoggedInApp("/students", "student");
+
+    expect(screen.getByLabelText("Student profile page")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Students workspace")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create New Student" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+  });
+
+  it("redirects guardian accounts away from staff-only direct operation routes", () => {
+    renderLoggedInApp("/schedule", "guardian");
+
+    expect(screen.getByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Schedule workspace")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Schedule Event" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
   });
 
   it("lets the manager edit their own profile settings", () => {
@@ -1058,7 +1396,7 @@ describe("post-login operations app", () => {
   });
 
   it("lets managers create a new student from the restored students page", () => {
-    renderLoggedInApp("/students", "student");
+    renderLoggedInApp("/students");
 
     expect(screen.getByRole("link", { name: "Back to Manager Page" })).toHaveAttribute("href", "/manager");
     expect(screen.queryByLabelText("Manager navigation")).not.toBeInTheDocument();

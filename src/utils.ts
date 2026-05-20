@@ -99,21 +99,43 @@ function parseTime(time: string) {
   return { hours, minutes };
 }
 
-function chicagoDateTimeToUtcStamp(date: string, time: string) {
-  const { hours, minutes } = parseTime(time);
-  const local = parseISO(`${date}T00:00:00`);
-  const daylightOffsetHours = 5;
-  const utcDate = new Date(Date.UTC(local.getFullYear(), local.getMonth(), local.getDate(), hours + daylightOffsetHours, minutes));
+function utcStamp(date: Date) {
   return [
-    utcDate.getUTCFullYear(),
-    String(utcDate.getUTCMonth() + 1).padStart(2, "0"),
-    String(utcDate.getUTCDate()).padStart(2, "0"),
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
     "T",
-    String(utcDate.getUTCHours()).padStart(2, "0"),
-    String(utcDate.getUTCMinutes()).padStart(2, "0"),
-    String(utcDate.getUTCSeconds()).padStart(2, "0"),
+    String(date.getUTCHours()).padStart(2, "0"),
+    String(date.getUTCMinutes()).padStart(2, "0"),
+    String(date.getUTCSeconds()).padStart(2, "0"),
     "Z"
   ].join("");
+}
+
+function timeZoneOffsetMs(timeZone: string, date: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value ?? "0");
+  const zonedAsUtc = Date.UTC(value("year"), value("month") - 1, value("day"), value("hour"), value("minute"), value("second"));
+  return zonedAsUtc - date.getTime();
+}
+
+function chicagoDateTimeToUtcStamp(date: string, time: string) {
+  const { hours, minutes } = parseTime(time);
+  const [year, month, day] = date.split("-").map(Number);
+  const wallTimeAsUtc = Date.UTC(year, month - 1, day, hours, minutes);
+  const initialOffset = timeZoneOffsetMs("America/Chicago", new Date(wallTimeAsUtc));
+  const utcDate = new Date(wallTimeAsUtc - initialOffset);
+  const settledOffset = timeZoneOffsetMs("America/Chicago", utcDate);
+  return utcStamp(new Date(wallTimeAsUtc - settledOffset));
 }
 
 function icsEscape(value: string) {
@@ -129,7 +151,7 @@ export function generateIcs(event: Pick<ClassEvent, "title" | "date" | "startTim
     "CALSCALE:GREGORIAN",
     "BEGIN:VEVENT",
     `UID:${uid}`,
-    `DTSTAMP:${format(new Date(), "yyyyMMdd'T'HHmmss'Z'")}`,
+    `DTSTAMP:${utcStamp(new Date())}`,
     `DTSTART:${chicagoDateTimeToUtcStamp(event.date, event.startTime)}`,
     `DTEND:${chicagoDateTimeToUtcStamp(event.date, event.endTime)}`,
     `SUMMARY:${icsEscape(event.title)}`,
@@ -194,8 +216,30 @@ export const prototypeManagerLogin = {
   role: "staff"
 } as const;
 
+export const prototypeStudentLogin = {
+  username: "Student123",
+  password: "123456",
+  email: "student123@chos.prototype",
+  role: "student"
+} as const;
+
+export const prototypeParentLogin = {
+  username: "Parent123",
+  password: "123456",
+  email: "parent123@chos.prototype",
+  role: "guardian"
+} as const;
+
 export function isPrototypeManagerLogin(input: { username: string; password: string }) {
   return input.username.trim().toLowerCase() === prototypeManagerLogin.username.toLowerCase() && input.password.trim() === prototypeManagerLogin.password;
+}
+
+export function isPrototypeStudentLogin(input: { username: string; password: string }) {
+  return input.username.trim().toLowerCase() === prototypeStudentLogin.username.toLowerCase() && input.password.trim() === prototypeStudentLogin.password;
+}
+
+export function isPrototypeParentLogin(input: { username: string; password: string }) {
+  return input.username.trim().toLowerCase() === prototypeParentLogin.username.toLowerCase() && input.password.trim() === prototypeParentLogin.password;
 }
 
 export function validateRegisterForm(input: { email: string; password: string }) {

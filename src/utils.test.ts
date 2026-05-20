@@ -8,6 +8,8 @@ import {
   generateIcs,
   getInitialLaunchPhase,
   getLoginGateState,
+  isPrototypeParentLogin,
+  isPrototypeStudentLogin,
   searchSite,
   validateLoginForm,
   validateRegisterForm,
@@ -66,6 +68,19 @@ describe("calendar and search utilities", () => {
     expect(ics).toContain("DTSTART:20260511T173000Z");
   });
 
+  it("uses Chicago daylight saving rules when generating winter ICS times", () => {
+    const ics = generateIcs({
+      title: "Winter Class",
+      date: "2026-01-12",
+      startTime: "4:30 PM",
+      endTime: "5:15 PM",
+      description: "Cold weather schedule"
+    });
+
+    expect(ics).toContain("DTSTART:20260112T223000Z");
+    expect(ics).toContain("DTEND:20260112T231500Z");
+  });
+
   it("indexes pages, products, classes, instructors, and terms", () => {
     const results = searchSite("starter");
     expect(results.some((result) => result.path === "/product/starter-program")).toBe(true);
@@ -110,6 +125,10 @@ describe("login landing utilities", () => {
     });
 
     expect(validateLoginForm({ username: "student", password: "blackbelt" })).toEqual({});
+    expect(isPrototypeStudentLogin({ username: "Student123", password: "123456" })).toBe(true);
+    expect(isPrototypeStudentLogin({ username: "Student123", password: "wrong" })).toBe(false);
+    expect(isPrototypeParentLogin({ username: "Parent123", password: "123456" })).toBe(true);
+    expect(isPrototypeParentLogin({ username: "Parent123", password: "wrong" })).toBe(false);
 
     expect(validateRegisterForm({ email: "bad", password: "123" })).toEqual({
       email: "Valid email is required.",

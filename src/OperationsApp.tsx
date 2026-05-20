@@ -1,12 +1,14 @@
 import {
-  Archive,
   Award,
   BarChart3,
+  BookOpen,
   Camera,
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  FileText,
+  FolderPlus,
   Mail,
   MapPin,
   MessageCircle,
@@ -21,7 +23,9 @@ import {
   Sun,
   Target,
   Trash2,
+  Upload,
   Users,
+  Video,
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent as ReactChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
@@ -39,7 +43,7 @@ import schedulingLauncherIcon from "./assets/manager-icons/Scheduling.webp";
 import studentsLauncherIcon from "./assets/manager-icons/Students.webp";
 import { useAppState } from "./state";
 import { applyAppTheme, readStoredAppTheme, writeStoredAppTheme, type AppThemeMode } from "./theme";
-import type { ClassWeekday, DirectMessage, MerchandiseItem, MessageLog, ScheduledClass, StudioClass, StudentRecord, StudioEvent } from "./types";
+import type { ChildAccount, ClassWeekday, MerchandiseItem, MessageLog, ScheduledClass, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TrainingVideo, TrainingVideoFolder } from "./types";
 import { formatMoney, validateEmail } from "./utils";
 
 const beltOptions = ["White", "Yellow", "Orange", "Green", "Blue", "Purple", "Brown", "Red", "Dark Brown", "Black"];
@@ -58,27 +62,36 @@ const defaultScheduleTypeOptions = [
   { value: "testing-prep", label: "Testing prep" }
 ];
 
-type ManagerLauncherIconKind = "dashboard" | "messages" | "students" | "classes" | "events" | "scheduling" | "merchandise" | "reports";
+type ManagerLauncherIconKind = "dashboard" | "messages" | "students" | "classes" | "studyGuide" | "events" | "scheduling" | "merchandise" | "videos" | "reports" | "study" | "test";
 
 type ManagerLauncherItem = {
-  path: string;
   label: string;
   icon: ManagerLauncherIconKind;
   future?: boolean;
 };
 
 const managerLauncherItems: ManagerLauncherItem[] = [
-  { path: "/dashboard", label: "Dashboard", icon: "dashboard" },
-  { path: "/messages", label: "Messages", icon: "messages" },
-  { path: "/students", label: "Students", icon: "students" },
-  { path: "/classes", label: "Classes", icon: "classes" },
-  { path: "/events", label: "Events", icon: "events" },
-  { path: "/schedule", label: "Scheduling", icon: "scheduling" },
-  { path: "/merchandise", label: "Merchandise", icon: "merchandise" },
-  { path: "/reports", label: "Reports", icon: "reports", future: true }
+  { label: "Dashboard", icon: "dashboard" },
+  { label: "Messages", icon: "messages" },
+  { label: "Students", icon: "students" },
+  { label: "Classes", icon: "classes" },
+  { label: "Study Guide", icon: "studyGuide" },
+  { label: "Events", icon: "events" },
+  { label: "Scheduling", icon: "scheduling" },
+  { label: "Merchandise", icon: "merchandise" },
+  { label: "Videos", icon: "videos" },
+  { label: "Reports", icon: "reports", future: true }
 ];
 
-const managerLauncherIconImages: Record<ManagerLauncherIconKind, string> = {
+const studentLauncherItems: ManagerLauncherItem[] = [
+  { label: "Dashboard", icon: "dashboard" },
+  { label: "Classes", icon: "classes" },
+  { label: "Study", icon: "study" },
+  { label: "Test", icon: "test" },
+  { label: "Videos", icon: "videos" }
+];
+
+const managerLauncherIconImages: Partial<Record<ManagerLauncherIconKind, string>> = {
   dashboard: dashboardLauncherIcon,
   messages: messagesLauncherIcon,
   students: studentsLauncherIcon,
@@ -86,7 +99,9 @@ const managerLauncherIconImages: Record<ManagerLauncherIconKind, string> = {
   events: eventsLauncherIcon,
   scheduling: schedulingLauncherIcon,
   merchandise: merchandiseLauncherIcon,
-  reports: reportsLauncherIcon
+  reports: reportsLauncherIcon,
+  study: reportsLauncherIcon,
+  test: eventsLauncherIcon
 };
 
 type ManagerProfileSettings = {
@@ -100,7 +115,54 @@ type ManagerProfileSettings = {
   passwordUpdatedAt?: string;
 };
 
-const managerProfileStorageKey = "chos.profile.v1";
+const legacyProfileStorageKey = "chos.profile.v1";
+
+function profileStorageKey(scope: "manager" | "student", sessionEmail?: string) {
+  const keyEmail = (sessionEmail ?? `${scope}@chos.prototype`)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `chos.profile.${scope}.${keyEmail || "account"}.v1`;
+}
+
+function normalizeStoredProfile(saved: string | null, fallback: ManagerProfileSettings) {
+  if (!saved) return undefined;
+  const parsed = JSON.parse(saved) as Partial<ManagerProfileSettings>;
+  const photoDataUrl = typeof parsed.photoDataUrl === "string" && parsed.photoDataUrl.startsWith("data:image/") ? parsed.photoDataUrl : undefined;
+  return {
+    name: parsed.name?.trim() || fallback.name,
+    username: parsed.username?.trim() || fallback.username,
+    email: parsed.email?.trim() || fallback.email,
+    phone: parsed.phone?.trim() || fallback.phone,
+    updates: parsed.updates ?? fallback.updates,
+    theme: parsed.theme === "light" || parsed.theme === "dark" ? parsed.theme : fallback.theme,
+    photoDataUrl,
+    passwordUpdatedAt: parsed.passwordUpdatedAt
+  };
+}
+
+function readProfileStorage(key: string, fallback: ManagerProfileSettings) {
+  if (typeof window === "undefined") return undefined;
+  try {
+    return normalizeStoredProfile(window.localStorage.getItem(key), fallback);
+  } catch {
+    return undefined;
+  }
+}
+
+function storedProfileBelongsToSession(profile: ManagerProfileSettings | undefined, sessionEmail?: string) {
+  return Boolean(profile && sessionEmail && profile.email.trim().toLowerCase() === sessionEmail.trim().toLowerCase());
+}
+
+function writeProfileStorage(key: string, profile: ManagerProfileSettings) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(profile));
+  } catch {
+    // Profile changes still update local React state when storage is blocked.
+  }
+}
 
 function fallbackManagerProfile(sessionEmail?: string): ManagerProfileSettings {
   const email = sessionEmail ?? "team@chos.prototype";
@@ -117,34 +179,41 @@ function fallbackManagerProfile(sessionEmail?: string): ManagerProfileSettings {
 
 function readManagerProfile(sessionEmail?: string): ManagerProfileSettings {
   const fallback = fallbackManagerProfile(sessionEmail);
-  if (typeof window === "undefined") return fallback;
-  try {
-    const saved = window.localStorage.getItem(managerProfileStorageKey);
-    if (!saved) return fallback;
-    const parsed = JSON.parse(saved) as Partial<ManagerProfileSettings>;
-    const photoDataUrl = typeof parsed.photoDataUrl === "string" && parsed.photoDataUrl.startsWith("data:image/") ? parsed.photoDataUrl : undefined;
-    return {
-      name: parsed.name?.trim() || fallback.name,
-      username: parsed.username?.trim() || fallback.username,
-      email: parsed.email?.trim() || fallback.email,
-      phone: parsed.phone?.trim() || fallback.phone,
-      updates: parsed.updates ?? fallback.updates,
-      theme: parsed.theme === "light" || parsed.theme === "dark" ? parsed.theme : fallback.theme,
-      photoDataUrl,
-      passwordUpdatedAt: parsed.passwordUpdatedAt
-    };
-  } catch {
-    return fallback;
-  }
+  return readProfileStorage(profileStorageKey("manager", sessionEmail), fallback) ?? readProfileStorage(legacyProfileStorageKey, fallback) ?? fallback;
 }
 
-function writeManagerProfile(profile: ManagerProfileSettings) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(managerProfileStorageKey, JSON.stringify(profile));
-  } catch {
-    // Profile changes still update local React state when storage is blocked.
-  }
+function writeManagerProfile(profile: ManagerProfileSettings, sessionEmail?: string) {
+  writeProfileStorage(profileStorageKey("manager", sessionEmail ?? profile.email), profile);
+  writeProfileStorage(legacyProfileStorageKey, profile);
+}
+
+function fallbackStudentProfile(sessionEmail?: string, student?: StudentRecord): ManagerProfileSettings {
+  const email = sessionEmail ?? student?.email ?? "student@chos.prototype";
+  const studentName = student ? fullName(student) : "";
+  const fallbackName = studentName || "Cho's Student";
+  const usernameSource = fallbackName === "Cho's Student" ? email.split("@")[0] : fallbackName;
+  const username = usernameSource.replace(/[^a-z0-9._-]/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "chos-student";
+
+  return {
+    name: fallbackName,
+    username,
+    email,
+    phone: student?.phone ?? "(262) 555-0100",
+    updates: true,
+    theme: readStoredAppTheme()
+  };
+}
+
+function readStudentProfile(sessionEmail?: string, student?: StudentRecord): ManagerProfileSettings {
+  const fallback = fallbackStudentProfile(sessionEmail, student);
+  const scopedProfile = readProfileStorage(profileStorageKey("student", sessionEmail), fallback);
+  if (scopedProfile) return scopedProfile;
+  const legacyProfile = readProfileStorage(legacyProfileStorageKey, fallback);
+  return legacyProfile && storedProfileBelongsToSession(legacyProfile, sessionEmail) ? legacyProfile : fallback;
+}
+
+function writeStudentProfile(profile: ManagerProfileSettings, sessionEmail?: string) {
+  writeProfileStorage(profileStorageKey("student", sessionEmail ?? profile.email), profile);
 }
 
 function publicAsset(path: string) {
@@ -562,6 +631,16 @@ function ManagerLauncherIcon({ icon }: { icon: ManagerLauncherIconKind }) {
   const imageClassName = `manager-launcher-image manager-launcher-image--${icon}${icon === "students" ? " manager-students-emblem" : ""}`;
   const launcherIconImage = managerLauncherIconImages[icon];
 
+  if (!launcherIconImage) {
+    const LauncherSymbol = icon === "studyGuide" ? BookOpen : Video;
+
+    return (
+      <span className={frameClassName} aria-hidden="true">
+        <LauncherSymbol className={`manager-launcher-symbol manager-launcher-symbol--${icon}`} />
+      </span>
+    );
+  }
+
   return (
     <span className={frameClassName} aria-hidden="true">
       <img
@@ -583,6 +662,11 @@ function getSelectedManagerLauncherItem(search: string) {
   return managerLauncherItems.find((item) => item.icon === requestedTool) ?? managerLauncherItems[0];
 }
 
+function getSelectedStudentLauncherItem(search: string) {
+  const requestedTool = new URLSearchParams(search).get("tool");
+  return studentLauncherItems.find((item) => item.icon === requestedTool) ?? studentLauncherItems[0];
+}
+
 function ManagerLauncherWorkspace({ tool }: { tool: ManagerLauncherIconKind }) {
   switch (tool) {
     case "dashboard":
@@ -593,16 +677,720 @@ function ManagerLauncherWorkspace({ tool }: { tool: ManagerLauncherIconKind }) {
       return <StudentsPage />;
     case "classes":
       return <ClassesPage />;
+    case "studyGuide":
+      return <ManagerStudyGuidePage />;
     case "events":
       return <EventsPage />;
     case "scheduling":
       return <SchedulePage />;
     case "merchandise":
       return <MerchandisePage />;
+    case "videos":
+      return <ManagerVideosPage />;
     case "reports":
       return <ReportsPage />;
     default:
       return <DashboardPage />;
+  }
+}
+
+function StudentPanelDashboardPage() {
+  const { scheduledClasses, students, studioEvents } = useAppState();
+  const selectedStudent = students[0];
+  const nextScheduledClass = scheduledClasses.find((item) => !item.studentId || item.studentId === selectedStudent?.id) ?? scheduledClasses[0];
+  const nextEvent = studioEvents[0];
+  const studentName = selectedStudent ? fullName(selectedStudent) : "Cho's Student";
+
+  return (
+    <OperationsPage className="operations-page--workflow" title="Dashboard" text="Student overview, upcoming class reminders, and account shortcuts.">
+      <div className="operations-stats">
+        <StatCard label="Student" value={studentName} icon={<Users />} />
+        <StatCard label="Rank" value={selectedStudent?.beltRank ?? "White"} icon={<Award />} />
+        <StatCard label="Classes attended" value={selectedStudent?.classesAttended ?? 0} icon={<CheckCircle2 />} />
+      </div>
+      <section className="operations-panel workflow-directory-panel" aria-label="Student dashboard summary">
+        <div className="student-roster-head">
+          <div>
+            <h2>Today</h2>
+            <p>Quick student account details for the current training week.</p>
+          </div>
+        </div>
+        <div className="workflow-directory-grid" aria-label="Student dashboard cards">
+          <article className="workflow-directory-group">
+            <div className="workflow-directory-group-head">
+              <div>
+                <span className="workflow-directory-swatch" aria-hidden="true" />
+                <h3>Next Class</h3>
+              </div>
+              <span>{nextScheduledClass?.date ?? "No date"}</span>
+            </div>
+            <p>{nextScheduledClass ? `${nextScheduledClass.title} at ${nextScheduledClass.time}` : "No class is scheduled yet."}</p>
+          </article>
+          <article className="workflow-directory-group">
+            <div className="workflow-directory-group-head">
+              <div>
+                <span className="workflow-directory-swatch" aria-hidden="true" />
+                <h3>Next Event</h3>
+              </div>
+              <span>{nextEvent?.date ?? "No date"}</span>
+            </div>
+            <p>{nextEvent ? `${nextEvent.title} at ${nextEvent.time}` : "No event notification is available yet."}</p>
+          </article>
+        </div>
+      </section>
+    </OperationsPage>
+  );
+}
+
+function StudentPanelClassesPage() {
+  const { studioClasses } = useAppState();
+
+  return (
+    <OperationsPage className="operations-page--workflow" title="Classes" text="Review current Cho's class options and weekly training times.">
+      <section className="operations-panel workflow-directory-panel" aria-label="Student class list">
+        <div className="student-roster-head">
+          <div>
+            <h2>Class Schedule</h2>
+            <p>Active class groups shown as student-facing schedule information.</p>
+          </div>
+          <span>{studioClasses.length} class{studioClasses.length === 1 ? "" : "es"}</span>
+        </div>
+        <div className="workflow-directory-grid" aria-label="Student classes">
+          {studioClasses.map((studioClass) => (
+            <article className="workflow-directory-group" key={studioClass.id}>
+              <div className="workflow-directory-group-head">
+                <div>
+                  <span className="workflow-directory-swatch" aria-hidden="true" />
+                  <h3>{studioClass.name}</h3>
+                </div>
+                <span>{formatClassTimeRange(studioClass)}</span>
+              </div>
+              <p>{formatClassDays(studioClass.daysOfWeek)}</p>
+              {studioClass.notes && <p>{studioClass.notes}</p>}
+            </article>
+          ))}
+        </div>
+      </section>
+    </OperationsPage>
+  );
+}
+
+function StudentStudyPage() {
+  const { studyGuideFolders, studyGuideMaterials } = useAppState();
+  const studyItems = [
+    { title: "Forms", detail: "Practice beginner forms with clean stances, eyes forward, and steady breathing." },
+    { title: "Kicks", detail: "Review front kick, round kick, and side kick control before class." },
+    { title: "Respect", detail: "Prepare bow-in etiquette, listening posture, and class focus goals." }
+  ];
+
+  return (
+    <OperationsPage className="operations-page--workflow" title="Study" text="Student practice reminders for at-home martial arts review.">
+      <StudyGuideLibrarySection
+        ariaLabel="Student study guide materials"
+        emptyText="No manager study materials have been published yet."
+        folders={studyGuideFolders}
+        materials={studyGuideMaterials}
+        title="Study Materials"
+      />
+      <section className="operations-panel workflow-directory-panel" aria-label="Student study guide">
+        <div className="student-roster-head">
+          <div>
+            <h2>Practice Guide</h2>
+            <p>Simple study cards for skills students can review before the next class.</p>
+          </div>
+        </div>
+        <div className="workflow-directory-grid" aria-label="Study cards">
+          {studyItems.map((item) => (
+            <article className="workflow-directory-group" key={item.title}>
+              <div className="workflow-directory-group-head">
+                <div>
+                  <span className="workflow-directory-swatch" aria-hidden="true" />
+                  <h3>{item.title}</h3>
+                </div>
+                <span>Study</span>
+              </div>
+              <p>{item.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+    </OperationsPage>
+  );
+}
+
+function StudentTestPage() {
+  const testItems = [
+    { title: "Attendance", detail: "Stay consistent with classes before the next belt evaluation." },
+    { title: "Readiness", detail: "Ask an instructor to confirm forms, kicks, and focus before testing." },
+    { title: "Event Prep", detail: "Watch event notifications for color belt testing dates and arrival details." }
+  ];
+
+  return (
+    <OperationsPage className="operations-page--workflow" title="Test" text="Testing readiness reminders and next-step preparation for students.">
+      <section className="operations-panel workflow-directory-panel" aria-label="Student test readiness">
+        <div className="student-roster-head">
+          <div>
+            <h2>Testing Checklist</h2>
+            <p>Key readiness points before a student signs up for belt testing.</p>
+          </div>
+        </div>
+        <div className="workflow-directory-grid" aria-label="Testing checklist cards">
+          {testItems.map((item) => (
+            <article className="workflow-directory-group" key={item.title}>
+              <div className="workflow-directory-group-head">
+                <div>
+                  <span className="workflow-directory-swatch" aria-hidden="true" />
+                  <h3>{item.title}</h3>
+                </div>
+                <span>Test</span>
+              </div>
+              <p>{item.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+    </OperationsPage>
+  );
+}
+
+function formatStudyMaterialSize(size: number) {
+  if (!Number.isFinite(size) || size <= 0) return "Study file";
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
+function formatStudyGuideFolderOption(folder: StudyGuideFolder, folders: StudyGuideFolder[]) {
+  const parentFolder = folder.parentId ? folders.find((candidate) => candidate.id === folder.parentId) : undefined;
+  return parentFolder ? `${parentFolder.name} / ${folder.name}` : folder.name;
+}
+
+function StudyGuideLibrarySection({
+  ariaLabel,
+  emptyText,
+  folders,
+  materials,
+  title
+}: {
+  ariaLabel: string;
+  emptyText: string;
+  folders: StudyGuideFolder[];
+  materials: StudyGuideMaterial[];
+  title: string;
+}) {
+  const folderGroups = folders.map((folder) => ({
+    folder,
+    materials: materials.filter((material) => material.folderId === folder.id),
+    parentFolder: folder.parentId ? folders.find((candidate) => candidate.id === folder.parentId) : undefined
+  }));
+  const unfiledMaterials = materials.filter((material) => !folders.some((folder) => folder.id === material.folderId));
+
+  return (
+    <section className="operations-panel workflow-directory-panel study-guide-library-panel" aria-label={ariaLabel}>
+      <div className="student-roster-head">
+        <div>
+          <h2>{title}</h2>
+          <p>{materials.length} study material{materials.length === 1 ? "" : "s"} published for students.</p>
+        </div>
+      </div>
+      {folders.length || materials.length ? (
+        <div className="workflow-directory-grid study-guide-library-grid" aria-label={`${title} folders`}>
+          {folderGroups.map(({ folder, materials: folderMaterials, parentFolder }) => (
+            <section className="workflow-directory-group study-guide-folder-card" key={folder.id} role="group" aria-label={`${folder.name} study guide folder`}>
+              <div className="workflow-directory-group-head">
+                <div>
+                  <span className="workflow-directory-swatch" aria-hidden="true" />
+                  <h3>{folder.name}</h3>
+                </div>
+                <span>{folderMaterials.length} file{folderMaterials.length === 1 ? "" : "s"}</span>
+              </div>
+              <p className="study-guide-folder-subject">{folder.subject}</p>
+              {parentFolder && <p className="study-guide-folder-path">Inside {parentFolder.name}</p>}
+              {folder.description && <p>{folder.description}</p>}
+              {folderMaterials.length ? (
+                <div className="study-material-list">
+                  {folderMaterials.map((material) => (
+                    <article className="study-material-card" key={material.id}>
+                      <span className="study-material-file-icon" aria-hidden="true">
+                        <FileText />
+                      </span>
+                      <div className="study-material-details">
+                        <h4>{material.title}</h4>
+                        {material.description && <p>{material.description}</p>}
+                        <span>{material.fileName} · {formatStudyMaterialSize(material.size)}</span>
+                      </div>
+                      <a className="study-material-download" href={material.fileDataUrl} download={material.fileName}>
+                        Open {material.title}
+                      </a>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="study-guide-empty-note">No materials in this folder yet.</p>
+              )}
+            </section>
+          ))}
+          {unfiledMaterials.length > 0 && (
+            <section className="workflow-directory-group study-guide-folder-card" role="group" aria-label="Unfiled study guide folder">
+              <div className="workflow-directory-group-head">
+                <div>
+                  <span className="workflow-directory-swatch" aria-hidden="true" />
+                  <h3>Unfiled</h3>
+                </div>
+                <span>{unfiledMaterials.length} file{unfiledMaterials.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="study-material-list">
+                {unfiledMaterials.map((material) => (
+                  <article className="study-material-card" key={material.id}>
+                    <span className="study-material-file-icon" aria-hidden="true">
+                      <FileText />
+                    </span>
+                    <div className="study-material-details">
+                      <h4>{material.title}</h4>
+                      {material.description && <p>{material.description}</p>}
+                      <span>{material.fileName} · {formatStudyMaterialSize(material.size)}</span>
+                    </div>
+                    <a className="study-material-download" href={material.fileDataUrl} download={material.fileName}>
+                      Open {material.title}
+                    </a>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      ) : (
+        <p className="study-guide-empty-note">{emptyText}</p>
+      )}
+    </section>
+  );
+}
+
+function ManagerStudyGuidePage() {
+  const { addStudyGuideFolder, addStudyGuideMaterial, showToast, studyGuideFolders, studyGuideMaterials } = useAppState();
+  const [folderForm, setFolderForm] = useState({ name: "", subject: "", parentId: "", description: "" });
+  const [materialForm, setMaterialForm] = useState({
+    title: "",
+    folderId: studyGuideFolders[0]?.id ?? "",
+    description: "",
+    fileName: "",
+    mimeType: "",
+    size: 0,
+    fileDataUrl: ""
+  });
+
+  useEffect(() => {
+    if (!studyGuideFolders.length) return;
+    setMaterialForm((current) => (
+      studyGuideFolders.some((folder) => folder.id === current.folderId)
+        ? current
+        : { ...current, folderId: studyGuideFolders[0].id }
+    ));
+  }, [studyGuideFolders]);
+
+  const createStudyFolder = (event: FormEvent) => {
+    event.preventDefault();
+    const savedFolder = addStudyGuideFolder(folderForm);
+    if (!savedFolder) {
+      showToast("Enter a study folder name, subject, and valid parent folder.");
+      return;
+    }
+    setFolderForm({ name: "", subject: "", parentId: "", description: "" });
+    setMaterialForm((current) => ({ ...current, folderId: savedFolder.id }));
+    showToast(`${savedFolder.name} study folder created.`);
+  };
+
+  const handleStudyMaterialUpload = (event: ReactChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const fileDataUrl = typeof reader.result === "string" ? reader.result : "";
+      setMaterialForm((current) => ({
+        ...current,
+        fileName: file.name,
+        mimeType: file.type || "application/octet-stream",
+        size: file.size,
+        fileDataUrl
+      }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const publishStudyMaterial = (event: FormEvent) => {
+    event.preventDefault();
+    const savedMaterial = addStudyGuideMaterial(materialForm);
+    if (!savedMaterial) {
+      showToast("Create a folder, add a title, and choose a study material file before publishing.");
+      return;
+    }
+    setMaterialForm((current) => ({
+      title: "",
+      folderId: current.folderId,
+      description: "",
+      fileName: "",
+      mimeType: "",
+      size: 0,
+      fileDataUrl: ""
+    }));
+    showToast(`${savedMaterial.title} published to student study materials.`);
+  };
+
+  return (
+    <OperationsPage className="operations-page--workflow" title="Study Guide" text="Create student study folders and publish downloadable training materials.">
+      <div className="operations-stats">
+        <StatCard label="Folders" value={studyGuideFolders.length} icon={<FolderPlus />} />
+        <StatCard label="Materials" value={studyGuideMaterials.length} icon={<FileText />} />
+      </div>
+      <div className="operations-two-column study-guide-manager-layout">
+        <section className="operations-panel study-guide-manager-panel" aria-label="Manager study guide tools">
+          <div className="student-roster-head">
+            <div>
+              <h2>Study Upload Center</h2>
+              <p>Create top-level folders or subfolders, then publish study files into the selected folder.</p>
+            </div>
+          </div>
+          <form className="study-guide-tool-form" aria-label="Create study folder" onSubmit={createStudyFolder}>
+            <h3>New Folder</h3>
+            <label>
+              Folder name
+              <input value={folderForm.name} onChange={(event) => setFolderForm({ ...folderForm, name: event.target.value })} />
+            </label>
+            <label>
+              Folder subject
+              <input value={folderForm.subject} onChange={(event) => setFolderForm({ ...folderForm, subject: event.target.value })} />
+            </label>
+            <label>
+              Parent folder
+              <select value={folderForm.parentId} onChange={(event) => setFolderForm({ ...folderForm, parentId: event.target.value })}>
+                <option value="">Top-level folder</option>
+                {studyGuideFolders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>{formatStudyGuideFolderOption(folder, studyGuideFolders)}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Folder description
+              <textarea rows={2} value={folderForm.description} onChange={(event) => setFolderForm({ ...folderForm, description: event.target.value })} />
+            </label>
+            <button type="submit" className="operations-action student-header-add">
+              <FolderPlus size={18} /> Create Folder
+            </button>
+          </form>
+          <form className="study-guide-tool-form" aria-label="Upload study material" onSubmit={publishStudyMaterial}>
+            <h3>Publish Material</h3>
+            <label>
+              Material title
+              <input value={materialForm.title} onChange={(event) => setMaterialForm({ ...materialForm, title: event.target.value })} />
+            </label>
+            <label>
+              Material folder
+              <select value={materialForm.folderId} disabled={!studyGuideFolders.length} onChange={(event) => setMaterialForm({ ...materialForm, folderId: event.target.value })}>
+                {studyGuideFolders.length ? (
+                  studyGuideFolders.map((folder) => <option key={folder.id} value={folder.id}>{formatStudyGuideFolderOption(folder, studyGuideFolders)}</option>)
+                ) : (
+                  <option value="">Create a folder first</option>
+                )}
+              </select>
+            </label>
+            <label>
+              Material description
+              <textarea rows={3} value={materialForm.description} onChange={(event) => setMaterialForm({ ...materialForm, description: event.target.value })} />
+            </label>
+            <label className="study-material-file-upload">
+              Upload study material file
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,image/*,application/pdf,text/plain,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                aria-label="Upload study material file"
+                onChange={handleStudyMaterialUpload}
+              />
+            </label>
+            <p className="study-material-upload-ready">{materialForm.fileName ? `${materialForm.fileName} ready to publish.` : "No study material selected yet."}</p>
+            <button type="submit" className="operations-action student-header-add">
+              <Upload size={18} /> Publish Study Material
+            </button>
+          </form>
+        </section>
+        <StudyGuideLibrarySection
+          ariaLabel="Manager study guide library"
+          emptyText="Create a folder and upload the first study material for students."
+          folders={studyGuideFolders}
+          materials={studyGuideMaterials}
+          title="Student Study Library"
+        />
+      </div>
+    </OperationsPage>
+  );
+}
+
+function formatVideoFileSize(size: number) {
+  if (!Number.isFinite(size) || size <= 0) return "Video file";
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
+function VideoLibrarySection({
+  ariaLabel,
+  emptyText,
+  folders,
+  title,
+  videos
+}: {
+  ariaLabel: string;
+  emptyText: string;
+  folders: TrainingVideoFolder[];
+  title: string;
+  videos: TrainingVideo[];
+}) {
+  const folderGroups = folders.map((folder) => ({
+    folder,
+    videos: videos.filter((video) => video.folderId === folder.id)
+  }));
+  const unfiledVideos = videos.filter((video) => !folders.some((folder) => folder.id === video.folderId));
+
+  return (
+    <section className="operations-panel workflow-directory-panel videos-library-panel" aria-label={ariaLabel}>
+      <div className="student-roster-head">
+        <div>
+          <h2>{title}</h2>
+          <p>{videos.length} video{videos.length === 1 ? "" : "s"} published for students.</p>
+        </div>
+      </div>
+      {folders.length || videos.length ? (
+        <div className="workflow-directory-grid videos-library-grid" aria-label={`${title} folders`}>
+          {folderGroups.map(({ folder, videos: folderVideos }) => (
+            <section className="workflow-directory-group videos-folder-card" key={folder.id} role="group" aria-label={`${folder.name} video folder`}>
+              <div className="workflow-directory-group-head">
+                <div>
+                  <span className="workflow-directory-swatch" aria-hidden="true" />
+                  <h3>{folder.name}</h3>
+                </div>
+                <span>{folderVideos.length} video{folderVideos.length === 1 ? "" : "s"}</span>
+              </div>
+              <p className="videos-folder-subject">{folder.subject}</p>
+              {folder.description && <p>{folder.description}</p>}
+              {folderVideos.length ? (
+                <div className="training-video-list">
+                  {folderVideos.map((video) => (
+                    <article className="training-video-card" key={video.id}>
+                      <video className="training-video-player" title={`${video.title} video player`} src={video.videoDataUrl} controls preload="metadata" />
+                      <div>
+                        <h4>{video.title}</h4>
+                        {video.description && <p>{video.description}</p>}
+                        <span>{video.fileName} · {formatVideoFileSize(video.size)}</span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="videos-empty-note">No videos in this folder yet.</p>
+              )}
+            </section>
+          ))}
+          {unfiledVideos.length > 0 && (
+            <section className="workflow-directory-group videos-folder-card" role="group" aria-label="Unfiled video folder">
+              <div className="workflow-directory-group-head">
+                <div>
+                  <span className="workflow-directory-swatch" aria-hidden="true" />
+                  <h3>Unfiled</h3>
+                </div>
+                <span>{unfiledVideos.length} video{unfiledVideos.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="training-video-list">
+                {unfiledVideos.map((video) => (
+                  <article className="training-video-card" key={video.id}>
+                    <video className="training-video-player" title={`${video.title} video player`} src={video.videoDataUrl} controls preload="metadata" />
+                    <div>
+                      <h4>{video.title}</h4>
+                      {video.description && <p>{video.description}</p>}
+                      <span>{video.fileName} · {formatVideoFileSize(video.size)}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      ) : (
+        <p className="videos-empty-note">{emptyText}</p>
+      )}
+    </section>
+  );
+}
+
+function ManagerVideosPage() {
+  const { addTrainingVideo, addTrainingVideoFolder, showToast, trainingVideoFolders, trainingVideos } = useAppState();
+  const [folderForm, setFolderForm] = useState({ name: "", subject: "", description: "" });
+  const [videoForm, setVideoForm] = useState({
+    title: "",
+    folderId: trainingVideoFolders[0]?.id ?? "",
+    description: "",
+    fileName: "",
+    mimeType: "",
+    size: 0,
+    videoDataUrl: ""
+  });
+
+  useEffect(() => {
+    if (!trainingVideoFolders.length) return;
+    setVideoForm((current) => (
+      trainingVideoFolders.some((folder) => folder.id === current.folderId)
+        ? current
+        : { ...current, folderId: trainingVideoFolders[0].id }
+    ));
+  }, [trainingVideoFolders]);
+
+  const createFolder = (event: FormEvent) => {
+    event.preventDefault();
+    const savedFolder = addTrainingVideoFolder(folderForm);
+    if (!savedFolder) {
+      showToast("Enter a video folder name and subject.");
+      return;
+    }
+    setFolderForm({ name: "", subject: "", description: "" });
+    setVideoForm((current) => ({ ...current, folderId: savedFolder.id }));
+    showToast(`${savedFolder.name} video folder created.`);
+  };
+
+  const handleVideoUpload = (event: ReactChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const videoDataUrl = typeof reader.result === "string" ? reader.result : "";
+      setVideoForm((current) => ({
+        ...current,
+        fileName: file.name,
+        mimeType: file.type || "video/mp4",
+        size: file.size,
+        videoDataUrl
+      }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const publishVideo = (event: FormEvent) => {
+    event.preventDefault();
+    const savedVideo = addTrainingVideo(videoForm);
+    if (!savedVideo) {
+      showToast("Create a folder, add a title, and choose a video file before publishing.");
+      return;
+    }
+    setVideoForm((current) => ({
+      title: "",
+      folderId: current.folderId,
+      description: "",
+      fileName: "",
+      mimeType: "",
+      size: 0,
+      videoDataUrl: ""
+    }));
+    showToast(`${savedVideo.title} published to student videos.`);
+  };
+
+  return (
+    <OperationsPage className="operations-page--workflow" title="Videos" text="Upload student training videos and organize them into subject folders.">
+      <div className="operations-stats">
+        <StatCard label="Folders" value={trainingVideoFolders.length} icon={<FolderPlus />} />
+        <StatCard label="Videos" value={trainingVideos.length} icon={<Video />} />
+      </div>
+      <div className="operations-two-column videos-manager-layout">
+        <section className="operations-panel videos-manager-panel" aria-label="Manager video upload tools">
+          <div className="student-roster-head">
+            <div>
+              <h2>Upload Center</h2>
+              <p>Create folders first, then publish videos into the selected student subject folder.</p>
+            </div>
+          </div>
+          <form className="video-tool-form" aria-label="Create video folder" onSubmit={createFolder}>
+            <h3>New Folder</h3>
+            <label>
+              Folder name
+              <input value={folderForm.name} onChange={(event) => setFolderForm({ ...folderForm, name: event.target.value })} />
+            </label>
+            <label>
+              Folder subject
+              <input value={folderForm.subject} onChange={(event) => setFolderForm({ ...folderForm, subject: event.target.value })} />
+            </label>
+            <label>
+              Folder description
+              <textarea rows={2} value={folderForm.description} onChange={(event) => setFolderForm({ ...folderForm, description: event.target.value })} />
+            </label>
+            <button type="submit" className="operations-action student-header-add">
+              <FolderPlus size={18} /> Create Folder
+            </button>
+          </form>
+          <form className="video-tool-form" aria-label="Upload student video" onSubmit={publishVideo}>
+            <h3>Publish Video</h3>
+            <label>
+              Video title
+              <input value={videoForm.title} onChange={(event) => setVideoForm({ ...videoForm, title: event.target.value })} />
+            </label>
+            <label>
+              Video folder
+              <select value={videoForm.folderId} disabled={!trainingVideoFolders.length} onChange={(event) => setVideoForm({ ...videoForm, folderId: event.target.value })}>
+                {trainingVideoFolders.length ? (
+                  trainingVideoFolders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)
+                ) : (
+                  <option value="">Create a folder first</option>
+                )}
+              </select>
+            </label>
+            <label>
+              Video description
+              <textarea rows={3} value={videoForm.description} onChange={(event) => setVideoForm({ ...videoForm, description: event.target.value })} />
+            </label>
+            <label className="video-file-upload">
+              Upload video file
+              <input type="file" accept="video/*" aria-label="Upload video file" onChange={handleVideoUpload} />
+            </label>
+            <p className="video-upload-ready">{videoForm.fileName ? `${videoForm.fileName} ready to publish.` : "No video selected yet."}</p>
+            <button type="submit" className="operations-action student-header-add">
+              <Upload size={18} /> Publish Video
+            </button>
+          </form>
+        </section>
+        <VideoLibrarySection
+          ariaLabel="Manager video library"
+          emptyText="Create a folder and upload the first training video for students."
+          folders={trainingVideoFolders}
+          title="Student Video Library"
+          videos={trainingVideos}
+        />
+      </div>
+    </OperationsPage>
+  );
+}
+
+function StudentVideosPage() {
+  const { trainingVideoFolders, trainingVideos } = useAppState();
+
+  return (
+    <OperationsPage className="operations-page--workflow" title="Videos" text="Watch training videos published by Cho's managers.">
+      <VideoLibrarySection
+        ariaLabel="Student video library"
+        emptyText="No training videos have been published yet."
+        folders={trainingVideoFolders}
+        title="Videos"
+        videos={trainingVideos}
+      />
+    </OperationsPage>
+  );
+}
+
+function StudentLauncherWorkspace({ tool }: { tool: ManagerLauncherIconKind }) {
+  switch (tool) {
+    case "classes":
+      return <StudentPanelClassesPage />;
+    case "study":
+      return <StudentStudyPage />;
+    case "test":
+      return <StudentTestPage />;
+    case "videos":
+      return <StudentVideosPage />;
+    case "dashboard":
+    default:
+      return <StudentPanelDashboardPage />;
   }
 }
 
@@ -728,6 +1516,116 @@ const managerHomeThreads: ManagerHomeThread[] = [
     accent: "#ff7a1a"
   }
 ];
+
+const studentHomeThreads: ManagerHomeThread[] = [
+  {
+    id: "student-testing-event",
+    kind: "event",
+    sender: "Event Team",
+    title: "Upcoming Event: Color Belt Testing",
+    preview: "Testing registration and arrival details are ready...",
+    sentDate: "May 15, 2026",
+    sentTime: "10:30 AM",
+    sentDateTime: "2026-05-15T10:30:00-05:00",
+    avatar: eventsLauncherIcon,
+    accent: "#ff7a1a",
+    unread: true
+  },
+  {
+    id: "student-practice-reminder",
+    kind: "message",
+    sender: "Head Coach",
+    title: "Practice Session Reminder",
+    preview: "Bring your belt card and review your form before class...",
+    sentDate: "May 15, 2026",
+    sentTime: "9:15 AM",
+    sentDateTime: "2026-05-15T09:15:00-05:00",
+    avatar: classesLauncherIcon,
+    accent: "#7be4ff",
+    unread: true
+  },
+  {
+    id: "student-attendance",
+    kind: "message",
+    sender: "Front Desk",
+    title: "Attendance Confirmation",
+    preview: "Your next class reservation is confirmed...",
+    sentDate: "May 15, 2026",
+    sentTime: "8:45 AM",
+    sentDateTime: "2026-05-15T08:45:00-05:00",
+    avatar: studentsLauncherIcon,
+    accent: "#8a78ff"
+  },
+  {
+    id: "student-merch",
+    kind: "message",
+    sender: "Merch Store",
+    title: "New Student Gear Available",
+    preview: "Uniforms, gloves, and training gear are ready for pickup...",
+    sentDate: "May 14, 2026",
+    sentTime: "4:20 PM",
+    sentDateTime: "2026-05-14T16:20:00-05:00",
+    avatar: merchandiseLauncherIcon,
+    accent: "#7bdcff"
+  },
+  {
+    id: "student-account",
+    kind: "message",
+    sender: "System Admin",
+    title: "Account Security Update",
+    preview: "Your student profile settings were reviewed...",
+    sentDate: "May 14, 2026",
+    sentTime: "11:05 AM",
+    sentDateTime: "2026-05-14T11:05:00-05:00",
+    avatar: studentsLauncherIcon,
+    accent: "#67d8ff"
+  },
+  {
+    id: "student-parent-meeting",
+    kind: "event",
+    sender: "Event Team",
+    title: "Upcoming Event: Parent Meeting",
+    preview: "Families are invited to review summer training details...",
+    sentDate: "May 13, 2026",
+    sentTime: "2:45 PM",
+    sentDateTime: "2026-05-13T14:45:00-05:00",
+    avatar: schedulingLauncherIcon,
+    accent: "#ff7a1a"
+  }
+];
+
+type ParentProfileTab = "dashboard" | "classes" | "study" | "test" | "messages" | "notifications";
+
+const parentProfileTabs: { id: ParentProfileTab; label: string }[] = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "classes", label: "Classes" },
+  { id: "study", label: "Study" },
+  { id: "test", label: "Test" },
+  { id: "messages", label: "Messages" },
+  { id: "notifications", label: "Notifications" }
+];
+
+const parentStudyItems = [
+  { title: "Forms at home", detail: "Review the current form slowly, then let the child perform it once without coaching." },
+  { title: "Class focus", detail: "Ask what the instructor corrected last class and write one practice goal before the next visit." },
+  { title: "Confidence routine", detail: "Use a short bow-in, stance check, and breathing reset for young students before training." }
+];
+
+const parentTestingItems = [
+  { title: "Class consistency", detail: "Watch attendance and missed classes before signing up for a belt test." },
+  { title: "Instructor approval", detail: "Ask Cho's staff to confirm forms, kicks, attitude, and focus before the testing event." },
+  { title: "Family logistics", detail: "Check arrival time, uniform, belt card, water, and event notifications before test day." }
+];
+
+function childBeltLabel(beltSlug: string) {
+  const normalizedSlug = beltSlug.toLowerCase().replace(/\s+/g, "-");
+  return beltOptions.find((belt) => belt.toLowerCase().replace(/\s+/g, "-") === normalizedSlug) ?? `${beltSlug.slice(0, 1).toUpperCase()}${beltSlug.slice(1)}`;
+}
+
+function childInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return (parts[0]?.[0] ?? "C") + (parts[1]?.[0] ?? "");
+}
 
 const managerComposeStaffRecipients: ManagerComposeRecipient[] = [
   {
@@ -937,6 +1835,1090 @@ function ManagerPageTitleFrame({ title, className = "" }: { title: string; class
         <ProfileTitleRule variant="bottom" />
       </span>
     </div>
+  );
+}
+
+function StudentProfilePage() {
+  const { logout, scheduledClasses, session, showToast, studioClasses, studioEvents, students } = useAppState();
+  const today = useLiveCalendarDate();
+  const selectedStudent = useMemo(() => {
+    const sessionEmail = session?.email.toLowerCase();
+    return (
+      (sessionEmail ? students.find((student) => student.email.toLowerCase() === sessionEmail) : undefined) ??
+      students.find((student) => (student.status ?? "Active").toLowerCase() === "active") ??
+      students[0]
+    );
+  }, [session?.email, students]);
+  const [studentProfile, setStudentProfile] = useState(() => readStudentProfile(session?.email, selectedStudent));
+  const [studentProfileOpen, setStudentProfileOpen] = useState(false);
+  const [homeScheduleWeekStartKey, setHomeScheduleWeekStartKey] = useState(() => toDateKey(weekDaysForDate(today)[0]));
+  const [selectedHomeScheduleDateKey, setSelectedHomeScheduleDateKey] = useState(() => toDateKey(today));
+  const [feedThreads, setFeedThreads] = useState(() => studentHomeThreads);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isFeedSearchOpen, setIsFeedSearchOpen] = useState(false);
+  const [feedFilter, setFeedFilter] = useState<ManagerHomeFeedFilter>("all");
+  const [replyText, setReplyText] = useState("");
+  const [overviewProgress, setOverviewProgress] = useState(1);
+  const [overviewHeight, setOverviewHeight] = useState(0);
+  const [isOverviewDragging, setIsOverviewDragging] = useState(false);
+  const feedSearchInputRef = useRef<HTMLInputElement>(null);
+  const overviewContentRef = useRef<HTMLElement>(null);
+  const overviewHandleRef = useRef<HTMLButtonElement>(null);
+  const overviewDragRef = useRef({
+    hasMoved: false,
+    ignoreClick: false,
+    pointerId: null as number | null,
+    startProgress: 1,
+    startY: 0
+  });
+  const messageCount = feedThreads.filter((thread) => thread.kind === "message").length;
+  const eventCount = feedThreads.filter((thread) => thread.kind === "event").length;
+  const visibleThreads = feedThreads.filter((thread) => {
+    if (feedFilter !== "all" && thread.kind !== feedFilter) return false;
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return true;
+    return `${thread.kind} ${thread.sender} ${thread.title} ${thread.preview}`.toLowerCase().includes(query);
+  });
+  const visibleFeedSections = visibleThreads.reduce<{ date: string; threads: ManagerHomeThread[] }[]>((sections, thread) => {
+    const currentSection = sections[sections.length - 1];
+    if (currentSection?.date === thread.sentDate) {
+      currentSection.threads.push(thread);
+      return sections;
+    }
+    sections.push({ date: thread.sentDate, threads: [thread] });
+    return sections;
+  }, []);
+  const homeScheduleWeekDays = useMemo(() => weekDaysForDate(parseCalendarDate(homeScheduleWeekStartKey)), [homeScheduleWeekStartKey]);
+  const homeAgendaItems = useMemo(
+    () => buildHomeAgendaItems(homeScheduleWeekDays, scheduledClasses, studioClasses, studioEvents),
+    [homeScheduleWeekDays, scheduledClasses, studioClasses, studioEvents]
+  );
+  const homeAgendaItemsByDate = useMemo(
+    () => homeAgendaItems.reduce<Record<string, ManagerHomeAgendaItem[]>>((groups, item) => {
+      groups[item.date] = [...(groups[item.date] ?? []), item];
+      return groups;
+    }, {}),
+    [homeAgendaItems]
+  );
+  const selectedHomeScheduleDate = parseCalendarDate(selectedHomeScheduleDateKey);
+  const selectedHomeAgendaItems = homeAgendaItemsByDate[selectedHomeScheduleDateKey] ?? [];
+  const isOverviewCollapsed = overviewProgress <= 0.01;
+  const overviewStageState = isOverviewCollapsed ? "collapsed" : overviewProgress >= 0.99 ? "expanded" : "partial";
+  const overviewStageStyle = {
+    "--manager-home-overview-height": overviewHeight > 0 ? `${Math.round(overviewHeight * overviewProgress)}px` : "auto",
+    "--manager-home-overview-progress": overviewProgress.toFixed(3)
+  } as CSSProperties;
+  const studentName = studentProfile.name || (selectedStudent ? fullName(selectedStudent) : "Cho's Student");
+  const studentRoleLabel = `${selectedStudent?.program ?? "Cho's Martial Arts"} Student`;
+  const memberSinceLabel = formatMonthYear(selectedStudent?.joinedAt ?? session?.createdAt);
+  const studentPortrait = studentProfile.photoDataUrl ?? (selectedStudent?.profileImagePath ? publicAsset(selectedStudent.profileImagePath) : publicAsset("assets/CheetahProfilePic/Cheetah.png"));
+
+  useEffect(() => {
+    setStudentProfile(readStudentProfile(session?.email, selectedStudent));
+  }, [selectedStudent, session?.email]);
+
+  useEffect(() => {
+    const defaultDateKey = findInitialHomeAgendaDate(today, scheduledClasses, studioClasses, studioEvents);
+    const defaultWeekStart = weekDaysForDate(parseCalendarDate(defaultDateKey))[0];
+    setHomeScheduleWeekStartKey(toDateKey(defaultWeekStart));
+    setSelectedHomeScheduleDateKey(defaultDateKey);
+  }, [scheduledClasses, studioClasses, studioEvents, today]);
+
+  useEffect(() => {
+    const node = overviewContentRef.current;
+    if (!node) return;
+
+    const updateOverviewHeight = (entry?: ResizeObserverEntry) => {
+      const borderBoxHeight = entry?.borderBoxSize?.[0]?.blockSize ?? 0;
+      const measuredHeight =
+        node.getBoundingClientRect().height ||
+        borderBoxHeight ||
+        node.offsetHeight ||
+        node.scrollHeight ||
+        entry?.contentRect.height ||
+        0;
+      setOverviewHeight(Math.ceil(measuredHeight + HOME_OVERVIEW_STAGE_VISUAL_BUFFER));
+    };
+
+    updateOverviewHeight();
+
+    if (typeof ResizeObserver === "undefined") {
+      const updateOverviewHeightFromWindow = () => updateOverviewHeight();
+      window.addEventListener("resize", updateOverviewHeightFromWindow);
+      return () => window.removeEventListener("resize", updateOverviewHeightFromWindow);
+    }
+
+    const observer = new ResizeObserver((entries) => updateOverviewHeight(entries[0]));
+    observer.observe(node, { box: "border-box" });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (isFeedSearchOpen) feedSearchInputRef.current?.focus();
+  }, [isFeedSearchOpen]);
+
+  useEffect(() => {
+    if (!isOverviewCollapsed) return;
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement && overviewContentRef.current?.contains(activeElement)) {
+      overviewHandleRef.current?.focus();
+    }
+  }, [isOverviewCollapsed]);
+
+  const updateOverviewProgress = (nextProgress: number) => {
+    setOverviewProgress(clampHomeOverviewProgress(nextProgress));
+  };
+
+  const toggleHomeOverview = () => {
+    updateOverviewProgress(overviewProgress > 0.5 ? 0 : 1);
+  };
+
+  const handleOverviewHandleClick = () => {
+    if (overviewDragRef.current.ignoreClick) {
+      overviewDragRef.current.ignoreClick = false;
+      return;
+    }
+
+    toggleHomeOverview();
+  };
+
+  const handleOverviewHandleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      updateOverviewProgress(overviewProgress - HOME_OVERVIEW_KEYBOARD_STEP);
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      updateOverviewProgress(overviewProgress + HOME_OVERVIEW_KEYBOARD_STEP);
+    }
+  };
+
+  const handleOverviewHandlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    overviewDragRef.current.hasMoved = false;
+    overviewDragRef.current.ignoreClick = false;
+    overviewDragRef.current.pointerId = event.pointerId;
+    overviewDragRef.current.startProgress = overviewProgress;
+    overviewDragRef.current.startY = event.clientY;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const handleOverviewHandlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const dragState = overviewDragRef.current;
+    if (dragState.pointerId !== event.pointerId || overviewHeight <= 0) return;
+
+    const deltaY = event.clientY - dragState.startY;
+    if (Math.abs(deltaY) >= HOME_OVERVIEW_DRAG_THRESHOLD) {
+      dragState.hasMoved = true;
+    }
+
+    if (!dragState.hasMoved) return;
+
+    setIsOverviewDragging(true);
+    updateOverviewProgress(dragState.startProgress + deltaY / overviewHeight);
+  };
+
+  const finishOverviewHandlePointer = (event: ReactPointerEvent<HTMLButtonElement>, shouldToggleOnTap: boolean) => {
+    const dragState = overviewDragRef.current;
+    if (dragState.pointerId !== event.pointerId) return;
+
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    dragState.pointerId = null;
+    dragState.ignoreClick = true;
+    setIsOverviewDragging(false);
+
+    if (shouldToggleOnTap && !dragState.hasMoved) {
+      toggleHomeOverview();
+    }
+  };
+
+  const changeStudentProfilePhoto = (event: ReactChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      showToast("Choose an image file for the student profile picture.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result.startsWith("data:image/")) {
+        showToast("Could not read that profile image.");
+        return;
+      }
+
+      setStudentProfile((currentProfile) => {
+        const nextProfile = { ...currentProfile, photoDataUrl: result };
+        writeStudentProfile(nextProfile, session?.email);
+        return nextProfile;
+      });
+      showToast("Student profile picture updated.");
+    };
+    reader.onerror = () => showToast("Could not read that profile image.");
+    reader.readAsDataURL(file);
+  };
+
+  const shiftHomeScheduleWeek = (direction: number) => {
+    const nextWeekStart = parseCalendarDate(homeScheduleWeekStartKey);
+    nextWeekStart.setDate(nextWeekStart.getDate() + direction * 7);
+    const nextWeekDays = weekDaysForDate(nextWeekStart);
+    setHomeScheduleWeekStartKey(toDateKey(nextWeekDays[0]));
+    setSelectedHomeScheduleDateKey(findBestHomeAgendaDateInWeek(nextWeekDays, scheduledClasses, studioClasses, studioEvents));
+  };
+
+  const changeFeedFilter = (nextFilter: ManagerHomeThread["kind"]) => {
+    const resolvedFilter: ManagerHomeFeedFilter = feedFilter === nextFilter ? "all" : nextFilter;
+    setFeedFilter(resolvedFilter);
+    setSelectedThreadId((currentThreadId) => {
+      if (!currentThreadId || resolvedFilter === "all") return currentThreadId;
+      const currentThread = feedThreads.find((thread) => thread.id === currentThreadId);
+      return currentThread?.kind === resolvedFilter ? currentThreadId : null;
+    });
+  };
+
+  const openFeedThread = (threadId: string) => {
+    setSelectedThreadId((currentThreadId) => currentThreadId === threadId ? null : threadId);
+    setFeedThreads((currentThreads) =>
+      currentThreads.map((thread) => thread.id === threadId && thread.unread ? { ...thread, unread: false } : thread)
+    );
+  };
+
+  const closeFeedSearch = () => {
+    setSearchQuery("");
+    setIsFeedSearchOpen(false);
+  };
+
+  const handleFeedSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") closeFeedSearch();
+  };
+
+  const toggleStudentHomeTheme = () => {
+    const nextTheme: AppThemeMode = studentProfile.theme === "dark" ? "light" : "dark";
+    setStudentProfile((currentProfile) => {
+      const nextProfile = { ...currentProfile, theme: nextTheme };
+      writeStudentProfile(nextProfile, session?.email);
+      return nextProfile;
+    });
+    applyAppTheme(nextTheme);
+    writeStoredAppTheme(nextTheme);
+  };
+
+  const saveStudentProfileSettings = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!validateEmail(studentProfile.email)) {
+      showToast("Enter a valid profile email.");
+      return;
+    }
+    writeStudentProfile(studentProfile, session?.email);
+    applyAppTheme(studentProfile.theme);
+    writeStoredAppTheme(studentProfile.theme);
+    setStudentProfileOpen(false);
+    showToast("Student profile settings saved.");
+  };
+
+  const sendReply = () => {
+    if (!replyText.trim()) {
+      showToast("Write a reply before sending.");
+      return;
+    }
+    showToast("Reply queued for Cho's staff.");
+    setReplyText("");
+  };
+
+  return (
+    <section className="manager-home-page student-profile-page" aria-label="Student profile page">
+      <header className="manager-home-profile-title manager-page-title-bar" aria-label="Student profile page header">
+        <ManagerPageTitleFrame title="Profile" className="manager-home-profile-title-frame" />
+        <nav className="manager-home-top-actions" aria-label="Student profile quick actions">
+          <Link className="manager-home-top-action student-profile-panel-link" to="/manager" aria-label="Student's Panel">
+            <img className="manager-home-panel-icon" src={managerPageIcon} alt="" draggable="false" />
+            <span className="manager-home-top-action-label">Student's Panel</span>
+          </Link>
+          <button className="manager-home-top-action manager-home-logout-button" type="button" aria-label="Log Out" onClick={logout}>
+            <img className="manager-home-logout-icon" src={managerLogoutIcon} alt="" draggable="false" />
+            <span className="manager-home-top-action-label">Log Out</span>
+          </button>
+        </nav>
+      </header>
+      <main className="manager-home-shell">
+        <div
+          aria-hidden={isOverviewCollapsed}
+          className={`manager-home-overview-stage${isOverviewCollapsed ? " is-collapsed" : ""}${isOverviewDragging ? " is-dragging" : ""}`}
+          data-overview-progress={overviewProgress.toFixed(2)}
+          data-overview-state={overviewStageState}
+          style={overviewStageStyle}
+        >
+          <section className="manager-home-overview student-profile-overview" aria-label="Student profile overview section" ref={overviewContentRef}>
+            <article className="manager-home-profile-card" aria-label="Student profile overview">
+              <button className="manager-home-profile-settings-link" type="button" aria-label="Profile Settings" onClick={() => setStudentProfileOpen(true)}>
+                <img className="manager-home-profile-settings-icon" src={managerProfileSettingsIcon} alt="" draggable="false" />
+              </button>
+              <button
+                aria-checked={studentProfile.theme === "dark"}
+                aria-label={studentProfile.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                className={`manager-home-profile-theme-toggle manager-home-profile-theme-toggle--${studentProfile.theme}`}
+                onClick={toggleStudentHomeTheme}
+                role="switch"
+                type="button"
+              >
+                <span className="manager-home-profile-theme-icons" aria-hidden="true">
+                  <Sun size={15} />
+                  <Moon size={15} />
+                </span>
+                <span className="manager-home-profile-theme-thumb" aria-hidden="true">
+                  {studentProfile.theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}
+                </span>
+              </button>
+              <label className="manager-home-profile-frame manager-home-profile-upload">
+                <span className="sr-only">Upload student profile picture</span>
+                <input type="file" accept="image/*" aria-label="Upload student profile picture" onChange={changeStudentProfilePhoto} />
+                <img src={studentPortrait} alt={`${studentName} profile portrait`} draggable="false" />
+                <span className="manager-home-profile-change-badge" aria-hidden="true">
+                  <Camera size={15} />
+                </span>
+              </label>
+              <div className="manager-home-profile-copy">
+                <h2>{studentName}</h2>
+                <p>{studentRoleLabel}</p>
+              </div>
+              <dl className="manager-home-profile-facts">
+                <div>
+                  <dt><Award size={20} /></dt>
+                  <dd>Rank: {selectedStudent?.beltRank ?? "Green"} Belt</dd>
+                </div>
+                <div>
+                  <dt><Target size={20} /></dt>
+                  <dd>Member Since: {memberSinceLabel}</dd>
+                </div>
+                <div>
+                  <dt><Users size={20} /></dt>
+                  <dd>Classes: {selectedStudent?.classesAttended ?? 24} Attended</dd>
+                </div>
+              </dl>
+            </article>
+            <section className="manager-home-week-card" aria-label="Student month schedule">
+              <header className="manager-home-week-nav">
+                <button type="button" aria-label="Previous week" onClick={() => shiftHomeScheduleWeek(-1)}>
+                  <ChevronLeft size={20} />
+                </button>
+                <h2>{formatWeekRange(homeScheduleWeekDays)}</h2>
+                <button type="button" aria-label="Next week" onClick={() => shiftHomeScheduleWeek(1)}>
+                  <ChevronRight size={20} />
+                </button>
+              </header>
+              <div className="manager-home-week-days" aria-label="Week days">
+                {homeScheduleWeekDays.map((day) => {
+                  const dateKey = toDateKey(day);
+                  const isSelected = dateKey === selectedHomeScheduleDateKey;
+                  return (
+                    <button
+                      aria-label={`Select ${formatHomeScheduleDay(day)}`}
+                      aria-pressed={isSelected}
+                      className={isSelected ? "is-selected" : undefined}
+                      key={dateKey}
+                      onClick={() => setSelectedHomeScheduleDateKey(dateKey)}
+                      type="button"
+                    >
+                      <span>{day.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase()}</span>
+                      <strong>{day.getDate()}</strong>
+                    </button>
+                  );
+                })}
+              </div>
+              <section className="manager-home-agenda-card" aria-live="polite" aria-label="Selected day agenda">
+                <h3>{formatHomeScheduleDay(selectedHomeScheduleDate)}</h3>
+                <div className="manager-home-agenda-list">
+                  {selectedHomeAgendaItems.length ? (
+                    selectedHomeAgendaItems.slice(0, 5).map((item) => (
+                      <article className={`manager-home-agenda-item manager-home-agenda-item--${item.kind}`} key={item.id}>
+                        <time>{item.time}</time>
+                        <span aria-hidden="true">
+                          {item.kind === "event" ? <CalendarDays size={20} /> : item.kind === "class" ? <Users size={20} /> : <MessagesSquare size={20} />}
+                        </span>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <small>{item.meta}</small>
+                        </div>
+                      </article>
+                    ))
+                  ) : (
+                    <p>No classes or events scheduled for this date.</p>
+                  )}
+                </div>
+              </section>
+            </section>
+          </section>
+        </div>
+        <button
+          aria-expanded={!isOverviewCollapsed}
+          aria-label={isOverviewCollapsed ? "Expand student overview" : "Collapse student overview"}
+          className={`manager-home-overview-handle${isOverviewCollapsed ? " is-collapsed" : ""}${isOverviewDragging ? " is-dragging" : ""}`}
+          onClick={handleOverviewHandleClick}
+          onKeyDown={handleOverviewHandleKeyDown}
+          onPointerCancel={(event) => finishOverviewHandlePointer(event, false)}
+          onPointerDown={handleOverviewHandlePointerDown}
+          onPointerMove={handleOverviewHandlePointerMove}
+          onPointerUp={(event) => finishOverviewHandlePointer(event, true)}
+          ref={overviewHandleRef}
+          type="button"
+        >
+          <span className="manager-home-overview-handle-bar" aria-hidden="true" />
+        </button>
+        <section className="manager-home-feed-panel student-profile-feed-panel" aria-label="Messages and event notifications">
+          <div className="manager-home-feed-head">
+            <div className="manager-home-feed-counts" aria-label="Feed totals">
+              <button
+                className={`manager-home-count manager-home-count--message${feedFilter === "message" ? " is-active" : ""}`}
+                type="button"
+                aria-pressed={feedFilter === "message"}
+                aria-controls="student-profile-unified-feed"
+                onClick={() => changeFeedFilter("message")}
+              >
+                {messageCount} {messageCount === 1 ? "Message" : "Messages"}
+              </button>
+              <button
+                className={`manager-home-count manager-home-count--event${feedFilter === "event" ? " is-active" : ""}`}
+                type="button"
+                aria-pressed={feedFilter === "event"}
+                aria-controls="student-profile-unified-feed"
+                onClick={() => changeFeedFilter("event")}
+              >
+                {eventCount} Event {eventCount === 1 ? "Notification" : "Notifications"}
+              </button>
+            </div>
+          </div>
+          <div className={`manager-home-search-shell${isFeedSearchOpen ? " is-open" : ""}`}>
+            {isFeedSearchOpen ? (
+              <div className="manager-home-search" role="search">
+                <Search size={22} aria-hidden="true" />
+                <label className="sr-only" htmlFor="student-profile-feed-search">Search messages and event notifications</label>
+                <input
+                  aria-label="Search messages and event notifications"
+                  id="student-profile-feed-search"
+                  ref={feedSearchInputRef}
+                  type="search"
+                  placeholder="Search messages and event notifications..."
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={handleFeedSearchKeyDown}
+                />
+                <button className="manager-home-search-close" type="button" aria-label="Close search messages and event notifications" onClick={closeFeedSearch}>
+                  <X size={18} />
+                </button>
+              </div>
+            ) : (
+              <button
+                className="manager-home-search-trigger"
+                type="button"
+                aria-label="Open search messages and event notifications"
+                aria-controls="student-profile-feed-search"
+                aria-expanded="false"
+                onClick={() => setIsFeedSearchOpen(true)}
+              >
+                <Search size={24} />
+              </button>
+            )}
+          </div>
+          <div className="manager-home-unified-feed" id="student-profile-unified-feed" aria-label="Student message and notification feed">
+            {visibleFeedSections.length ? (
+              visibleFeedSections.map((section) => (
+                <section className="manager-home-date-section" key={section.date} aria-label={`Messages and event notifications from ${section.date}`}>
+                  <div className="manager-home-date-divider" role="separator" aria-label={`Messages and event notifications from ${section.date}`}>
+                    <span>{section.date}</span>
+                  </div>
+                  {section.threads.map((thread) => {
+                    const isSelected = thread.id === selectedThreadId;
+                    const isUnread = Boolean(thread.unread);
+                    const kindLabel = thread.kind === "event" ? "Event Notification" : "Message";
+                    const readStatusLabel = isUnread ? "Unread" : "Read";
+
+                    return (
+                      <article className={`manager-home-feed-item manager-home-feed-item--${thread.kind}${isUnread ? " is-unread" : " is-read"}${isSelected ? " is-selected" : ""}`} key={thread.id}>
+                        <div className="manager-home-feed-row student-profile-feed-row">
+                          <button
+                            className="manager-home-feed-button"
+                            type="button"
+                            aria-expanded={isSelected}
+                            aria-controls={`student-profile-feed-detail-${thread.id}`}
+                            onClick={() => openFeedThread(thread.id)}
+                          >
+                            <span className="manager-home-thread-avatar">
+                              <img src={thread.avatar} alt="" draggable="false" />
+                            </span>
+                            <span className="manager-home-feed-copy">
+                              <strong>{thread.sender}</strong>
+                              <span className={`manager-home-read-status ${isUnread ? "is-unread" : "is-read"}`} aria-label={`${readStatusLabel} ${kindLabel.toLowerCase()}`}>
+                                <span aria-hidden="true" />
+                                <span>{readStatusLabel}</span>
+                              </span>
+                              <em>{kindLabel}</em>
+                              <b>{thread.title}</b>
+                              <small>{thread.preview}</small>
+                              <time className="manager-home-inline-sent" dateTime={thread.sentDateTime} aria-label={`${thread.title} sent at ${thread.sentTime}`}>
+                                {thread.sentTime}
+                              </time>
+                            </span>
+                          </button>
+                        </div>
+                        {isSelected && (
+                          <div className="manager-home-feed-detail" id={`student-profile-feed-detail-${thread.id}`} aria-label={`${thread.title} details`}>
+                            <div className="manager-home-detail-title-row">
+                              <span>{kindLabel}</span>
+                              <time dateTime={thread.sentDateTime}>Sent {thread.sentDate} at {thread.sentTime}</time>
+                            </div>
+                            <h2>{thread.title}</h2>
+                            <header>
+                              <span className="manager-home-thread-avatar">
+                                <img src={thread.avatar} alt="" draggable="false" />
+                              </span>
+                              <div>
+                                <strong>{thread.sender}</strong>
+                                <p>{thread.kind === "event" ? "event notice for students and families" : "message for your student profile"}</p>
+                              </div>
+                              <button type="button" aria-label="More message actions">
+                                <MoreHorizontal size={20} />
+                              </button>
+                            </header>
+                            <div className="manager-home-message-copy">
+                              <p>Hello {studentName},</p>
+                              <p>{thread.preview.replace("...", ".")} Please review this update before your next class.</p>
+                            </div>
+                            {thread.kind === "event" && (
+                              <section className="manager-home-event-card" aria-label="Event details">
+                                <h3>Event Details</h3>
+                                <p><CalendarDays size={18} /> <span>Date: July 25 - July 27, 2026</span></p>
+                                <p><MapPin size={18} /> <span>Location: Cho&apos;s Martial Arts</span></p>
+                                <p><Users size={18} /> <span>Participants: Students and families</span></p>
+                                <p><CheckCircle2 size={18} /> <span>Check-in Time: 8:00 AM</span></p>
+                              </section>
+                            )}
+                            <p>{thread.kind === "event" ? "Arrive on time, bring your gear, and check in with the front desk." : "This message is saved to your Profile page for quick follow-up."}</p>
+                            <p>Best regards,<br />{thread.sender}</p>
+                            <div className="manager-home-reply">
+                              <input
+                                aria-label="Write a reply"
+                                placeholder="Write a reply..."
+                                value={replyText}
+                                onChange={(event) => setReplyText(event.target.value)}
+                              />
+                              <button type="button" onClick={sendReply}>
+                                <Send size={20} /> Reply
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </section>
+              ))
+            ) : (
+              <p className="manager-home-empty">No messages or event notifications match your search.</p>
+            )}
+          </div>
+        </section>
+        {studentProfileOpen && (
+          <div className="modal-backdrop manager-profile-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setStudentProfileOpen(false)}>
+            <form className="modal-card manager-profile-modal" role="dialog" aria-modal="true" aria-label="Student profile settings" onSubmit={saveStudentProfileSettings}>
+              <header className="student-modal-head">
+                <div>
+                  <h2>Profile Settings</h2>
+                  <p>Edit student contact settings and app theme.</p>
+                </div>
+                <button className="student-modal-close" type="button" aria-label="Close student profile settings" onClick={() => setStudentProfileOpen(false)}>
+                  <X size={20} />
+                </button>
+              </header>
+              <section className="student-form-section manager-profile-form-section">
+                <label className="field-label">
+                  Name
+                  <input
+                    className="input"
+                    value={studentProfile.name}
+                    onChange={(event) => setStudentProfile({ ...studentProfile, name: event.target.value })}
+                    placeholder="Cho's Student"
+                  />
+                </label>
+                <label className="field-label">
+                  Username
+                  <input
+                    className="input"
+                    value={studentProfile.username}
+                    onChange={(event) => setStudentProfile({ ...studentProfile, username: event.target.value })}
+                    autoComplete="username"
+                    placeholder="chos-student"
+                  />
+                </label>
+                <label className="field-label">
+                  Email
+                  <input
+                    className="input"
+                    value={studentProfile.email}
+                    onChange={(event) => setStudentProfile({ ...studentProfile, email: event.target.value })}
+                    placeholder="student@chos.prototype"
+                  />
+                </label>
+                <label className="field-label">
+                  Phone
+                  <input
+                    className="input"
+                    value={studentProfile.phone}
+                    onChange={(event) => setStudentProfile({ ...studentProfile, phone: event.target.value })}
+                    placeholder="(262) 555-0100"
+                  />
+                </label>
+                <div className="manager-profile-preferences">
+                  <div className="manager-theme-setting" role="group" aria-label="App theme">
+                    <span>App Theme</span>
+                    <div className="manager-theme-options">
+                      <button
+                        type="button"
+                        className={`manager-theme-option${studentProfile.theme === "light" ? " is-active" : ""}`}
+                        aria-pressed={studentProfile.theme === "light"}
+                        onClick={() => setStudentProfile({ ...studentProfile, theme: "light" })}
+                      >
+                        <Sun size={16} /> Light
+                      </button>
+                      <button
+                        type="button"
+                        className={`manager-theme-option${studentProfile.theme === "dark" ? " is-active" : ""}`}
+                        aria-pressed={studentProfile.theme === "dark"}
+                        onClick={() => setStudentProfile({ ...studentProfile, theme: "dark" })}
+                      >
+                        <Moon size={16} /> Dark
+                      </button>
+                    </div>
+                  </div>
+                  <label className="manager-profile-check">
+                    <input
+                      type="checkbox"
+                      checked={studentProfile.updates}
+                      onChange={(event) => setStudentProfile({ ...studentProfile, updates: event.target.checked })}
+                    />
+                    <span>Receive class and event updates</span>
+                  </label>
+                </div>
+              </section>
+              <div className="student-editor-actions manager-profile-actions">
+                <button type="submit">
+                  <CheckCircle2 size={18} /> Save Profile Settings
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+      </main>
+    </section>
+  );
+}
+
+function ParentProfileTabContent({
+  activeTab,
+  selectedChild,
+  scheduledClasses,
+  studioClasses,
+  studioEvents
+}: {
+  activeTab: ParentProfileTab;
+  selectedChild?: ChildAccount;
+  scheduledClasses: ScheduledClass[];
+  studioClasses: StudioClass[];
+  studioEvents: StudioEvent[];
+}) {
+  const childName = selectedChild?.name ?? "your child";
+  const nextClass = scheduledClasses.find((item) => !item.studentId) ?? scheduledClasses[0];
+  const nextEvent = studioEvents[0];
+
+  if (activeTab === "classes") {
+    return (
+      <section className="parent-tool-panel" aria-label="Parent classes view">
+        <header>
+          <h2>Classes</h2>
+          <p>See the class options and weekly schedule before deciding where {childName} should train next.</p>
+        </header>
+        <div className="parent-class-grid">
+          {studioClasses.map((studioClass) => (
+            <article className="parent-class-card" key={studioClass.id}>
+              <span className="parent-card-icon" aria-hidden="true"><CalendarDays size={20} /></span>
+              <div>
+                <h3>{studioClass.name}</h3>
+                <p>{formatClassDays(studioClass.daysOfWeek)}</p>
+                <strong>{formatClassTimeRange(studioClass)}</strong>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (activeTab === "study") {
+    return (
+      <section className="parent-tool-panel" aria-label="Parent study view">
+        <header>
+          <h2>Study</h2>
+          <p>Parent-friendly practice prompts for helping younger students review at home.</p>
+        </header>
+        <div className="parent-card-list">
+          {parentStudyItems.map((item) => (
+            <article className="parent-guide-card" key={item.title}>
+              <span className="parent-card-icon" aria-hidden="true"><Award size={20} /></span>
+              <div>
+                <h3>{item.title}</h3>
+                <p>{item.detail}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (activeTab === "test") {
+    return (
+      <section className="parent-tool-panel" aria-label="Parent test readiness view">
+        <header>
+          <h2>Test</h2>
+          <p>Track what parents should confirm before a child is ready for belt testing.</p>
+        </header>
+        <div className="parent-card-list">
+          {parentTestingItems.map((item) => (
+            <article className="parent-guide-card" key={item.title}>
+              <span className="parent-card-icon" aria-hidden="true"><Target size={20} /></span>
+              <div>
+                <h3>{item.title}</h3>
+                <p>{item.detail}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (activeTab === "messages") {
+    const messages = studentHomeThreads.filter((thread) => thread.kind === "message");
+    return (
+      <section className="parent-tool-panel" aria-label="Parent messages view">
+        <header>
+          <h2>Messages</h2>
+          <p>Review staff and studio messages connected to {childName}&apos;s account.</p>
+        </header>
+        <div className="parent-message-list">
+          {messages.map((thread) => (
+            <article className="parent-message-row" key={thread.id}>
+              <img src={thread.avatar} alt="" draggable="false" />
+              <div>
+                <strong>{thread.title}</strong>
+                <span>{thread.sender} - {thread.sentDate} at {thread.sentTime}</span>
+                <p>{thread.preview}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (activeTab === "notifications") {
+    const eventThreads = studentHomeThreads.filter((thread) => thread.kind === "event");
+    return (
+      <section className="parent-tool-panel" aria-label="Parent notifications view">
+        <header>
+          <h2>Notifications</h2>
+          <p>Event notices, parent reminders, and testing updates for the family.</p>
+        </header>
+        <div className="parent-message-list">
+          {eventThreads.map((thread) => (
+            <article className="parent-message-row" key={thread.id}>
+              <img src={thread.avatar} alt="" draggable="false" />
+              <div>
+                <strong>{thread.title}</strong>
+                <span>{thread.sender} - {thread.sentDate} at {thread.sentTime}</span>
+                <p>{thread.preview}</p>
+              </div>
+            </article>
+          ))}
+          {studioEvents.slice(0, 3).map((event) => (
+            <article className="parent-message-row" key={event.id}>
+              <span className="parent-card-icon" aria-hidden="true"><CalendarDays size={20} /></span>
+              <div>
+                <strong>{event.title}</strong>
+                <span>{event.date} at {event.time}</span>
+                <p>{event.details}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="parent-tool-panel" aria-label="Parent dashboard view">
+      <header>
+        <h2>Dashboard</h2>
+        <p>A quick view of {childName}&apos;s profile, next class, and family alerts.</p>
+      </header>
+      <div className="parent-dashboard-grid">
+        <article>
+          <span>Selected Student</span>
+          <strong>{selectedChild?.name ?? "No child selected"}</strong>
+          <p>{selectedChild ? `Age ${selectedChild.age || "not set"} - ${childBeltLabel(selectedChild.beltSlug)} Belt` : "Create a child profile to start tracking their student tools."}</p>
+        </article>
+        <article>
+          <span>Next Class</span>
+          <strong>{nextClass?.title ?? "No class scheduled"}</strong>
+          <p>{nextClass ? `${nextClass.date} at ${nextClass.time}` : "Cho's staff can add schedule items from the manager panel."}</p>
+        </article>
+        <article>
+          <span>Next Notification</span>
+          <strong>{nextEvent?.title ?? "No event posted"}</strong>
+          <p>{nextEvent ? `${nextEvent.date} at ${nextEvent.time}` : "No event notifications are currently queued."}</p>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function ParentChildProfileModal({
+  form,
+  mode,
+  onChange,
+  onClose,
+  onSubmit
+}: {
+  form: { name: string; age: string; beltSlug: string };
+  mode: "add" | "edit";
+  onChange: (form: { name: string; age: string; beltSlug: string }) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const modalTitle = mode === "edit" ? "Edit Child Profile" : "Add Child Profile";
+
+  return (
+    <div className="modal-backdrop parent-profile-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="modal-card manager-profile-modal parent-child-modal" role="dialog" aria-modal="true" aria-label={modalTitle} onSubmit={onSubmit}>
+        <header className="student-modal-head">
+          <div>
+            <h2>{modalTitle}</h2>
+            <p>Keep each child profile clear for parent-supervised student access.</p>
+          </div>
+          <button className="student-modal-close" type="button" aria-label={`Close ${modalTitle}`} onClick={onClose}>
+            <X size={20} />
+          </button>
+        </header>
+        <section className="student-form-section manager-profile-form-section">
+          <label className="field-label">
+            Child name
+            <input className="input" value={form.name} onChange={(event) => onChange({ ...form, name: event.target.value })} placeholder="Mina Cho" />
+          </label>
+          <label className="field-label">
+            Child age
+            <input className="input" inputMode="numeric" value={form.age} onChange={(event) => onChange({ ...form, age: event.target.value })} placeholder="8" />
+          </label>
+          <label className="field-label">
+            Current belt
+            <select className="input" value={form.beltSlug} onChange={(event) => onChange({ ...form, beltSlug: event.target.value })}>
+              {beltOptions.map((belt) => (
+                <option key={belt} value={belt.toLowerCase().replace(/\s+/g, "-")}>
+                  {belt}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+        <div className="student-editor-actions manager-profile-actions">
+          <button type="submit">
+            <CheckCircle2 size={18} /> Save Child Profile
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ParentProfilePage() {
+  const { addChildAccount, guardianChildren, logout, scheduledClasses, showToast, studioClasses, studioEvents, updateChildAccount } = useAppState();
+  const [activeTab, setActiveTab] = useState<ParentProfileTab>("dashboard");
+  const [selectedChildId, setSelectedChildId] = useState(() => guardianChildren[0]?.id ?? "");
+  const [childModalMode, setChildModalMode] = useState<"add" | "edit" | null>(null);
+  const [editingChildId, setEditingChildId] = useState("");
+  const [childForm, setChildForm] = useState({ name: "", age: "", beltSlug: "white" });
+  const selectedChild = guardianChildren.find((child) => child.id === selectedChildId) ?? guardianChildren[0];
+  const messageCount = studentHomeThreads.filter((thread) => thread.kind === "message").length;
+  const notificationCount = studentHomeThreads.filter((thread) => thread.kind === "event").length + studioEvents.length;
+
+  useEffect(() => {
+    if (!guardianChildren.length) {
+      setSelectedChildId("");
+      return;
+    }
+    if (!guardianChildren.some((child) => child.id === selectedChildId)) {
+      setSelectedChildId(guardianChildren[0].id);
+    }
+  }, [guardianChildren, selectedChildId]);
+
+  const openAddChild = () => {
+    setChildForm({ name: "", age: "", beltSlug: "white" });
+    setEditingChildId("");
+    setChildModalMode("add");
+  };
+
+  const openEditChild = (child: ChildAccount) => {
+    setChildForm({ name: child.name, age: child.age, beltSlug: child.beltSlug });
+    setEditingChildId(child.id);
+    setChildModalMode("edit");
+  };
+
+  const closeChildModal = () => {
+    setChildModalMode(null);
+    setEditingChildId("");
+  };
+
+  const saveChildProfile = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const savedChild = childModalMode === "edit" && editingChildId ? updateChildAccount(editingChildId, childForm) : addChildAccount(childForm);
+    if (!savedChild) {
+      showToast("Enter a child name.");
+      return;
+    }
+    setSelectedChildId(savedChild.id);
+    closeChildModal();
+    showToast(`${savedChild.name} child profile saved.`);
+  };
+
+  return (
+    <section className="manager-home-page parent-profile-page" aria-label="Parent profile page">
+      <header className="manager-home-profile-title manager-page-title-bar" aria-label="Parent profile page header">
+        <ManagerPageTitleFrame title="Parent Profile" className="manager-home-profile-title-frame" />
+        <nav className="manager-home-top-actions" aria-label="Parent profile quick actions">
+          <button className="manager-home-top-action parent-profile-add-action" type="button" aria-label="Add Child Profile" onClick={openAddChild}>
+            <Plus size={28} aria-hidden="true" />
+            <span className="manager-home-top-action-label">Add Child</span>
+          </button>
+          <button className="manager-home-top-action manager-home-logout-button" type="button" aria-label="Log Out" onClick={logout}>
+            <img className="manager-home-logout-icon" src={managerLogoutIcon} alt="" draggable="false" />
+            <span className="manager-home-top-action-label">Log Out</span>
+          </button>
+        </nav>
+      </header>
+
+      <main className="parent-profile-shell">
+        <section className="parent-profile-overview" aria-label="Parent family overview">
+          <article className="parent-family-card">
+            <div>
+              <p>Family Profile</p>
+              <h2>Manage every child from one parent page.</h2>
+              <span>Built for parents with younger students or multiple children in class.</span>
+            </div>
+            <div className="parent-family-stats" aria-label="Parent family totals">
+              <span><strong>{guardianChildren.length}</strong> Child Profiles</span>
+              <span><strong>{messageCount}</strong> Messages</span>
+              <span><strong>{notificationCount}</strong> Notifications</span>
+            </div>
+          </article>
+
+          <section className="parent-child-profiles" aria-label="Parent child profiles">
+            <div className="parent-section-head">
+              <div>
+                <h2>Kids Profiles</h2>
+                <p>Create, select, and edit each child before opening their student tools.</p>
+              </div>
+              <button type="button" onClick={openAddChild}>
+                <Plus size={18} /> Add Child
+              </button>
+            </div>
+            <div className="parent-child-list">
+              {guardianChildren.length ? (
+                guardianChildren.map((child) => {
+                  const isSelected = child.id === selectedChild?.id;
+                  return (
+                    <article
+                      aria-label={`${child.name} profile card`}
+                      className={`parent-child-card${isSelected ? " is-selected" : ""}`}
+                      key={child.id}
+                      onClick={() => setSelectedChildId(child.id)}
+                      role="group"
+                    >
+                      <button type="button" aria-label={`Select ${child.name} profile`} aria-pressed={isSelected} onClick={() => setSelectedChildId(child.id)}>
+                        <span className="parent-child-avatar" aria-hidden="true">{childInitials(child.name)}</span>
+                        <span>
+                          <strong>{child.name}</strong>
+                          <small>{child.age ? `Age ${child.age}` : "Age not set"} - {childBeltLabel(child.beltSlug)} Belt</small>
+                        </span>
+                      </button>
+                      <button
+                        className="parent-child-edit"
+                        type="button"
+                        aria-label={`Edit ${child.name} profile`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openEditChild(child);
+                        }}
+                      >
+                        Edit
+                      </button>
+                    </article>
+                  );
+                })
+              ) : (
+                <p className="parent-empty-note">No child profiles yet. Add the first student profile to begin.</p>
+              )}
+            </div>
+          </section>
+        </section>
+
+        <section className="parent-selected-student" aria-label="Selected child workspace">
+          <div className="parent-selected-head">
+            <div>
+              <span className="parent-child-avatar parent-child-avatar--large" aria-hidden="true">{selectedChild ? childInitials(selectedChild.name) : "P"}</span>
+              <div>
+                <p>Selected Student</p>
+                <h2>{selectedChild?.name ?? "No child selected"}</h2>
+                <span>{selectedChild ? `${selectedChild.age ? `Age ${selectedChild.age}` : "Age not set"} - ${childBeltLabel(selectedChild.beltSlug)} Belt` : "Add a child profile to unlock student tools."}</span>
+              </div>
+            </div>
+            {selectedChild && (
+              <button type="button" onClick={() => openEditChild(selectedChild)}>
+                Edit Profile
+              </button>
+            )}
+          </div>
+
+          <nav className="parent-tool-tabs" aria-label="Parent student tools">
+            {parentProfileTabs.map((tab) => (
+              <button className={activeTab === tab.id ? "is-active" : ""} key={tab.id} type="button" aria-pressed={activeTab === tab.id} onClick={() => setActiveTab(tab.id)}>
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+
+          <ParentProfileTabContent
+            activeTab={activeTab}
+            selectedChild={selectedChild}
+            scheduledClasses={scheduledClasses}
+            studioClasses={studioClasses}
+            studioEvents={studioEvents}
+          />
+        </section>
+      </main>
+
+      {childModalMode && (
+        <ParentChildProfileModal
+          form={childForm}
+          mode={childModalMode}
+          onChange={setChildForm}
+          onClose={closeChildModal}
+          onSubmit={saveChildProfile}
+        />
+      )}
+    </section>
   );
 }
 
@@ -1234,7 +3216,7 @@ function ManagerHomePage() {
 
       setManagerProfile((currentProfile) => {
         const nextProfile = { ...currentProfile, photoDataUrl: result };
-        writeManagerProfile(nextProfile);
+        writeManagerProfile(nextProfile, session?.email);
         return nextProfile;
       });
       showToast("Manager profile picture updated.");
@@ -1305,7 +3287,7 @@ function ManagerHomePage() {
     const nextTheme: AppThemeMode = managerProfile.theme === "dark" ? "light" : "dark";
     setManagerProfile((currentProfile) => {
       const nextProfile = { ...currentProfile, theme: nextTheme };
-      writeManagerProfile(nextProfile);
+      writeManagerProfile(nextProfile, session?.email);
       return nextProfile;
     });
     writeStoredAppTheme(nextTheme);
@@ -2107,27 +4089,39 @@ function ManagerHomePage() {
 }
 
 function ManagerLauncherPage() {
-  const { logout, session, showToast } = useAppState();
+  const { accountRole, logout, session, showToast, students } = useAppState();
   const location = useLocation();
   const navigate = useNavigate();
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSettings, setProfileSettings] = useState(() => readManagerProfile(session?.email));
   const [profilePassword, setProfilePassword] = useState({ newPassword: "", confirmPassword: "" });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const selectedLauncherItem = getSelectedManagerLauncherItem(location.search);
-  const sidebarToggleLabel = isSidebarCollapsed ? "Expand manager app launcher" : "Collapse manager app launcher";
+  const isStudentPanel = accountRole === "student";
+  const launcherItems = isStudentPanel ? studentLauncherItems : managerLauncherItems;
+  const selectedLauncherItem = isStudentPanel ? getSelectedStudentLauncherItem(location.search) : getSelectedManagerLauncherItem(location.search);
+  const launcherName = isStudentPanel ? "student" : "manager";
+  const sidebarToggleLabel = isSidebarCollapsed ? `Expand ${launcherName} app launcher` : `Collapse ${launcherName} app launcher`;
+  const studentRecord = students[0];
+  const studentPanelProfile = isStudentPanel ? readStudentProfile(session?.email, studentRecord) : undefined;
+  const profileActionPhoto = isStudentPanel
+    ? studentPanelProfile?.photoDataUrl ?? (studentRecord?.profileImagePath ? publicAsset(studentRecord.profileImagePath) : publicAsset("assets/CheetahProfilePic/Cheetah.png"))
+    : profileSettings.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png");
 
   useEffect(() => {
     if (new URLSearchParams(location.search).get("profile") !== "settings") return;
+    if (isStudentPanel) {
+      navigate("/manager", { replace: true });
+      return;
+    }
     setProfileSettings(readManagerProfile(session?.email));
     setProfilePassword({ newPassword: "", confirmPassword: "" });
     setProfileOpen(true);
     navigate("/manager", { replace: true });
-  }, [location.search, navigate, session?.email]);
+  }, [isStudentPanel, location.search, navigate, session?.email]);
 
   const selectProfileTheme = (theme: AppThemeMode) => {
     setProfileSettings((current) => ({ ...current, theme }));
-    writeManagerProfile({ ...readManagerProfile(session?.email), theme });
+    writeManagerProfile({ ...readManagerProfile(session?.email), theme }, session?.email);
     writeStoredAppTheme(theme);
   };
 
@@ -2182,7 +4176,7 @@ function ManagerLauncherPage() {
 
     applyAppTheme(nextProfile.theme);
     writeStoredAppTheme(nextProfile.theme);
-    writeManagerProfile(nextProfile);
+    writeManagerProfile(nextProfile, session?.email);
     setProfileSettings(nextProfile);
     setProfilePassword({ newPassword: "", confirmPassword: "" });
     setProfileOpen(false);
@@ -2191,15 +4185,15 @@ function ManagerLauncherPage() {
   };
 
   return (
-    <section className="manager-launcher-page" aria-label="Manager dashboard">
+    <section className={`manager-launcher-page${isStudentPanel ? " student-launcher-page" : ""}`} aria-label={isStudentPanel ? "Student dashboard" : "Manager dashboard"}>
       <main className="manager-launcher-main">
-        <header className="manager-launcher-topbar manager-page-title-bar" aria-label="Manager panel page header">
-          <ManagerPageTitleFrame title="MANAGER PANEL" className="manager-page-title-frame--manager-panel" />
-          <nav className="manager-home-top-actions" aria-label="Manager panel quick actions">
+        <header className="manager-launcher-topbar manager-page-title-bar" aria-label={isStudentPanel ? "Student panel page header" : "Manager panel page header"}>
+          <ManagerPageTitleFrame title={isStudentPanel ? "Student's Panel" : "MANAGER PANEL"} className="manager-page-title-frame--manager-panel" />
+          <nav className="manager-home-top-actions" aria-label={isStudentPanel ? "Student panel quick actions" : "Manager panel quick actions"}>
             <Link className="manager-home-top-action manager-launcher-profile-link" to="/" aria-label="Profile">
               <img
                 className="manager-home-profile-action-photo"
-                src={profileSettings.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png")}
+                src={profileActionPhoto}
                 alt=""
                 draggable="false"
               />
@@ -2211,15 +4205,15 @@ function ManagerLauncherPage() {
             </button>
           </nav>
         </header>
-        <div className={`manager-launcher-body${isSidebarCollapsed ? " is-sidebar-collapsed" : ""}`} role="group" aria-label="Manager launcher workspace frame">
+        <div className={`manager-launcher-body${isSidebarCollapsed ? " is-sidebar-collapsed" : ""}`} role="group" aria-label={isStudentPanel ? "Student launcher workspace frame" : "Manager launcher workspace frame"}>
           <nav
             className="manager-launcher-grid manager-launcher-sidebar"
             id="manager-launcher-sidebar"
-            aria-label="Manager app launcher"
+            aria-label={isStudentPanel ? "Student app launcher" : "Manager app launcher"}
             data-orientation="vertical"
             hidden={isSidebarCollapsed}
           >
-            {managerLauncherItems.map((item) => {
+            {launcherItems.map((item) => {
               const isSelected = item.icon === selectedLauncherItem.icon;
               return (
                 <Link
@@ -2248,7 +4242,7 @@ function ManagerLauncherPage() {
             <span className="manager-launcher-rail-toggle-bar" aria-hidden="true" />
           </button>
           <section className="manager-launcher-workspace" aria-label={`${selectedLauncherItem.label} workspace`}>
-            <ManagerLauncherWorkspace tool={selectedLauncherItem.icon} />
+            {isStudentPanel ? <StudentLauncherWorkspace tool={selectedLauncherItem.icon} /> : <ManagerLauncherWorkspace tool={selectedLauncherItem.icon} />}
           </section>
         </div>
       </main>
@@ -3244,288 +5238,6 @@ function MessagePreview({ message }: { message: MessageLog }) {
   );
 }
 
-type MessengerParticipant = {
-  id: string;
-  name: string;
-  role: "staff" | "student" | "parent";
-  subtitle: string;
-  detail: string;
-};
-
-type MessengerFinderFilter = MessengerParticipant["role"];
-
-const managerMessengerParticipant: MessengerParticipant = {
-  id: "direct-staff-seed",
-  name: "Cho's Manager",
-  role: "staff",
-  subtitle: "Studio staff",
-  detail: "Manager account"
-};
-
-const staffMessengerParticipants: MessengerParticipant[] = [
-  managerMessengerParticipant,
-  {
-    id: "direct-staff-instructors",
-    name: "Instructor Team",
-    role: "staff",
-    subtitle: "Cho's staff",
-    detail: "Class, testing, and floor support"
-  }
-];
-
-function studentToMessengerParticipant(student: StudentRecord): MessengerParticipant {
-  return {
-    id: student.id,
-    name: fullName(student),
-    role: "student",
-    subtitle: `${student.beltRank} belt`,
-    detail: student.guardianPhone || student.phone || student.email
-  };
-}
-
-function studentToParentMessengerParticipant(student: StudentRecord): MessengerParticipant {
-  const studentName = fullName(student);
-  const guardianName = student.guardianName?.trim() || `${studentName} Parent/Guardian`;
-  return {
-    id: `parent-${student.id}`,
-    name: guardianName,
-    role: "parent",
-    subtitle: `Parent of ${studentName}`,
-    detail: student.guardianPhone || student.guardianEmail || student.email || "No parent contact on file"
-  };
-}
-
-function directMessageThreadId(firstId: string, secondId: string) {
-  return [firstId, secondId].sort().join("__");
-}
-
-function formatMessengerTime(value: string) {
-  return new Date(value).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
-
-function DirectMessageBubble({ message, mine }: { message: DirectMessage; mine: boolean }) {
-  return (
-    <article className={`messenger-bubble${mine ? " mine" : ""}`}>
-      <div>
-        <strong>{message.senderName}</strong>
-        <span>{formatMessengerTime(message.createdAt)}</span>
-      </div>
-      <p>{message.body}</p>
-    </article>
-  );
-}
-
-const messengerFinderFilters: { value: MessengerFinderFilter; label: string }[] = [
-  { value: "staff", label: "Staff" },
-  { value: "student", label: "Students" },
-  { value: "parent", label: "Parents" }
-];
-
-function DirectMessengerPanel({
-  className = "",
-  title = "Direct Messenger",
-  description = "Click any user name to open a private conversation and send a message instantly."
-}: {
-  className?: string;
-  title?: string;
-  description?: string;
-}) {
-  const { accountRole, students, directMessages, sendDirectMessage, showToast } = useAppState();
-  const studentParticipants = useMemo(() => students.map(studentToMessengerParticipant), [students]);
-  const parentParticipants = useMemo(() => students.map(studentToParentMessengerParticipant), [students]);
-  const currentParticipant = accountRole === "student" && studentParticipants[0] ? studentParticipants[0] : managerMessengerParticipant;
-  const messageContacts = useMemo(
-    () => [...staffMessengerParticipants, ...studentParticipants, ...parentParticipants].filter((participant) => participant.id !== currentParticipant.id),
-    [currentParticipant.id, parentParticipants, studentParticipants]
-  );
-  const [selectedParticipantId, setSelectedParticipantId] = useState(messageContacts[0]?.id ?? "");
-  const [directMessageText, setDirectMessageText] = useState("");
-  const [finderOpen, setFinderOpen] = useState(false);
-  const [finderFilter, setFinderFilter] = useState<MessengerFinderFilter>("student");
-  const [finderQuery, setFinderQuery] = useState("");
-  const selectedParticipant = messageContacts.find((participant) => participant.id === selectedParticipantId) ?? messageContacts[0];
-  const selectedThreadId = selectedParticipant ? directMessageThreadId(currentParticipant.id, selectedParticipant.id) : "";
-  const selectedConversationMessages = useMemo(
-    () => directMessages.filter((message) => message.threadId === selectedThreadId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-    [directMessages, selectedThreadId]
-  );
-  const finderResults = useMemo(() => {
-    const query = finderQuery.trim().toLowerCase();
-    return messageContacts.filter((participant) => {
-      if (participant.role !== finderFilter) return false;
-      if (!query) return true;
-      return `${participant.name} ${participant.subtitle} ${participant.detail}`.toLowerCase().includes(query);
-    });
-  }, [finderFilter, finderQuery, messageContacts]);
-
-  useEffect(() => {
-    if (!messageContacts.length) return;
-    if (!messageContacts.some((participant) => participant.id === selectedParticipantId)) {
-      setSelectedParticipantId(messageContacts[0].id);
-    }
-  }, [messageContacts, selectedParticipantId]);
-
-  const sendDirect = (event: FormEvent) => {
-    event.preventDefault();
-    if (!selectedParticipant) return;
-    const sent = sendDirectMessage({
-      senderId: currentParticipant.id,
-      senderName: currentParticipant.name,
-      recipientId: selectedParticipant.id,
-      recipientName: selectedParticipant.name,
-      body: directMessageText
-    });
-    if (!sent) {
-      showToast("Type a message before sending.");
-      return;
-    }
-    setDirectMessageText("");
-    showToast(`Message sent to ${selectedParticipant.name}.`);
-  };
-
-  const openConversation = (participant: MessengerParticipant) => {
-    setSelectedParticipantId(participant.id);
-    setDirectMessageText("");
-    setFinderOpen(false);
-  };
-
-  const panelClassName = ["operations-panel", "messenger-panel", className].filter(Boolean).join(" ");
-
-  return (
-    <section className={panelClassName} aria-label="Direct message center">
-      <div className="student-roster-head">
-        <div>
-          <h2>{title}</h2>
-          <p>{description}</p>
-        </div>
-        <div className="messenger-head-actions">
-          <button type="button" className="operations-action secondary" onClick={() => setFinderOpen(true)}>
-            <Search size={18} /> Find User
-          </button>
-          <span className="messenger-self-badge">Signed in as {currentParticipant.name}</span>
-        </div>
-      </div>
-      <div className="messenger-shell">
-        <aside className="messenger-people" aria-label="Message people">
-          {messageContacts.map((participant) => {
-            const threadId = directMessageThreadId(currentParticipant.id, participant.id);
-            const latestMessage = directMessages.filter((message) => message.threadId === threadId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-            return (
-              <button
-                key={participant.id}
-                type="button"
-                className={`messenger-contact${selectedParticipant?.id === participant.id ? " active" : ""}`}
-                aria-label={`Open conversation with ${participant.name}`}
-                onClick={() => setSelectedParticipantId(participant.id)}
-              >
-                <div>
-                  <strong>{participant.name}</strong>
-                  <small>{participant.subtitle}</small>
-                  <p>{latestMessage?.body ?? participant.detail}</p>
-                </div>
-              </button>
-            );
-          })}
-        </aside>
-        <section className="messenger-chat" aria-label={selectedParticipant ? `Conversation with ${selectedParticipant.name}` : "Conversation"}>
-          {selectedParticipant ? (
-            <>
-              <header>
-                <div>
-                  <h2>{selectedParticipant.name}</h2>
-                  <p>{selectedParticipant.subtitle}</p>
-                </div>
-              </header>
-              <div className="messenger-thread" aria-live="polite">
-                {selectedConversationMessages.length ? (
-                  selectedConversationMessages.map((message) => (
-                    <DirectMessageBubble key={message.id} message={message} mine={message.senderId === currentParticipant.id} />
-                  ))
-                ) : (
-                  <p className="messenger-empty">No messages yet. Start the conversation with {selectedParticipant.name}.</p>
-                )}
-              </div>
-              <form className="messenger-composer" onSubmit={sendDirect}>
-                <label>
-                  Message {selectedParticipant.name}
-                  <textarea rows={3} value={directMessageText} onChange={(event) => setDirectMessageText(event.target.value)} />
-                </label>
-                <button type="submit" className="operations-action">
-                  <MessagesSquare size={18} /> Send Message
-                </button>
-              </form>
-            </>
-          ) : (
-            <p className="messenger-empty">Add students to start direct messaging.</p>
-          )}
-        </section>
-      </div>
-      {finderOpen && (
-        <div className="modal-backdrop" role="presentation" onClick={() => setFinderOpen(false)}>
-          <section
-            aria-labelledby="messenger-finder-title"
-            aria-modal="true"
-            className="modal-card messenger-finder-modal"
-            role="dialog"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="student-modal-head">
-              <div>
-                <h2 id="messenger-finder-title">Find User</h2>
-                <p>Search by category, then click a name to open that message thread.</p>
-              </div>
-              <button type="button" className="student-modal-close" aria-label="Close find user" onClick={() => setFinderOpen(false)}>
-                <X size={18} />
-              </button>
-            </div>
-            <div className="messenger-finder-tabs" role="group" aria-label="User categories">
-              {messengerFinderFilters.map((filter) => (
-                <button
-                  key={filter.value}
-                  type="button"
-                  aria-pressed={finderFilter === filter.value}
-                  className={finderFilter === filter.value ? "active" : ""}
-                  onClick={() => {
-                    setFinderFilter(filter.value);
-                    setFinderQuery("");
-                  }}
-                >
-                  {filter.label}
-                </button>
-              ))}
-            </div>
-            <label className="messenger-finder-search">
-              Search users
-              <input value={finderQuery} onChange={(event) => setFinderQuery(event.target.value)} placeholder="Type a name, role, phone, or email" />
-            </label>
-            <div className="messenger-finder-results">
-              {finderResults.length ? (
-                finderResults.map((participant) => (
-                  <button
-                    key={participant.id}
-                    type="button"
-                    className="messenger-finder-result"
-                    aria-label={`Open conversation with ${participant.name}`}
-                    onClick={() => openConversation(participant)}
-                  >
-                    <div>
-                      <strong>{participant.name}</strong>
-                      <small>{participant.subtitle}</small>
-                      <p>{participant.detail}</p>
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <p className="messenger-empty">No users found in this category.</p>
-              )}
-            </div>
-          </section>
-        </div>
-      )}
-    </section>
-  );
-}
-
 function MessagesPage() {
   const { students, messageCampaigns, messageLogs, sendMarketingBlast, sendMissedClassFollowUps, showToast } = useAppState();
   const [marketingMessage, setMarketingMessage] = useState("Monthly special: 10% off gloves and uniforms this week.");
@@ -4014,21 +5726,46 @@ function MerchandisePage() {
   );
 }
 
+function OperationsHomePage() {
+  const { accountRole } = useAppState();
+  if (accountRole === "student") return <StudentProfilePage />;
+  if (accountRole === "guardian") return <ParentProfilePage />;
+  return <ManagerHomePage />;
+}
+
+function StaffOnlyRoute({ children }: { children: ReactNode }) {
+  const { accountRole } = useAppState();
+  return accountRole === "staff" ? <>{children}</> : <Navigate to="/" replace />;
+}
+
+function StaffOrStudentRoute({ children }: { children: ReactNode }) {
+  const { accountRole } = useAppState();
+  return accountRole === "staff" || accountRole === "student" ? <>{children}</> : <Navigate to="/" replace />;
+}
+
+function ManagerPanelRoute() {
+  const { accountRole } = useAppState();
+  if (accountRole === "guardian") return <Navigate to="/" replace />;
+  return <ManagerLauncherPage />;
+}
+
 export function OperationsApp() {
   return (
     <OperationsShell>
       <Routes>
-        <Route path="/" element={<ManagerHomePage />} />
-        <Route path="/manager" element={<ManagerLauncherPage />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/students" element={<StudentsPage />} />
-        <Route path="/classes" element={<ClassesPage />} />
-        <Route path="/schedule" element={<SchedulePage />} />
-        <Route path="/messages" element={<MessagesPage />} />
-        <Route path="/check-ins" element={<CheckInsPage />} />
-        <Route path="/events" element={<EventsPage />} />
-        <Route path="/merchandise" element={<MerchandisePage />} />
-        <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/" element={<OperationsHomePage />} />
+        <Route path="/manager" element={<ManagerPanelRoute />} />
+        <Route path="/dashboard" element={<StaffOnlyRoute><DashboardPage /></StaffOnlyRoute>} />
+        <Route path="/students" element={<StaffOnlyRoute><StudentsPage /></StaffOnlyRoute>} />
+        <Route path="/classes" element={<StaffOnlyRoute><ClassesPage /></StaffOnlyRoute>} />
+        <Route path="/study-guide" element={<StaffOnlyRoute><ManagerStudyGuidePage /></StaffOnlyRoute>} />
+        <Route path="/schedule" element={<StaffOnlyRoute><SchedulePage /></StaffOnlyRoute>} />
+        <Route path="/messages" element={<StaffOnlyRoute><MessagesPage /></StaffOnlyRoute>} />
+        <Route path="/check-ins" element={<StaffOrStudentRoute><CheckInsPage /></StaffOrStudentRoute>} />
+        <Route path="/events" element={<StaffOnlyRoute><EventsPage /></StaffOnlyRoute>} />
+        <Route path="/merchandise" element={<StaffOnlyRoute><MerchandisePage /></StaffOnlyRoute>} />
+        <Route path="/videos" element={<StaffOnlyRoute><ManagerVideosPage /></StaffOnlyRoute>} />
+        <Route path="/reports" element={<StaffOnlyRoute><ReportsPage /></StaffOnlyRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </OperationsShell>

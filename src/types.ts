@@ -287,6 +287,47 @@ export interface StudioEvent {
   audience: "students" | "families" | "public";
 }
 
+export interface TrainingVideoFolder {
+  id: string;
+  name: string;
+  subject: string;
+  description?: string;
+  createdAt: string;
+}
+
+export interface TrainingVideo {
+  id: string;
+  folderId: string;
+  title: string;
+  description?: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  videoDataUrl: string;
+  createdAt: string;
+}
+
+export interface StudyGuideFolder {
+  id: string;
+  name: string;
+  subject: string;
+  parentId?: string;
+  description?: string;
+  createdAt: string;
+}
+
+export interface StudyGuideMaterial {
+  id: string;
+  folderId: string;
+  title: string;
+  description?: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  fileDataUrl: string;
+  createdAt: string;
+}
+
 export interface MerchandiseItem {
   id: string;
   name: string;
