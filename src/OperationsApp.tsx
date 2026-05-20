@@ -622,6 +622,26 @@ type ManagerHomeThread = {
 
 type ManagerHomeFeedFilter = "all" | ManagerHomeThread["kind"];
 
+type ManagerComposeKind = ManagerHomeThread["kind"];
+type ManagerComposeRecipientRole = "staff" | "student" | "parent";
+
+type ManagerComposeRecipient = {
+  id: string;
+  name: string;
+  role: ManagerComposeRecipientRole;
+  subtitle: string;
+  detail: string;
+};
+
+type ManagerComposeRecipientSummaryItem = {
+  id: string;
+  label: string;
+  detail: string;
+  variant: "category" | "person";
+};
+
+const managerComposeRecipientRoles: ManagerComposeRecipientRole[] = ["staff", "student", "parent"];
+
 type ManagerHomeAgendaItem = {
   id: string;
   title: string;
@@ -709,6 +729,16 @@ const managerHomeThreads: ManagerHomeThread[] = [
   }
 ];
 
+const managerComposeStaffRecipients: ManagerComposeRecipient[] = [
+  {
+    id: "direct-staff-instructors",
+    name: "Instructor Team",
+    role: "staff",
+    subtitle: "Cho's staff",
+    detail: "Class, testing, and floor support"
+  }
+];
+
 const HOME_OVERVIEW_DRAG_THRESHOLD = 6;
 const HOME_OVERVIEW_KEYBOARD_STEP = 0.12;
 const HOME_OVERVIEW_STAGE_VISUAL_BUFFER = 6;
@@ -779,6 +809,61 @@ function agendaSortMinutes(time: string) {
 
 function compareHomeAgendaItems(a: ManagerHomeAgendaItem, b: ManagerHomeAgendaItem) {
   return a.date.localeCompare(b.date) || a.priority - b.priority || agendaSortMinutes(a.time) - agendaSortMinutes(b.time);
+}
+
+function studentToComposeRecipient(student: StudentRecord): ManagerComposeRecipient {
+  return {
+    id: student.id,
+    name: fullName(student),
+    role: "student",
+    subtitle: `${student.beltRank} belt student`,
+    detail: student.phone || student.email || "No student contact on file"
+  };
+}
+
+function studentToParentComposeRecipient(student: StudentRecord): ManagerComposeRecipient {
+  const studentName = fullName(student);
+  const guardianName = student.guardianName?.trim() || `${studentName} Parent/Guardian`;
+
+  return {
+    id: `parent-${student.id}`,
+    name: guardianName,
+    role: "parent",
+    subtitle: `Parent of ${studentName}`,
+    detail: student.guardianPhone || student.guardianEmail || student.email || "No parent contact on file"
+  };
+}
+
+function composeRecipientRoleLabel(role: ManagerComposeRecipientRole) {
+  if (role === "staff") return "Staff";
+  if (role === "parent") return "Parent";
+  return "Student";
+}
+
+function composeRecipientGroupTitle(role: ManagerComposeRecipientRole) {
+  if (role === "staff") return "Staff";
+  if (role === "parent") return "Parents";
+  return "Students";
+}
+
+function composeRecipientGroupDescription(role: ManagerComposeRecipientRole) {
+  if (role === "staff") return "Studio team and instructors";
+  if (role === "parent") return "Guardian and family contacts";
+  return "Student member contacts";
+}
+
+function composeMessagePreview(body: string) {
+  const cleanBody = body.replace(/\s+/g, " ").trim();
+  if (cleanBody.length <= 78) return cleanBody;
+  return `${cleanBody.slice(0, 75).trimEnd()}...`;
+}
+
+function formatManagerComposeTimestamp(date: Date) {
+  return {
+    sentDate: date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+    sentTime: date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+    sentDateTime: date.toISOString()
+  };
 }
 
 function buildHomeAgendaItems(weekDays: Date[], scheduledClasses: ScheduledClass[], studioClasses: StudioClass[], studioEvents: StudioEvent[]) {
@@ -856,7 +941,7 @@ function ManagerPageTitleFrame({ title, className = "" }: { title: string; class
 }
 
 function ManagerHomePage() {
-  const { logout, scheduledClasses, session, showToast, studioClasses, studioEvents, students } = useAppState();
+  const { addStudioEvent, logout, scheduledClasses, sendDirectMessage, session, showToast, studioClasses, studioEvents, students } = useAppState();
   const today = useLiveCalendarDate();
   const [managerProfile, setManagerProfile] = useState(() => readManagerProfile(session?.email));
   const activeStudentCount = students.filter((student) => (student.status ?? "Active").toLowerCase() === "active").length;
@@ -874,6 +959,17 @@ function ManagerHomePage() {
   const [isFeedSearchOpen, setIsFeedSearchOpen] = useState(false);
   const [feedFilter, setFeedFilter] = useState<ManagerHomeFeedFilter>("all");
   const [replyText, setReplyText] = useState("");
+  const [isComposeOpen, setIsComposeOpen] = useState(false);
+  const [composeKind, setComposeKind] = useState<ManagerComposeKind>("message");
+  const [composeSubject, setComposeSubject] = useState("");
+  const [composeBody, setComposeBody] = useState("");
+  const [composeAllUsers, setComposeAllUsers] = useState(false);
+  const [composeSelectedRecipientIds, setComposeSelectedRecipientIds] = useState<Set<string>>(() => new Set());
+  const [isComposeContactsOpen, setIsComposeContactsOpen] = useState(false);
+  const [collapsedComposeRecipientRoles, setCollapsedComposeRecipientRoles] = useState<Set<ManagerComposeRecipientRole>>(() => new Set());
+  const [composeRecipientQuery, setComposeRecipientQuery] = useState("");
+  const [composeEventDate, setComposeEventDate] = useState(() => toDateKey(today));
+  const [composeEventTime, setComposeEventTime] = useState("6:00 PM");
   const [overviewProgress, setOverviewProgress] = useState(1);
   const [overviewHeight, setOverviewHeight] = useState(0);
   const [isOverviewDragging, setIsOverviewDragging] = useState(false);
@@ -890,6 +986,63 @@ function ManagerHomePage() {
   const messageCount = feedThreads.filter((thread) => thread.kind === "message").length;
   const eventCount = feedThreads.filter((thread) => thread.kind === "event").length;
   const selectedFeedCount = selectedFeedThreadIds.size;
+  const composeRecipients = useMemo(
+    () => [
+      ...managerComposeStaffRecipients,
+      ...students.map(studentToComposeRecipient),
+      ...students.map(studentToParentComposeRecipient)
+    ],
+    [students]
+  );
+  const visibleComposeRecipients = useMemo(() => {
+    const query = composeRecipientQuery.trim().toLowerCase();
+    return composeRecipients.filter((recipient) => {
+      if (!query) return true;
+      return `${recipient.name} ${recipient.subtitle} ${recipient.detail}`.toLowerCase().includes(query);
+    });
+  }, [composeRecipientQuery, composeRecipients]);
+  const composeRecipientGroups = useMemo(
+    () => managerComposeRecipientRoles.map((role) => ({
+      role,
+      title: composeRecipientGroupTitle(role),
+      description: composeRecipientGroupDescription(role),
+      recipients: visibleComposeRecipients.filter((recipient) => recipient.role === role)
+    })),
+    [visibleComposeRecipients]
+  );
+  const selectedComposeRecipientCount = composeAllUsers ? composeRecipients.length : composeSelectedRecipientIds.size;
+  const composeRecipientSummaryItems = useMemo<ManagerComposeRecipientSummaryItem[]>(() => {
+    if (composeAllUsers) {
+      return [{
+        id: "all-users",
+        label: "All Users",
+        detail: `${composeRecipients.length} contacts`,
+        variant: "category"
+      }];
+    }
+
+    return managerComposeRecipientRoles.flatMap((role): ManagerComposeRecipientSummaryItem[] => {
+      const roleRecipients = composeRecipients.filter((recipient) => recipient.role === role);
+      const selectedRoleRecipients = roleRecipients.filter((recipient) => composeSelectedRecipientIds.has(recipient.id));
+      if (!selectedRoleRecipients.length) return [];
+
+      if (selectedRoleRecipients.length === roleRecipients.length) {
+        return [{
+          id: `all-${role}`,
+          label: `All ${composeRecipientGroupTitle(role)}`,
+          detail: `${roleRecipients.length} ${roleRecipients.length === 1 ? "contact" : "contacts"}`,
+          variant: "category" as const
+        }];
+      }
+
+      return selectedRoleRecipients.map((recipient): ManagerComposeRecipientSummaryItem => ({
+        id: recipient.id,
+        label: recipient.name,
+        detail: composeRecipientRoleLabel(recipient.role),
+        variant: "person"
+      }));
+    });
+  }, [composeAllUsers, composeRecipients, composeSelectedRecipientIds]);
   const visibleThreads = feedThreads.filter((thread) => {
     if (feedFilter !== "all" && thread.kind !== feedFilter) return false;
     const query = searchQuery.trim().toLowerCase();
@@ -969,6 +1122,21 @@ function ManagerHomePage() {
   useEffect(() => {
     if (isFeedSearchOpen) feedSearchInputRef.current?.focus();
   }, [isFeedSearchOpen]);
+
+  useEffect(() => {
+    if (!isComposeOpen) return;
+
+    const closeComposeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && isComposeContactsOpen) {
+        setIsComposeContactsOpen(false);
+        return;
+      }
+      if (event.key === "Escape") setIsComposeOpen(false);
+    };
+
+    window.addEventListener("keydown", closeComposeOnEscape);
+    return () => window.removeEventListener("keydown", closeComposeOnEscape);
+  }, [isComposeContactsOpen, isComposeOpen]);
 
   useEffect(() => {
     if (!isOverviewCollapsed) return;
@@ -1143,6 +1311,167 @@ function ManagerHomePage() {
     writeStoredAppTheme(nextTheme);
   };
 
+  const resetComposeForm = () => {
+    setComposeKind("message");
+    setComposeSubject("");
+    setComposeBody("");
+    setComposeAllUsers(false);
+    setComposeSelectedRecipientIds(new Set());
+    setIsComposeContactsOpen(false);
+    setCollapsedComposeRecipientRoles(new Set());
+    setComposeRecipientQuery("");
+    setComposeEventDate(toDateKey(today));
+    setComposeEventTime("6:00 PM");
+  };
+
+  const closeComposeDialog = () => {
+    setIsComposeOpen(false);
+    resetComposeForm();
+  };
+
+  const toggleComposeRecipient = (recipientId: string) => {
+    setComposeSelectedRecipientIds((currentIds) => {
+      const nextIds = new Set(composeAllUsers ? [] : currentIds);
+      if (nextIds.has(recipientId)) {
+        nextIds.delete(recipientId);
+      } else {
+        nextIds.add(recipientId);
+      }
+      return nextIds;
+    });
+    setComposeAllUsers(false);
+  };
+
+  const selectComposeRecipientGroup = (recipients: ManagerComposeRecipient[]) => {
+    if (!recipients.length) return;
+
+    setComposeSelectedRecipientIds((currentIds) => {
+      const nextIds = new Set(composeAllUsers ? [] : currentIds);
+      recipients.forEach((recipient) => nextIds.add(recipient.id));
+      return nextIds;
+    });
+    setComposeAllUsers(false);
+  };
+
+  const getComposeRecipientsByRole = (role: ManagerComposeRecipientRole) => composeRecipients.filter((recipient) => recipient.role === role);
+
+  const isComposeRecipientRoleOnlySelected = (role: ManagerComposeRecipientRole) => {
+    if (composeAllUsers) return false;
+
+    const roleRecipientIds = getComposeRecipientsByRole(role).map((recipient) => recipient.id);
+    return roleRecipientIds.length > 0
+      && composeSelectedRecipientIds.size === roleRecipientIds.length
+      && roleRecipientIds.every((recipientId) => composeSelectedRecipientIds.has(recipientId));
+  };
+
+  const clearComposeRecipients = () => {
+    setComposeAllUsers(false);
+    setComposeSelectedRecipientIds(new Set());
+  };
+
+  const quickToggleComposeAllUsers = () => {
+    if (composeAllUsers) {
+      clearComposeRecipients();
+      return;
+    }
+
+    setComposeAllUsers(true);
+    setComposeSelectedRecipientIds(new Set());
+  };
+
+  const quickToggleComposeRecipientRole = (role: ManagerComposeRecipientRole) => {
+    const roleRecipients = getComposeRecipientsByRole(role);
+    if (!roleRecipients.length) return;
+
+    if (isComposeRecipientRoleOnlySelected(role)) {
+      clearComposeRecipients();
+      return;
+    }
+
+    setComposeAllUsers(false);
+    setComposeSelectedRecipientIds(new Set(roleRecipients.map((recipient) => recipient.id)));
+  };
+
+  const toggleComposeRecipientGroup = (role: ManagerComposeRecipientRole) => {
+    setCollapsedComposeRecipientRoles((currentRoles) => {
+      const nextRoles = new Set(currentRoles);
+      if (nextRoles.has(role)) {
+        nextRoles.delete(role);
+      } else {
+        nextRoles.add(role);
+      }
+      return nextRoles;
+    });
+  };
+
+  const sendCompose = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const subject = composeSubject.trim();
+    const body = composeBody.trim();
+    const recipients = composeAllUsers ? composeRecipients : composeRecipients.filter((recipient) => composeSelectedRecipientIds.has(recipient.id));
+
+    if (!subject || !body) {
+      showToast("Enter a subject and message body.");
+      return;
+    }
+
+    if (!recipients.length) {
+      showToast("Choose at least one recipient.");
+      return;
+    }
+
+    if (composeKind === "event" && (!composeEventDate || !composeEventTime.trim())) {
+      showToast("Choose an event date and time.");
+      return;
+    }
+
+    const timestamp = new Date();
+    const sent = formatManagerComposeTimestamp(timestamp);
+    const createdThread: ManagerHomeThread = {
+      id: `compose-${composeKind}-${timestamp.getTime()}`,
+      kind: composeKind,
+      sender: "Cho's Manager",
+      title: subject,
+      preview: composeMessagePreview(body),
+      sentDate: sent.sentDate,
+      sentTime: sent.sentTime,
+      sentDateTime: sent.sentDateTime,
+      avatar: composeKind === "event" ? eventsLauncherIcon : messagesLauncherIcon,
+      accent: composeKind === "event" ? "#8d70ff" : "#7be4ff"
+    };
+
+    if (composeKind === "message") {
+      recipients.forEach((recipient) => {
+        sendDirectMessage({
+          senderId: "direct-staff-seed",
+          senderName: "Cho's Manager",
+          recipientId: recipient.id,
+          recipientName: recipient.name,
+          body: `${subject}\n\n${body}`
+        });
+      });
+    } else {
+      addStudioEvent({
+        title: subject,
+        date: composeEventDate,
+        time: composeEventTime,
+        details: body,
+        audience: composeAllUsers ? "public" : "students"
+      });
+    }
+
+    setFeedThreads((currentThreads) => [createdThread, ...currentThreads]);
+    setSelectedThreadId(createdThread.id);
+    setSelectedFeedThreadIds(new Set());
+    setFeedFilter("all");
+    setSearchQuery("");
+    setIsFeedSearchOpen(false);
+    setIsComposeOpen(false);
+    resetComposeForm();
+    showToast(composeAllUsers ? "Compose sent to all users." : `Compose sent to ${recipients.length} recipient${recipients.length === 1 ? "" : "s"}.`);
+  };
+
   const sendReply = () => {
     if (!replyText.trim()) {
       showToast("Write a reply before sending.");
@@ -1312,6 +1641,10 @@ function ManagerHomePage() {
               >
                 {eventCount} Event {eventCount === 1 ? "Notification" : "Notifications"}
               </button>
+              <button className="manager-home-compose" type="button" aria-label="Compose" onClick={() => setIsComposeOpen(true)}>
+                <span>Compose</span>
+                <Plus size={16} />
+              </button>
               {selectedFeedCount > 0 && (
                 <span className="manager-home-bulk-actions" aria-live="polite">
                   <strong>{selectedFeedCount} selected</strong>
@@ -1464,6 +1797,310 @@ function ManagerHomePage() {
             )}
           </div>
         </section>
+        {isComposeOpen && (
+          <div
+            className="manager-compose-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeComposeDialog();
+            }}
+          >
+            <form
+              className="manager-compose-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="manager-compose-title"
+              onSubmit={sendCompose}
+            >
+              <header className="manager-compose-head">
+                <div>
+                  <p>Manager message center</p>
+                  <h2 id="manager-compose-title">Compose</h2>
+                </div>
+                <button className="manager-compose-close" type="button" aria-label="Close compose" onClick={closeComposeDialog}>
+                  <X size={20} />
+                </button>
+              </header>
+
+              <div className="manager-compose-mode" aria-label="Compose type">
+                <label className={composeKind === "message" ? "is-selected" : undefined}>
+                  <input
+                    type="radio"
+                    name="manager-compose-kind"
+                    checked={composeKind === "message"}
+                    onChange={() => setComposeKind("message")}
+                  />
+                  <span><Mail size={18} /> Contact Message</span>
+                </label>
+                <label className={composeKind === "event" ? "is-selected" : undefined}>
+                  <input
+                    type="radio"
+                    name="manager-compose-kind"
+                    checked={composeKind === "event"}
+                    onChange={() => setComposeKind("event")}
+                  />
+                  <span><CalendarDays size={18} /> Event Notification</span>
+                </label>
+              </div>
+
+              <div className="manager-compose-layout">
+                <section className="manager-compose-message-card" aria-label="Compose message">
+                  <label className="manager-compose-field">
+                    <span>Subject</span>
+                    <input
+                      aria-label="Subject"
+                      value={composeSubject}
+                      onChange={(event) => setComposeSubject(event.target.value)}
+                      placeholder={composeKind === "event" ? "Event notice title" : "Message subject"}
+                    />
+                  </label>
+                  <label className="manager-compose-field manager-compose-field--body">
+                    <span>Message body</span>
+                    <textarea
+                      aria-label="Message body"
+                      value={composeBody}
+                      onChange={(event) => setComposeBody(event.target.value)}
+                      placeholder="Write the message..."
+                      rows={5}
+                    />
+                  </label>
+                  {composeKind === "event" && (
+                    <div className="manager-compose-event-fields">
+                      <label className="manager-compose-field">
+                        <span>Event date</span>
+                        <input
+                          aria-label="Event date"
+                          type="date"
+                          value={composeEventDate}
+                          onChange={(event) => setComposeEventDate(event.target.value)}
+                        />
+                      </label>
+                      <label className="manager-compose-field">
+                        <span>Event time</span>
+                        <input
+                          aria-label="Event time"
+                          value={composeEventTime}
+                          onChange={(event) => setComposeEventTime(event.target.value)}
+                          placeholder="6:00 PM"
+                        />
+                      </label>
+                    </div>
+                  )}
+                </section>
+
+                <section className="manager-compose-recipients" aria-label="Compose recipients">
+                  <div className="manager-compose-recipient-toolbar">
+                    <div className="manager-compose-recipient-title">
+                      <span>Recipients</span>
+                      <strong>{selectedComposeRecipientCount} selected</strong>
+                    </div>
+                    <button
+                      className="manager-compose-contacts-toggle"
+                      type="button"
+                      aria-expanded={isComposeContactsOpen}
+                      aria-controls="manager-compose-contacts-dialog"
+                      onClick={() => setIsComposeContactsOpen(true)}
+                    >
+                      <Users size={16} />
+                      <span>Contacts</span>
+                    </button>
+                  </div>
+                  <div className="manager-compose-quick-panel" aria-label="Quick recipient actions">
+                    <div className="manager-compose-quick-panel-head">
+                      <span>Quick Audience</span>
+                      <small>Tap an active preset again to clear.</small>
+                    </div>
+                    <div className="manager-compose-quick-actions">
+                      <label className={`manager-compose-quick-option${composeAllUsers ? " is-selected" : ""}`}>
+                        <input
+                          aria-label="All Users"
+                          type="checkbox"
+                          checked={composeAllUsers}
+                          onChange={quickToggleComposeAllUsers}
+                        />
+                        <span>
+                          <strong>All Users</strong>
+                          <small>{composeRecipients.length} contacts</small>
+                        </span>
+                      </label>
+                      <label className={`manager-compose-quick-option${isComposeRecipientRoleOnlySelected("staff") ? " is-selected" : ""}`}>
+                        <input
+                          aria-label="All Staff"
+                          type="checkbox"
+                          checked={isComposeRecipientRoleOnlySelected("staff")}
+                          onChange={() => quickToggleComposeRecipientRole("staff")}
+                        />
+                        <span>
+                          <strong>All Staff</strong>
+                          <small>{getComposeRecipientsByRole("staff").length} contact</small>
+                        </span>
+                      </label>
+                      <label className={`manager-compose-quick-option${isComposeRecipientRoleOnlySelected("student") ? " is-selected" : ""}`}>
+                        <input
+                          aria-label="All Students"
+                          type="checkbox"
+                          checked={isComposeRecipientRoleOnlySelected("student")}
+                          onChange={() => quickToggleComposeRecipientRole("student")}
+                        />
+                        <span>
+                          <strong>All Students</strong>
+                          <small>{getComposeRecipientsByRole("student").length} contacts</small>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                  <div className="manager-compose-selected-panel" aria-label="Selected compose recipients">
+                    <div className="manager-compose-selected-panel-head">
+                      <span>Selected Contacts</span>
+                      <strong>{selectedComposeRecipientCount}</strong>
+                    </div>
+                    {composeRecipientSummaryItems.length ? (
+                      <div className="manager-compose-selected-chips">
+                        {composeRecipientSummaryItems.map((item) => (
+                          <span className={`manager-compose-selected-chip manager-compose-selected-chip--${item.variant}`} key={item.id}>
+                            <Users size={13} aria-hidden="true" />
+                            <span>
+                              <strong>{item.label}</strong>
+                              <small>{item.detail}</small>
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p>No contacts selected yet.</p>
+                    )}
+                  </div>
+                </section>
+              </div>
+
+              <footer className="manager-compose-actions">
+                <button type="button" className="manager-compose-secondary" onClick={closeComposeDialog}>Cancel</button>
+                <button type="submit" className="manager-compose-submit">
+                  <Send size={18} />
+                  <span>Send Compose</span>
+                </button>
+              </footer>
+            </form>
+            {isComposeContactsOpen && (
+              <div
+                className="manager-compose-contacts-backdrop"
+                role="presentation"
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget) setIsComposeContactsOpen(false);
+                }}
+              >
+                <section
+                  className="manager-compose-contacts-modal"
+                  id="manager-compose-contacts-dialog"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="manager-compose-contacts-title"
+                >
+                  <header className="manager-compose-contacts-head">
+                    <div>
+                      <p>Recipient directory</p>
+                      <h2 id="manager-compose-contacts-title">Contacts</h2>
+                    </div>
+                    <button className="manager-compose-close" type="button" aria-label="Close contacts" onClick={() => setIsComposeContactsOpen(false)}>
+                      <X size={20} />
+                    </button>
+                  </header>
+
+                  <div className="manager-compose-contact-tools manager-compose-contact-tools--dialog">
+                    <label className="manager-compose-contact-search">
+                      <Search size={17} aria-hidden="true" />
+                      <span className="sr-only">Search compose contacts</span>
+                      <input
+                        aria-label="Search compose contacts"
+                        type="search"
+                        value={composeRecipientQuery}
+                        onChange={(event) => setComposeRecipientQuery(event.target.value)}
+                        placeholder="Search contacts by name, role, phone, or email"
+                      />
+                    </label>
+                    <span className="manager-compose-contact-count">{visibleComposeRecipients.length} visible · {selectedComposeRecipientCount} selected</span>
+                  </div>
+
+                  <div className="manager-compose-contact-categories">
+                    {composeRecipientGroups.map((group) => {
+                      const isGroupCollapsed = collapsedComposeRecipientRoles.has(group.role);
+                      const contactListId = `manager-compose-contact-list-${group.role}`;
+                      const selectedGroupCount = composeAllUsers
+                        ? group.recipients.length
+                        : group.recipients.filter((recipient) => composeSelectedRecipientIds.has(recipient.id)).length;
+
+                      return (
+                        <section
+                          className={`manager-compose-contact-category manager-compose-contact-category--${group.role}${isGroupCollapsed ? " is-collapsed" : ""}`}
+                          key={group.role}
+                          role="group"
+                          aria-label={`${group.title} contacts`}
+                        >
+                          <header>
+                            <button
+                              className="manager-compose-category-toggle"
+                              type="button"
+                              aria-expanded={!isGroupCollapsed}
+                              aria-controls={contactListId}
+                              onClick={() => toggleComposeRecipientGroup(group.role)}
+                            >
+                              <ChevronRight size={16} aria-hidden="true" />
+                              <span className="sr-only">{isGroupCollapsed ? "Expand" : "Collapse"} {group.title}</span>
+                            </button>
+                            <div className="manager-compose-category-summary">
+                              <h3>{group.title}</h3>
+                              <p>{group.description}</p>
+                            </div>
+                            <div className="manager-compose-category-actions">
+                              <span>{selectedGroupCount}/{group.recipients.length}</span>
+                              <button
+                                className="manager-compose-category-select"
+                                type="button"
+                                aria-label={`Select all ${group.title}`}
+                                disabled={!group.recipients.length}
+                                onClick={() => selectComposeRecipientGroup(group.recipients)}
+                              >
+                                Select All
+                              </button>
+                            </div>
+                          </header>
+                          {!isGroupCollapsed && (
+                            <div className="manager-compose-contact-list" id={contactListId} aria-label={`${group.title} contact list`}>
+                              {group.recipients.length ? (
+                                group.recipients.map((recipient) => (
+                                  <label className="manager-compose-contact" key={recipient.id}>
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`${recipient.name} ${composeRecipientRoleLabel(recipient.role)} ${recipient.detail}`}
+                                      checked={composeAllUsers || composeSelectedRecipientIds.has(recipient.id)}
+                                      onChange={() => toggleComposeRecipient(recipient.id)}
+                                    />
+                                    <span aria-hidden="true" />
+                                    <div>
+                                      <strong>{recipient.name}</strong>
+                                      <small>{composeRecipientRoleLabel(recipient.role)} · {recipient.subtitle}</small>
+                                      <p>{recipient.detail}</p>
+                                    </div>
+                                  </label>
+                                ))
+                              ) : (
+                                <p className="manager-compose-empty">No matching contacts.</p>
+                              )}
+                            </div>
+                          )}
+                        </section>
+                      );
+                    })}
+                  </div>
+
+                  <footer className="manager-compose-contacts-actions">
+                    <button type="button" className="manager-compose-submit" onClick={() => setIsComposeContactsOpen(false)}>Done</button>
+                  </footer>
+                </section>
+              </div>
+            )}
+          </div>
+        )}
       </main>
     </section>
   );

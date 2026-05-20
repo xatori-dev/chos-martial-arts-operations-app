@@ -6825,9 +6825,11 @@ select option { color: #111; }
 
 .manager-home-feed-counts {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   justify-content: flex-end;
-  gap: 7px;
+  gap: 5px;
+  min-width: 0;
 }
 
 .manager-home-bulk-actions {
@@ -6878,9 +6880,10 @@ select option { color: #111; }
 }
 
 .manager-home-count {
-  min-height: 30px;
+  min-height: 28px;
+  flex: 0 0 auto;
   appearance: none;
-  padding: 0 10px;
+  padding: 0 9px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 999px;
   display: inline-flex;
@@ -6889,7 +6892,7 @@ select option { color: #111; }
   color: #ffffff;
   cursor: pointer;
   font-family: var(--font-ui);
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 900;
   white-space: nowrap;
   box-shadow:
@@ -6999,25 +7002,1037 @@ select option { color: #111; }
 }
 
 .manager-home-compose {
-  min-height: 36px;
-  border: 0;
-  border-radius: 8px;
+  min-height: 26px;
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border: 1px solid rgba(172, 238, 255, 0.72);
+  border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  color: #fff;
-  background: linear-gradient(135deg, #826dff, #3f6fff);
-  box-shadow: 0 10px 20px rgba(68, 93, 255, 0.25);
+  gap: 3px;
+  color: #ffffff;
+  background:
+    linear-gradient(135deg, rgba(43, 213, 232, 0.88), rgba(47, 99, 255, 0.94)),
+    #2f63ff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    inset 0 -1px 2px rgba(24, 42, 138, 0.28),
+    0 0 0 2px rgba(83, 187, 255, 0.16),
+    0 0 18px rgba(73, 183, 255, 0.42),
+    0 10px 20px rgba(47, 99, 255, 0.22);
   font: inherit;
-  font-size: clamp(0.68rem, 1vw, 0.78rem);
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
   font-weight: 900;
+  white-space: nowrap;
   cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    filter 160ms ease,
+    transform 160ms ease;
+}
+
+.manager-home-compose:hover,
+.manager-home-compose:focus-visible {
+  outline: none;
+  border-color: rgba(219, 250, 255, 0.92);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 2px rgba(24, 42, 138, 0.24),
+    0 0 0 3px rgba(91, 202, 255, 0.22),
+    0 0 26px rgba(73, 183, 255, 0.58),
+    0 12px 24px rgba(47, 99, 255, 0.26);
 }
 
 .manager-home-compose svg {
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+}
+
+.manager-compose-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: clamp(12px, 3vw, 28px);
+  background:
+    radial-gradient(circle at 28% 10%, rgba(73, 183, 255, 0.18), transparent 32%),
+    rgba(3, 8, 17, 0.68);
+  backdrop-filter: blur(16px);
+}
+
+.manager-compose-modal {
+  width: min(880px, calc(100vw - 18px));
+  max-height: calc(100dvh - 18px);
+  padding: clamp(10px, 1.5vw, 14px);
+  border: 1px solid rgba(212, 236, 255, 0.2);
+  border-radius: 22px;
+  display: grid;
+  grid-template-rows: auto auto auto auto;
+  gap: 8px;
+  color: var(--home-text);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(125, 223, 255, 0.15), transparent 36%),
+    linear-gradient(155deg, rgba(28, 40, 68, 0.98), rgba(18, 22, 40, 0.98)),
+    #131827;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 32px 90px rgba(0, 0, 0, 0.42);
+  overflow: auto;
+}
+
+.manager-compose-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.manager-compose-head p,
+.manager-compose-head h2 {
+  margin: 0;
+}
+
+.manager-compose-head p {
+  color: var(--home-muted);
+  font-family: var(--font-ui);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.manager-compose-head h2 {
+  color: var(--home-text);
+  font-size: clamp(1.45rem, 3vw, 2rem);
+  line-height: 1;
+}
+
+.manager-compose-close {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(235, 242, 255, 0.2);
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--home-text);
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.manager-compose-close:hover,
+.manager-compose-close:focus-visible {
+  outline: none;
+  border-color: rgba(205, 245, 255, 0.58);
+  box-shadow: 0 0 0 3px rgba(87, 182, 255, 0.18);
+}
+
+.manager-compose-mode {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.manager-compose-mode label {
+  min-width: 0;
+  min-height: 30px;
+  border: 1px solid rgba(235, 242, 255, 0.16);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: var(--home-muted);
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+
+.manager-compose-mode label.is-selected {
+  border-color: rgba(150, 225, 255, 0.62);
+  color: #ffffff;
+  background:
+    linear-gradient(135deg, rgba(36, 198, 226, 0.24), rgba(106, 96, 255, 0.34)),
+    rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 0 18px rgba(87, 182, 255, 0.16);
+}
+
+.manager-compose-mode input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.manager-compose-mode label:focus-within {
+  outline: 3px solid rgba(87, 182, 255, 0.22);
+  outline-offset: 2px;
+}
+
+.manager-compose-mode span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.manager-compose-mode svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.manager-compose-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.manager-compose-message-card,
+.manager-compose-recipients {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(235, 242, 255, 0.14);
+  border-radius: 16px;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035)),
+    rgba(5, 13, 27, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.manager-compose-message-card {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+
+.manager-compose-recipients {
+  display: grid;
+  gap: 7px;
+}
+
+.manager-compose-field {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  color: var(--home-muted);
+  font-family: var(--font-ui);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.manager-compose-field input,
+.manager-compose-field textarea,
+.manager-compose-contact-search input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(235, 242, 255, 0.16);
+  border-radius: 12px;
+  color: var(--home-text);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font: inherit;
+  font-family: var(--font-ui);
+}
+
+.manager-compose-field input,
+.manager-compose-contact-search input {
+  min-height: 38px;
+  padding: 0 10px;
+}
+
+.manager-compose-field textarea {
+  min-height: 104px;
+  resize: vertical;
+  padding: 9px 10px;
+  line-height: 1.45;
+}
+
+.manager-compose-field input:focus,
+.manager-compose-field textarea:focus,
+.manager-compose-contact-search input:focus {
+  outline: none;
+  border-color: rgba(133, 214, 255, 0.6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 0 3px rgba(87, 182, 255, 0.16);
+}
+
+.manager-compose-field input::placeholder,
+.manager-compose-field textarea::placeholder,
+.manager-compose-contact-search input::placeholder {
+  color: rgba(230, 241, 255, 0.48);
+}
+
+.manager-compose-event-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 0.55fr);
+  gap: 10px;
+}
+
+.manager-compose-recipient-toolbar {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.manager-compose-recipient-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-ui);
+}
+
+.manager-compose-recipient-title span {
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.manager-compose-recipient-title > strong {
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid rgba(142, 224, 255, 0.2);
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--home-muted);
+  background: rgba(255, 255, 255, 0.055);
+  font-size: 0.66rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.manager-compose-quick-panel {
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid rgba(142, 224, 255, 0.16);
+  border-radius: 13px;
+  display: grid;
+  gap: 7px;
+  background:
+    linear-gradient(145deg, rgba(123, 228, 255, 0.075), rgba(117, 107, 255, 0.055)),
+    rgba(255, 255, 255, 0.035);
+}
+
+.manager-compose-quick-panel-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-family: var(--font-ui);
+}
+
+.manager-compose-quick-panel-head span {
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.manager-compose-quick-panel-head small {
+  min-width: 0;
+  color: var(--home-muted);
+  font-size: 0.61rem;
+  font-weight: 850;
+  text-align: right;
+}
+
+.manager-compose-quick-actions {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.manager-compose-quick-option {
+  min-width: 0;
+  min-height: 40px;
+  padding: 5px 6px;
+  border: 1px solid rgba(235, 242, 255, 0.12);
+  border-radius: 11px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  color: var(--home-text);
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-family: var(--font-ui);
+  text-align: left;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.manager-compose-quick-option input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: #7be4ff;
+  cursor: pointer;
+}
+
+.manager-compose-quick-option > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.manager-compose-quick-option strong,
+.manager-compose-quick-option small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-compose-quick-option strong {
+  color: var(--home-text);
+  font-size: 0.68rem;
+  font-weight: 950;
+}
+
+.manager-compose-quick-option small {
+  color: var(--home-muted);
+  font-size: 0.58rem;
+  font-weight: 850;
+}
+
+.manager-compose-quick-option.is-selected {
+  border-color: rgba(142, 224, 255, 0.44);
+  color: #ffffff;
+  background:
+    linear-gradient(135deg, rgba(196, 246, 247, 0.28), rgba(101, 116, 255, 0.38)),
+    rgba(255, 255, 255, 0.09);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 0 16px rgba(107, 190, 255, 0.16);
+}
+
+.manager-compose-quick-option.is-selected small {
+  color: rgba(233, 248, 255, 0.86);
+}
+
+.manager-compose-selected-panel {
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid rgba(235, 242, 255, 0.12);
+  border-radius: 11px;
+  display: grid;
+  gap: 6px;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.035)),
+    rgba(7, 14, 29, 0.18);
+}
+
+.manager-compose-selected-panel-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--home-muted);
+  font-family: var(--font-ui);
+  font-size: 0.64rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.manager-compose-selected-panel-head strong {
+  min-width: 24px;
+  min-height: 20px;
+  padding: 0 6px;
+  border: 1px solid rgba(142, 224, 255, 0.26);
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.64rem;
+}
+
+.manager-compose-selected-panel p {
+  margin: 0;
+  color: var(--home-muted);
+  font-family: var(--font-ui);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.manager-compose-selected-chips {
+  max-height: 76px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  overflow: auto;
+}
+
+.manager-compose-selected-chip {
+  max-width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid rgba(235, 242, 255, 0.13);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--home-text);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.manager-compose-selected-chip--category {
+  border-color: rgba(142, 224, 255, 0.34);
+  background:
+    linear-gradient(135deg, rgba(45, 216, 235, 0.22), rgba(96, 92, 255, 0.22)),
+    rgba(255, 255, 255, 0.07);
+}
+
+.manager-compose-selected-chip > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.manager-compose-selected-chip strong,
+.manager-compose-selected-chip small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-compose-selected-chip strong {
+  font-family: var(--font-ui);
+  font-size: 0.74rem;
+  font-weight: 950;
+}
+
+.manager-compose-selected-chip small {
+  color: var(--home-muted);
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.manager-compose-all-users {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid rgba(141, 239, 229, 0.32);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #ffffff;
+  background: linear-gradient(135deg, rgba(58, 179, 160, 0.38), rgba(99, 120, 255, 0.24));
+  font-family: var(--font-ui);
+  font-size: 0.76rem;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.manager-compose-contacts-toggle {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(200, 238, 255, 0.28);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #ffffff;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(103, 110, 255, 0.22)),
+    rgba(255, 255, 255, 0.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 10px 22px rgba(4, 12, 24, 0.16);
+  font-family: var(--font-ui);
+  font-size: 0.74rem;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.manager-compose-contacts-toggle[aria-expanded="true"] {
+  border-color: rgba(142, 224, 255, 0.62);
+  background:
+    linear-gradient(135deg, rgba(45, 216, 235, 0.22), rgba(96, 92, 255, 0.3)),
+    rgba(255, 255, 255, 0.08);
+}
+
+.manager-compose-all-users input,
+.manager-compose-contact input {
+  accent-color: #7fe8ff;
+}
+
+.manager-compose-contacts-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 132;
+  display: grid;
+  place-items: center;
+  padding: clamp(10px, 2.6vw, 24px);
+  background:
+    radial-gradient(circle at 50% 12%, rgba(123, 218, 255, 0.18), transparent 34%),
+    rgba(3, 8, 17, 0.5);
+  backdrop-filter: blur(10px);
+}
+
+.manager-compose-contacts-modal {
+  position: relative;
+  width: min(1040px, calc(100vw - 20px));
+  max-height: calc(100dvh - 20px);
+  padding: clamp(12px, 1.7vw, 18px);
+  border: 1px solid rgba(219, 240, 255, 0.22);
+  border-radius: 20px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+  color: var(--home-text);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(125, 223, 255, 0.13), transparent 32%),
+    linear-gradient(155deg, rgba(25, 34, 60, 0.98), rgba(16, 20, 38, 0.98)),
+    #111728;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 34px 90px rgba(0, 0, 0, 0.46);
+  overflow: hidden;
+}
+
+.manager-compose-contacts-head {
+  min-width: 0;
+  padding-right: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.manager-compose-contacts-head .manager-compose-close {
+  position: absolute;
+  top: clamp(10px, 1.7vw, 18px);
+  right: clamp(10px, 1.7vw, 18px);
+  z-index: 2;
+}
+
+.manager-compose-contacts-head p,
+.manager-compose-contacts-head h2,
+.manager-compose-contact-category h3,
+.manager-compose-contact-category p {
+  margin: 0;
+}
+
+.manager-compose-contacts-head p {
+  color: var(--home-muted);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.manager-compose-contacts-head h2 {
+  font-size: clamp(1.35rem, 2.4vw, 1.95rem);
+  line-height: 1;
+}
+
+.manager-compose-contact-tools--dialog {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.manager-compose-contact-count {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid rgba(235, 242, 255, 0.14);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--home-muted);
+  background: rgba(255, 255, 255, 0.06);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.manager-compose-contact-categories {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.7fr) minmax(260px, 1fr) minmax(260px, 1fr);
+  gap: 10px;
+  overflow: hidden;
+}
+
+.manager-compose-contact-category {
+  min-width: 0;
+  min-height: 0;
+  padding: 10px;
+  border: 1px solid rgba(235, 242, 255, 0.14);
+  border-radius: 16px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035)),
+    rgba(5, 13, 27, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.manager-compose-contact-category.is-collapsed {
+  grid-template-rows: auto;
+}
+
+.manager-compose-contact-category > header {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.manager-compose-category-toggle {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(142, 224, 255, 0.28);
+  border-radius: 10px;
+  display: inline-grid;
+  place-items: center;
+  color: #dff6ff;
+  background: rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+}
+
+.manager-compose-category-toggle svg {
+  transition: transform 160ms ease;
+}
+
+.manager-compose-category-toggle[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+.manager-compose-category-summary {
+  min-width: 0;
+}
+
+.manager-compose-contact-category h3 {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.manager-compose-contact-category p {
+  margin-top: 3px;
+  color: var(--home-muted);
+  font-family: var(--font-ui);
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
+.manager-compose-category-actions {
+  min-width: max-content;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.manager-compose-category-actions > span,
+.manager-compose-category-select {
+  min-height: 26px;
+  border: 1px solid rgba(142, 224, 255, 0.28);
+  border-radius: 999px;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-weight: 950;
+}
+
+.manager-compose-category-actions > span {
+  min-width: 42px;
+  padding: 0 8px;
+  display: inline-grid;
+  place-items: center;
+}
+
+.manager-compose-category-select {
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.manager-compose-category-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.manager-compose-contact-tools {
+  display: grid;
+  gap: 8px;
+}
+
+.manager-compose-contact-search {
+  position: relative;
+  min-width: 0;
+  display: block;
+}
+
+.manager-compose-contact-search svg {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  color: rgba(218, 238, 255, 0.68);
+  transform: translateY(-50%);
+}
+
+.manager-compose-contact-search input {
+  padding-left: 36px;
+}
+
+.manager-compose-contact-list {
+  max-height: min(420px, 52dvh);
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  padding-right: 3px;
+  overflow: auto;
+}
+
+.manager-compose-contact {
+  min-width: 0;
+  min-height: 58px;
+  padding: 9px;
+  border: 1px solid rgba(235, 242, 255, 0.12);
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: auto 0 minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  color: var(--home-text);
+  background: rgba(255, 255, 255, 0.055);
+  cursor: pointer;
+}
+
+.manager-compose-contact:focus-within {
+  border-color: rgba(126, 221, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(87, 182, 255, 0.14);
+}
+
+.manager-compose-contact div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.manager-compose-contact strong,
+.manager-compose-contact small,
+.manager-compose-contact p {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-compose-contact strong {
+  font-size: 0.86rem;
+  line-height: 1.1;
+}
+
+.manager-compose-contact small,
+.manager-compose-contact p {
+  color: var(--home-muted);
+  font-family: var(--font-ui);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.manager-compose-empty {
+  margin: 0;
+  padding: 12px;
+  border-radius: 12px;
+  color: var(--home-muted);
+  background: rgba(255, 255, 255, 0.06);
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.manager-compose-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.manager-compose-secondary,
+.manager-compose-submit {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.manager-compose-secondary {
+  border: 1px solid rgba(235, 242, 255, 0.18);
+  color: var(--home-muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.manager-compose-submit {
+  border: 1px solid rgba(196, 245, 255, 0.42);
+  color: #ffffff;
+  background: linear-gradient(135deg, rgba(43, 213, 232, 0.62), rgba(76, 94, 255, 0.9));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 12px 26px rgba(66, 99, 255, 0.22);
+}
+
+.manager-compose-secondary:hover,
+.manager-compose-secondary:focus-visible,
+.manager-compose-submit:hover,
+.manager-compose-submit:focus-visible,
+.manager-compose-contacts-toggle:hover,
+.manager-compose-contacts-toggle:focus-visible,
+.manager-compose-quick-option:hover,
+.manager-compose-quick-option:focus-within,
+.manager-compose-category-toggle:hover,
+.manager-compose-category-toggle:focus-visible,
+.manager-compose-category-select:hover:not(:disabled),
+.manager-compose-category-select:focus-visible {
+  outline: none;
+  filter: brightness(1.1);
+  box-shadow: 0 0 0 3px rgba(87, 182, 255, 0.16);
+}
+
+@media (max-width: 860px) {
+  .manager-compose-modal {
+    width: min(760px, calc(100vw - 18px));
+  }
+
+  .manager-compose-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-compose-contacts-modal {
+    overflow: auto;
+  }
+
+  .manager-compose-contact-tools--dialog,
+  .manager-compose-contact-categories {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .manager-compose-contact-category > header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .manager-compose-category-actions {
+    grid-column: 1 / -1;
+    justify-content: stretch;
+  }
+
+  .manager-compose-category-actions > span,
+  .manager-compose-category-select {
+    flex: 1 1 auto;
+  }
+
+  .manager-compose-contact-list {
+    max-height: min(260px, 34dvh);
+  }
+}
+
+@media (max-width: 560px) {
+  .manager-compose-backdrop {
+    padding: 8px;
+  }
+
+  .manager-compose-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .manager-compose-contacts-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .manager-compose-event-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-compose-head h2 {
+    font-size: 1.42rem;
+  }
+
+  .manager-compose-contacts-head,
+  .manager-compose-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .manager-compose-contact-count {
+    justify-content: center;
+  }
+
+  .manager-compose-recipient-toolbar {
+    gap: 5px;
+  }
+
+  .manager-compose-recipient-title {
+    flex: 1 1 auto;
+  }
+
+  .manager-compose-quick-panel-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .manager-compose-quick-panel-head small {
+    text-align: left;
+  }
+
+  .manager-compose-quick-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .manager-compose-contacts-toggle {
+    width: 100%;
+  }
+
+  .manager-compose-recipient-toolbar .manager-compose-contacts-toggle {
+    width: auto;
+  }
+
+  .manager-compose-actions button {
+    width: 100%;
+  }
 }
 
 .manager-home-folders {
@@ -8132,6 +9147,7 @@ select option { color: #111; }
 
   .manager-home-feed-counts {
     justify-content: flex-start;
+    gap: 4px;
   }
 
   .manager-home-bulk-actions {
@@ -8149,12 +9165,17 @@ select option { color: #111; }
   }
 
   .manager-home-compose {
-    min-height: 32px;
-    gap: 4px;
-    font-size: 0.58rem;
+    min-height: 26px;
+    padding: 0 7px;
+    gap: 2px;
+    font-size: 0.56rem;
   }
 
-  .manager-home-compose svg,
+  .manager-home-compose svg {
+    width: 10px;
+    height: 10px;
+  }
+
   .manager-home-folders svg {
     width: 13px;
     height: 13px;
@@ -11692,6 +12713,7 @@ select option { color: #111; }
 
   .manager-home-feed-counts {
     justify-content: flex-start;
+    gap: 4px;
   }
 
   .manager-home-bulk-actions {
@@ -11707,10 +12729,16 @@ select option { color: #111; }
   }
 
   .manager-home-compose {
-    min-height: 34px;
-    width: 100%;
-    gap: 5px;
-    font-size: 0.74rem;
+    min-height: 26px;
+    width: auto;
+    padding: 0 7px;
+    gap: 2px;
+    font-size: 0.56rem;
+  }
+
+  .manager-home-compose svg {
+    width: 10px;
+    height: 10px;
   }
 
   .manager-home-folders {
@@ -12884,6 +13912,148 @@ html[data-theme="light"] .manager-home-bulk-actions {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.7),
     0 10px 24px rgba(35, 42, 55, 0.1);
+}
+
+html[data-theme="light"] .manager-home-compose {
+  border-color: rgba(55, 116, 172, 0.28);
+  color: #ffffff;
+  background:
+    linear-gradient(135deg, rgba(20, 169, 199, 0.86), rgba(47, 99, 255, 0.92)),
+    #2f63ff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    inset 0 -1px 2px rgba(24, 42, 138, 0.2),
+    0 0 0 2px rgba(65, 141, 210, 0.12),
+    0 0 20px rgba(73, 151, 255, 0.24),
+    0 10px 22px rgba(65, 92, 170, 0.16);
+}
+
+html[data-theme="light"] .manager-compose-backdrop {
+  background:
+    radial-gradient(circle at 28% 10%, rgba(66, 156, 218, 0.16), transparent 32%),
+    rgba(18, 25, 38, 0.42);
+}
+
+html[data-theme="light"] .manager-compose-modal {
+  border-color: rgba(25, 40, 62, 0.16);
+  color: var(--home-text);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(104, 176, 228, 0.12), transparent 36%),
+    linear-gradient(155deg, rgba(255, 255, 255, 0.97), rgba(238, 244, 252, 0.95)),
+    #f7fbff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 32px 80px rgba(35, 42, 55, 0.24);
+}
+
+html[data-theme="light"] .manager-compose-contacts-backdrop {
+  background:
+    radial-gradient(circle at 50% 12%, rgba(66, 156, 218, 0.16), transparent 34%),
+    rgba(18, 25, 38, 0.34);
+}
+
+html[data-theme="light"] .manager-compose-contacts-modal {
+  border-color: rgba(25, 40, 62, 0.16);
+  color: var(--home-text);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(104, 176, 228, 0.12), transparent 32%),
+    linear-gradient(155deg, rgba(255, 255, 255, 0.97), rgba(238, 244, 252, 0.95)),
+    #f7fbff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 32px 80px rgba(35, 42, 55, 0.24);
+}
+
+html[data-theme="light"] .manager-compose-message-card,
+html[data-theme="light"] .manager-compose-recipients,
+html[data-theme="light"] .manager-compose-quick-panel,
+html[data-theme="light"] .manager-compose-selected-panel,
+html[data-theme="light"] .manager-compose-selected-chip,
+html[data-theme="light"] .manager-compose-recipient-title > strong,
+html[data-theme="light"] .manager-compose-selected-panel-head strong,
+html[data-theme="light"] .manager-compose-contact-category,
+html[data-theme="light"] .manager-compose-mode label,
+html[data-theme="light"] .manager-compose-contact,
+html[data-theme="light"] .manager-compose-empty,
+html[data-theme="light"] .manager-compose-close,
+html[data-theme="light"] .manager-compose-contacts-toggle,
+html[data-theme="light"] .manager-compose-quick-option,
+html[data-theme="light"] .manager-compose-category-toggle,
+html[data-theme="light"] .manager-compose-category-actions > span,
+html[data-theme="light"] .manager-compose-category-select,
+html[data-theme="light"] .manager-compose-contact-count,
+html[data-theme="light"] .manager-compose-secondary {
+  border-color: rgba(25, 40, 62, 0.12);
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 8px 22px rgba(35, 42, 55, 0.08);
+}
+
+html[data-theme="light"] .manager-compose-mode label.is-selected,
+html[data-theme="light"] .manager-compose-contacts-toggle[aria-expanded="true"],
+html[data-theme="light"] .manager-compose-quick-option.is-selected,
+html[data-theme="light"] .manager-compose-selected-chip--category,
+html[data-theme="light"] .manager-compose-all-users {
+  border-color: rgba(55, 116, 172, 0.34);
+  color: #18304f;
+  background:
+    linear-gradient(135deg, rgba(189, 239, 246, 0.74), rgba(218, 224, 255, 0.78)),
+    rgba(255, 255, 255, 0.7);
+}
+
+html[data-theme="light"] .manager-compose-recipient-title span,
+html[data-theme="light"] .manager-compose-quick-panel-head span,
+html[data-theme="light"] .manager-compose-quick-option strong {
+  color: #18304f;
+}
+
+html[data-theme="light"] .manager-compose-quick-option input {
+  accent-color: #327fc7;
+}
+
+html[data-theme="light"] .manager-compose-field input,
+html[data-theme="light"] .manager-compose-field textarea,
+html[data-theme="light"] .manager-compose-contact-search input {
+  border-color: rgba(25, 40, 62, 0.14);
+  color: #172033;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+html[data-theme="light"] .manager-compose-field input::placeholder,
+html[data-theme="light"] .manager-compose-field textarea::placeholder,
+html[data-theme="light"] .manager-compose-contact-search input::placeholder,
+html[data-theme="light"] .manager-compose-head p,
+html[data-theme="light"] .manager-compose-contacts-head p,
+html[data-theme="light"] .manager-compose-field,
+html[data-theme="light"] .manager-compose-recipient-title > strong,
+html[data-theme="light"] .manager-compose-quick-panel-head small,
+html[data-theme="light"] .manager-compose-selected-panel,
+html[data-theme="light"] .manager-compose-selected-panel p,
+html[data-theme="light"] .manager-compose-selected-chip small,
+html[data-theme="light"] .manager-compose-contact-category p,
+html[data-theme="light"] .manager-compose-contact small,
+html[data-theme="light"] .manager-compose-contact p,
+html[data-theme="light"] .manager-compose-contacts-toggle,
+html[data-theme="light"] .manager-compose-quick-option,
+html[data-theme="light"] .manager-compose-quick-option small,
+html[data-theme="light"] .manager-compose-category-toggle,
+html[data-theme="light"] .manager-compose-category-actions > span,
+html[data-theme="light"] .manager-compose-category-select,
+html[data-theme="light"] .manager-compose-contact-count,
+html[data-theme="light"] .manager-compose-secondary,
+html[data-theme="light"] .manager-compose-empty {
+  color: rgba(35, 49, 72, 0.68);
+}
+
+html[data-theme="light"] .manager-compose-submit {
+  border-color: rgba(55, 116, 172, 0.34);
+  color: #ffffff;
+  background: linear-gradient(135deg, rgba(20, 169, 199, 0.82), rgba(72, 92, 232, 0.92));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    0 12px 24px rgba(65, 92, 170, 0.18);
 }
 
 html[data-theme="light"] .manager-home-feed-check > span:last-child {

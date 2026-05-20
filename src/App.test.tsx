@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { AppStateProvider } from "./state";
 
@@ -221,7 +221,13 @@ describe("post-login operations app", () => {
     stubMatchMedia();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("opens the manager home page first after login", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T12:00:00-05:00"));
     renderLoggedInApp("/");
 
     expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
@@ -361,6 +367,112 @@ describe("post-login operations app", () => {
     expect(eventFilter).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: /Head Coach.*Practice Session Reminder/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /System Admin.*Event Update: Summer Championship/i })).toBeInTheDocument();
+  });
+
+  it("lets managers compose messages and event notifications from the Home feed header", () => {
+    renderLoggedInApp("/");
+
+    const feedPanel = screen.getByLabelText("Messages and event notifications");
+    const composeButton = within(feedPanel).getByRole("button", { name: "Compose" });
+
+    expect(composeButton.closest(".manager-home-feed-counts")).toBeInTheDocument();
+
+    fireEvent.click(composeButton);
+
+    const dialog = screen.getByRole("dialog", { name: "Compose" });
+    expect(within(dialog).getByRole("radio", { name: "Contact Message" })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: "Event Notification" })).toBeInTheDocument();
+    expect(dialog.querySelector(".manager-compose-all-users")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("Recipients")).toBeInTheDocument();
+    expect(within(dialog).getByText("0 selected")).toBeInTheDocument();
+    const selectedPanel = within(dialog).getByLabelText("Selected compose recipients");
+    expect(within(selectedPanel).getByText("No contacts selected yet.")).toBeInTheDocument();
+    const quickActions = within(dialog).getByLabelText("Quick recipient actions");
+    expect(within(quickActions).getByText("Quick Audience")).toBeInTheDocument();
+    expect(within(quickActions).getByText("Tap an active preset again to clear.")).toBeInTheDocument();
+    const allUsersQuickAction = within(quickActions).getByRole("checkbox", { name: "All Users" });
+    const allStaffQuickAction = within(quickActions).getByRole("checkbox", { name: "All Staff" });
+    const allStudentsQuickAction = within(quickActions).getByRole("checkbox", { name: "All Students" });
+    expect(allUsersQuickAction).not.toBeChecked();
+    expect(allStaffQuickAction).not.toBeChecked();
+    expect(allStudentsQuickAction).not.toBeChecked();
+    fireEvent.click(allStaffQuickAction);
+    expect(allStaffQuickAction).toBeChecked();
+    expect(within(dialog).getByText("1 selected")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("All Staff")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("1 contact")).toBeInTheDocument();
+    fireEvent.click(allStaffQuickAction);
+    expect(allStaffQuickAction).not.toBeChecked();
+    expect(within(dialog).getByText("0 selected")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("No contacts selected yet.")).toBeInTheDocument();
+    fireEvent.click(allStudentsQuickAction);
+    expect(allStudentsQuickAction).toBeChecked();
+    expect(within(dialog).getByText("20 selected")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("All Students")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("20 contacts")).toBeInTheDocument();
+    expect(within(selectedPanel).queryByText("All Staff")).not.toBeInTheDocument();
+    fireEvent.click(allStudentsQuickAction);
+    expect(allStudentsQuickAction).not.toBeChecked();
+    expect(within(dialog).getByText("0 selected")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("No contacts selected yet.")).toBeInTheDocument();
+    fireEvent.click(allUsersQuickAction);
+    expect(allUsersQuickAction).toBeChecked();
+    expect(within(selectedPanel).getByText("All Users")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("41 contacts")).toBeInTheDocument();
+    fireEvent.click(allUsersQuickAction);
+    expect(allUsersQuickAction).not.toBeChecked();
+    expect(within(dialog).getByText("0 selected")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("No contacts selected yet.")).toBeInTheDocument();
+    const contactsButton = within(dialog).getByRole("button", { name: "Contacts" });
+    expect(contactsButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("dialog", { name: "Contacts" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox", { name: /Talia Brooks/i })).not.toBeInTheDocument();
+
+    fireEvent.click(contactsButton);
+
+    expect(contactsButton).toHaveAttribute("aria-expanded", "true");
+    const contactsDialog = screen.getByRole("dialog", { name: "Contacts" });
+    expect(within(contactsDialog).getByText("41 visible · 0 selected")).toBeInTheDocument();
+    expect(within(contactsDialog).getByRole("heading", { name: "Staff" })).toBeInTheDocument();
+    expect(within(contactsDialog).getByRole("heading", { name: "Students" })).toBeInTheDocument();
+    expect(within(contactsDialog).getByRole("heading", { name: "Parents" })).toBeInTheDocument();
+    expect(within(contactsDialog).getByRole("checkbox", { name: /Instructor Team/i })).toBeInTheDocument();
+    expect(within(contactsDialog).getByRole("checkbox", { name: /Talia Brooks/i })).not.toBeChecked();
+    expect(within(contactsDialog).getByRole("checkbox", { name: /Monica Brooks/i })).not.toBeChecked();
+    const studentsContacts = within(contactsDialog).getByRole("group", { name: "Students contacts" });
+    const parentsContacts = within(contactsDialog).getByRole("group", { name: "Parents contacts" });
+    const collapseStudentsButton = within(studentsContacts).getByRole("button", { name: "Collapse Students" });
+    fireEvent.click(collapseStudentsButton);
+    expect(within(studentsContacts).getByRole("button", { name: "Expand Students" })).toHaveAttribute("aria-expanded", "false");
+    expect(within(studentsContacts).queryByRole("checkbox", { name: /Talia Brooks/i })).not.toBeInTheDocument();
+    fireEvent.click(within(studentsContacts).getByRole("button", { name: "Expand Students" }));
+    expect(within(studentsContacts).getByRole("button", { name: "Collapse Students" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(within(studentsContacts).getByRole("button", { name: "Select all Students" }));
+    expect(allUsersQuickAction).not.toBeChecked();
+    expect(within(dialog).getByText("20 selected")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("All Students")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("20 contacts")).toBeInTheDocument();
+    expect(within(selectedPanel).queryByText("Talia Brooks")).not.toBeInTheDocument();
+    expect(within(contactsDialog).getByText("41 visible · 20 selected")).toBeInTheDocument();
+    expect(within(studentsContacts).getByRole("checkbox", { name: /Talia Brooks/i })).toBeChecked();
+    expect(within(parentsContacts).getByRole("checkbox", { name: /Monica Brooks/i })).not.toBeChecked();
+    fireEvent.click(within(contactsDialog).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog", { name: "Contacts" })).not.toBeInTheDocument();
+    fireEvent.click(allUsersQuickAction);
+    expect(within(selectedPanel).getByText("All Users")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("41 contacts")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Event Notification" }));
+    fireEvent.change(within(dialog).getByLabelText("Subject"), { target: { value: "Weather Closure" } });
+    fireEvent.change(within(dialog).getByLabelText("Message body"), {
+      target: { value: "The studio is closed tonight because of severe weather." }
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send Compose" }));
+
+    expect(screen.queryByRole("dialog", { name: "Compose" })).not.toBeInTheDocument();
+    expect(screen.getByText("3 Event Notifications")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Cho's Manager.*Weather Closure/i })).toBeInTheDocument();
+    expect(screen.getByText("Compose sent to all users.")).toBeInTheDocument();
   });
 
   it("logs out from the manager home icon button", () => {
