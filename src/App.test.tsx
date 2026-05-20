@@ -573,6 +573,8 @@ describe("post-login operations app", () => {
   });
 
   it("keeps the Home weekly agenda rows compact on busy recurring class days", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T12:00:00-05:00"));
     renderLoggedInApp("/");
 
     const weeklySchedule = within(screen.getByLabelText("Manager home overview")).getByLabelText("Weekly manager schedule");
