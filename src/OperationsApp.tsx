@@ -725,7 +725,7 @@ const managerHomeThreads: ManagerHomeThread[] = [
     sentTime: "2:45 PM",
     sentDateTime: "2026-05-13T14:45:00-05:00",
     avatar: schedulingLauncherIcon,
-    accent: "#8d70ff"
+    accent: "#ff7a1a"
   }
 ];
 
@@ -1438,7 +1438,7 @@ function ManagerHomePage() {
       sentTime: sent.sentTime,
       sentDateTime: sent.sentDateTime,
       avatar: composeKind === "event" ? eventsLauncherIcon : messagesLauncherIcon,
-      accent: composeKind === "event" ? "#8d70ff" : "#7be4ff"
+      accent: composeKind === "event" ? "#ff7a1a" : "#7be4ff"
     };
 
     if (composeKind === "message") {
