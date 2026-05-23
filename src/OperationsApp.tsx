@@ -16,7 +16,9 @@ import {
   Moon,
   MoreHorizontal,
   Package,
+  Palette,
   Plus,
+  ShieldCheck,
   ShoppingCart,
   Search,
   Send,
@@ -24,6 +26,7 @@ import {
   Target,
   Trash2,
   Upload,
+  UserPlus,
   Users,
   Video,
   X
@@ -42,8 +45,23 @@ import reportsLauncherIcon from "./assets/manager-icons/Reports.webp";
 import schedulingLauncherIcon from "./assets/manager-icons/Scheduling.webp";
 import studentsLauncherIcon from "./assets/manager-icons/Students.webp";
 import { useAppState } from "./state";
-import { applyAppTheme, readStoredAppTheme, writeStoredAppTheme, type AppThemeMode } from "./theme";
-import type { ChildAccount, ClassWeekday, MerchandiseItem, MessageLog, ScheduledClass, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TrainingVideo, TrainingVideoFolder } from "./types";
+import {
+  applyAppTheme,
+  applyStoredVisualTheme,
+  applyVisualTheme,
+  clearStoredVisualTheme,
+  defaultVisualThemeColors,
+  normalizeVisualThemeColors,
+  readStoredAppTheme,
+  readStoredVisualTheme,
+  visualColorKeys,
+  writeStoredAppTheme,
+  writeStoredVisualTheme,
+  type AppThemeMode,
+  type VisualColorKey,
+  type VisualThemeColors
+} from "./theme";
+import type { ChildAccount, ClassWeekday, ManagedAccount, ManagerAccessKey, MerchandiseItem, MessageLog, ScheduledClass, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TrainingVideo, TrainingVideoFolder } from "./types";
 import { formatMoney, validateEmail } from "./utils";
 
 const beltOptions = ["White", "Yellow", "Orange", "Green", "Blue", "Purple", "Brown", "Red", "Dark Brown", "Black"];
@@ -62,7 +80,7 @@ const defaultScheduleTypeOptions = [
   { value: "testing-prep", label: "Testing prep" }
 ];
 
-type ManagerLauncherIconKind = "dashboard" | "messages" | "students" | "classes" | "studyGuide" | "events" | "scheduling" | "merchandise" | "videos" | "reports" | "study" | "test";
+type ManagerLauncherIconKind = "dashboard" | "messages" | "students" | "classes" | "studyGuide" | "events" | "scheduling" | "merchandise" | "videos" | "reports" | "create" | "study" | "test";
 
 type ManagerLauncherItem = {
   label: string;
@@ -72,6 +90,7 @@ type ManagerLauncherItem = {
 
 const managerLauncherItems: ManagerLauncherItem[] = [
   { label: "Dashboard", icon: "dashboard" },
+  { label: "Create", icon: "create" },
   { label: "Messages", icon: "messages" },
   { label: "Students", icon: "students" },
   { label: "Classes", icon: "classes" },
@@ -254,9 +273,456 @@ function messageKindLabel(kind: MessageLog["kind"]) {
   return "Class reminder";
 }
 
+const visualColorControls: { key: VisualColorKey; label: string; helper: string }[] = [
+  { key: "background", label: "Background color", helper: "Main page backdrop" },
+  { key: "surface", label: "Panel color", helper: "Cards, lists, and sections" },
+  { key: "elevatedSurface", label: "Raised panel color", helper: "Modals and focused cards" },
+  { key: "text", label: "Main text color", helper: "Headings and primary text" },
+  { key: "mutedText", label: "Helper text color", helper: "Labels, captions, and hints" },
+  { key: "primary", label: "Primary accent color", helper: "Highlights and selected states" },
+  { key: "secondary", label: "Secondary accent color", helper: "Alternate highlights" },
+  { key: "button", label: "Button color", helper: "Primary button backgrounds" },
+  { key: "buttonText", label: "Button text color", helper: "Text inside primary buttons" },
+  { key: "border", label: "Border color", helper: "Panel and input outlines" },
+  { key: "success", label: "Success color", helper: "Positive state accents" },
+  { key: "danger", label: "Alert color", helper: "Warning and delete accents" }
+];
+
+const visualThemePresets: { label: string; colors: VisualThemeColors }[] = [
+  {
+    label: "Cho Dark",
+    colors: defaultVisualThemeColors
+  },
+  {
+    label: "Clean Light",
+    colors: {
+      background: "#f3efe7",
+      surface: "#ffffff",
+      elevatedSurface: "#e9eef4",
+      text: "#172033",
+      mutedText: "#5f6878",
+      primary: "#b8872e",
+      secondary: "#286da5",
+      button: "#b8872e",
+      buttonText: "#ffffff",
+      border: "#c9a763",
+      success: "#2b8661",
+      danger: "#a94953"
+    }
+  },
+  {
+    label: "Ocean",
+    colors: {
+      background: "#092d3a",
+      surface: "#11495b",
+      elevatedSurface: "#176677",
+      text: "#f1fbff",
+      mutedText: "#b7d8e0",
+      primary: "#62d6e8",
+      secondary: "#a7f3d0",
+      button: "#62d6e8",
+      buttonText: "#06222c",
+      border: "#78e4f0",
+      success: "#5ee2ac",
+      danger: "#ff7a7a"
+    }
+  },
+  {
+    label: "Tournament Red",
+    colors: {
+      background: "#220d13",
+      surface: "#3a1620",
+      elevatedSurface: "#541d2a",
+      text: "#fff4ee",
+      mutedText: "#e0b7a8",
+      primary: "#ffb45c",
+      secondary: "#f24858",
+      button: "#f24858",
+      buttonText: "#fffaf0",
+      border: "#ffb45c",
+      success: "#55d08e",
+      danger: "#ff6b6b"
+    }
+  }
+];
+
+function isValidVisualColor(color: string) {
+  return /^#[0-9a-fA-F]{6}$/.test(color.trim());
+}
+
+function visualThemeMatchesDefault(colors: VisualThemeColors) {
+  return visualColorKeys.every((key) => colors[key].toLowerCase() === defaultVisualThemeColors[key].toLowerCase());
+}
+
+type ProfileColorPreviewFact = {
+  icon: ReactNode;
+  label: string;
+};
+
+type ProfileColorPreviewCount = {
+  label: string;
+  value: number;
+  tone?: "message" | "event";
+};
+
+type ProfileColorPreviewChild = {
+  id: string;
+  name: string;
+  initials: string;
+  meta: string;
+  selected?: boolean;
+};
+
+type ProfileColorPreviewData = {
+  kind: "manager" | "student" | "parent";
+  title: string;
+  displayName: string;
+  roleLabel: string;
+  portraitSrc?: string;
+  avatarText?: string;
+  facts: ProfileColorPreviewFact[];
+  counts: ProfileColorPreviewCount[];
+  children?: ProfileColorPreviewChild[];
+  selectedChildLabel?: string;
+};
+
+function ProfileColorMiniScreen({ preview }: { preview: ProfileColorPreviewData }) {
+  const isParentPreview = preview.kind === "parent";
+  const previewChildren = preview.children ?? [];
+  const selectedChild = previewChildren.find((child) => child.selected) ?? previewChildren[0];
+  const screenClassName = [
+    "profile-color-mini-screen",
+    "manager-home-page",
+    preview.kind === "student" ? "student-profile-page" : "",
+    preview.kind === "parent" ? "parent-profile-page" : ""
+  ].filter(Boolean).join(" ");
+
+  return (
+    <div className="profile-color-mini-device" aria-label={`${preview.title} mini screen frame`}>
+      <div className={screenClassName} aria-label="Live profile mini screen">
+        <header className="profile-color-mini-topbar">
+          <div>
+            <span>{preview.kind === "parent" ? "Parent Profile" : "Profile"}</span>
+            <strong>{preview.title}</strong>
+          </div>
+          <nav aria-label="Mini profile actions">
+            <span>{isParentPreview ? "Settings" : preview.kind === "manager" ? "Manager's Panel" : "Student's Panel"}</span>
+            <span>Log Out</span>
+          </nav>
+        </header>
+
+        {isParentPreview ? (
+          <main className="profile-color-mini-content profile-color-mini-content--parent">
+            <article className="parent-family-card profile-color-mini-family-card">
+              <div>
+                <p>Family Profile</p>
+                <h2>{preview.displayName}</h2>
+                <span>{preview.roleLabel}</span>
+              </div>
+              <div className="parent-family-stats" aria-label="Mini parent family totals">
+                {preview.counts.map((count) => (
+                  <span key={count.label}><strong>{count.value}</strong> {count.label}</span>
+                ))}
+              </div>
+            </article>
+
+            <section className="parent-child-profiles profile-color-mini-child-profiles" aria-label="Mini child profiles">
+              <div className="parent-section-head">
+                <div>
+                  <h2>Kids Profiles</h2>
+                  <p>Live family colors</p>
+                </div>
+                <button type="button">Add Child</button>
+              </div>
+              <div className="parent-child-list profile-color-mini-child-list">
+                {previewChildren.length ? (
+                  previewChildren.slice(0, 3).map((child) => (
+                    <article className={`parent-child-card${child.selected ? " is-selected" : ""}`} key={child.id}>
+                      <button type="button" aria-label={`${child.name} mini profile`}>
+                        <span className="parent-child-avatar" aria-hidden="true">{child.initials}</span>
+                        <span>
+                          <strong>{child.name}</strong>
+                          <small>{child.meta}</small>
+                        </span>
+                      </button>
+                    </article>
+                  ))
+                ) : (
+                  <p className="parent-empty-note">No child profiles yet.</p>
+                )}
+              </div>
+            </section>
+
+            <section className="parent-selected-student profile-color-mini-selected-student" aria-label="Mini selected child">
+              <div className="parent-selected-head">
+                <div>
+                  <span className="parent-child-avatar parent-child-avatar--large" aria-hidden="true">{selectedChild?.initials ?? "P"}</span>
+                  <div>
+                    <p>Selected Student</p>
+                    <h2>{selectedChild?.name ?? "No child selected"}</h2>
+                    <span>{preview.selectedChildLabel ?? selectedChild?.meta ?? "Add a child profile to preview student tools."}</span>
+                  </div>
+                </div>
+              </div>
+              <nav className="parent-tool-tabs" aria-label="Mini parent student tools">
+                <button className="is-active" type="button">Overview</button>
+                <button type="button">Classes</button>
+              </nav>
+            </section>
+          </main>
+        ) : (
+          <main className="profile-color-mini-content">
+            <article className="manager-home-profile-card profile-color-mini-profile-card" aria-label={`${preview.displayName} mini profile card`}>
+              <div className="profile-color-mini-card-actions" aria-hidden="true">
+                <span className="manager-home-profile-settings-link">
+                  <img className="manager-home-profile-settings-icon" src={managerProfileSettingsIcon} alt="" draggable="false" />
+                </span>
+                <span className="manager-home-profile-theme-toggle manager-home-profile-theme-toggle--dark">
+                  <span className="manager-home-profile-theme-icons">
+                    <Sun size={13} />
+                    <Moon size={13} />
+                  </span>
+                  <span className="manager-home-profile-theme-thumb">
+                    <Moon size={12} />
+                  </span>
+                </span>
+              </div>
+              <div className="manager-home-profile-frame profile-color-mini-profile-frame">
+                {preview.portraitSrc ? (
+                  <img src={preview.portraitSrc} alt={`${preview.displayName} profile portrait preview`} draggable="false" />
+                ) : (
+                  <span aria-hidden="true">{preview.avatarText ?? preview.displayName.slice(0, 1).toUpperCase()}</span>
+                )}
+              </div>
+              <div className="manager-home-profile-copy">
+                <h2>{preview.displayName}</h2>
+                <p>{preview.roleLabel}</p>
+              </div>
+              <dl className="manager-home-profile-facts profile-color-mini-facts">
+                {preview.facts.map((fact) => (
+                  <div key={fact.label}>
+                    <dt>{fact.icon}</dt>
+                    <dd>{fact.label}</dd>
+                  </div>
+                ))}
+              </dl>
+            </article>
+
+            <section className="manager-home-feed-panel profile-color-mini-feed" aria-label="Mini profile feed colors">
+              <div className="manager-home-feed-counts">
+                {preview.counts.map((count, index) => (
+                  <button
+                    className={`manager-home-count manager-home-count--${count.tone ?? "message"}${index === 0 ? " is-active" : ""}`}
+                    key={count.label}
+                    type="button"
+                  >
+                    {count.value} {count.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+          </main>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProfileColorEditingTool({ sessionEmail, showToast, preview }: { sessionEmail?: string; showToast: (message: string) => void; preview: ProfileColorPreviewData }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [colors, setColors] = useState<VisualThemeColors>(() => readStoredVisualTheme(sessionEmail) ?? defaultVisualThemeColors);
+  const hasValidDraft = visualColorKeys.every((key) => isValidVisualColor(colors[key]));
+
+  useEffect(() => {
+    setColors(readStoredVisualTheme(sessionEmail) ?? defaultVisualThemeColors);
+  }, [sessionEmail]);
+
+  useEffect(() => {
+    if (!isOpen || !hasValidDraft) return;
+    applyVisualTheme(normalizeVisualThemeColors(colors));
+  }, [colors, hasValidDraft, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    return () => applyStoredVisualTheme(sessionEmail);
+  }, [isOpen, sessionEmail]);
+
+  const openEditor = () => {
+    setColors(readStoredVisualTheme(sessionEmail) ?? defaultVisualThemeColors);
+    setIsOpen(true);
+  };
+
+  const closeEditor = () => {
+    applyStoredVisualTheme(sessionEmail);
+    setColors(readStoredVisualTheme(sessionEmail) ?? defaultVisualThemeColors);
+    setIsOpen(false);
+  };
+
+  const updateColor = (key: VisualColorKey, value: string) => {
+    setColors((currentColors) => ({ ...currentColors, [key]: value }));
+  };
+
+  const applyPreset = (presetColors: VisualThemeColors) => {
+    setColors(normalizeVisualThemeColors(presetColors));
+  };
+
+  const saveVisualTheme = () => {
+    const hasInvalidColor = visualColorKeys.some((key) => !isValidVisualColor(colors[key]));
+    if (hasInvalidColor) {
+      showToast("Enter 6-digit hex colors before saving.");
+      return;
+    }
+
+    const normalizedColors = normalizeVisualThemeColors(colors);
+    setColors(normalizedColors);
+    if (visualThemeMatchesDefault(normalizedColors)) {
+      clearStoredVisualTheme(sessionEmail);
+      applyVisualTheme(normalizedColors);
+      showToast("Personal color theme reset.");
+      return;
+    }
+    writeStoredVisualTheme(sessionEmail, normalizedColors);
+    showToast("Personal color theme saved. Changes are live now.");
+  };
+
+  const resetVisualTheme = () => {
+    setColors(defaultVisualThemeColors);
+    applyVisualTheme(defaultVisualThemeColors);
+  };
+
+  const previewStyle = {
+    "--user-visual-background": isValidVisualColor(colors.background) ? colors.background : defaultVisualThemeColors.background,
+    "--user-visual-surface": isValidVisualColor(colors.surface) ? colors.surface : defaultVisualThemeColors.surface,
+    "--user-visual-elevatedSurface": isValidVisualColor(colors.elevatedSurface) ? colors.elevatedSurface : defaultVisualThemeColors.elevatedSurface,
+    "--user-visual-text": isValidVisualColor(colors.text) ? colors.text : defaultVisualThemeColors.text,
+    "--user-visual-mutedText": isValidVisualColor(colors.mutedText) ? colors.mutedText : defaultVisualThemeColors.mutedText,
+    "--user-visual-primary": isValidVisualColor(colors.primary) ? colors.primary : defaultVisualThemeColors.primary,
+    "--user-visual-secondary": isValidVisualColor(colors.secondary) ? colors.secondary : defaultVisualThemeColors.secondary,
+    "--user-visual-button": isValidVisualColor(colors.button) ? colors.button : defaultVisualThemeColors.button,
+    "--user-visual-buttonText": isValidVisualColor(colors.buttonText) ? colors.buttonText : defaultVisualThemeColors.buttonText,
+    "--user-visual-border": isValidVisualColor(colors.border) ? colors.border : defaultVisualThemeColors.border,
+    "--user-visual-success": isValidVisualColor(colors.success) ? colors.success : defaultVisualThemeColors.success,
+    "--user-visual-danger": isValidVisualColor(colors.danger) ? colors.danger : defaultVisualThemeColors.danger,
+    "--profile-editor-preview-bg": isValidVisualColor(colors.background) ? colors.background : defaultVisualThemeColors.background,
+    "--profile-editor-preview-surface": isValidVisualColor(colors.surface) ? colors.surface : defaultVisualThemeColors.surface,
+    "--profile-editor-preview-text": isValidVisualColor(colors.text) ? colors.text : defaultVisualThemeColors.text,
+    "--profile-editor-preview-muted": isValidVisualColor(colors.mutedText) ? colors.mutedText : defaultVisualThemeColors.mutedText,
+    "--profile-editor-preview-button": isValidVisualColor(colors.button) ? colors.button : defaultVisualThemeColors.button,
+    "--profile-editor-preview-button-text": isValidVisualColor(colors.buttonText) ? colors.buttonText : defaultVisualThemeColors.buttonText,
+    "--profile-editor-preview-border": isValidVisualColor(colors.border) ? colors.border : defaultVisualThemeColors.border
+  } as CSSProperties;
+
+  return (
+    <section className="profile-color-tool" aria-label="Personal visual editing tool">
+      <button
+        className="profile-editing-tool-button"
+        type="button"
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+        onClick={openEditor}
+      >
+        <Palette size={18} />
+        Editing Tool
+      </button>
+
+      {isOpen && (
+        <div className="profile-color-workspace-backdrop" role="presentation">
+          <div className="profile-color-workspace" role="dialog" aria-modal="true" aria-label="Editing Tool color editor">
+            <header className="profile-color-workspace-head">
+              <button type="button" className="profile-color-back" onClick={closeEditor}>
+                <ChevronLeft size={18} /> Back to Profile Settings
+              </button>
+              <div>
+                <p>Live Editing Tool</p>
+                <h3>Personal Color Editor</h3>
+                <span>Every valid color change updates your app immediately. Save to keep it for this login.</span>
+              </div>
+              <button className="profile-color-close" type="button" aria-label="Close Editing Tool" onClick={closeEditor}>
+                <X size={20} />
+              </button>
+            </header>
+
+            <div className="profile-color-editor">
+              <section className="profile-color-control-panel" aria-label="Color controls">
+                <div className="profile-color-editor-head">
+                  <div>
+                    <h4>Choose Colors</h4>
+                    <p>Use presets or tune each visual layer. Invalid hex text waits until it becomes a full 6-digit color.</p>
+                  </div>
+                </div>
+
+                <div className="profile-color-presets" aria-label="Color presets">
+                  {visualThemePresets.map((preset) => (
+                    <button key={preset.label} type="button" onClick={() => applyPreset(preset.colors)}>
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="profile-color-actions">
+                  <button type="button" className="profile-color-reset" onClick={resetVisualTheme}>
+                    Reset Colors
+                  </button>
+                  <button type="button" className="profile-color-save" onClick={saveVisualTheme}>
+                    Save Colors
+                  </button>
+                </div>
+
+                <div className="profile-color-grid">
+                  {visualColorControls.map((control) => {
+                    const colorValue = colors[control.key];
+                    const colorPickerValue = isValidVisualColor(colorValue) ? colorValue : defaultVisualThemeColors[control.key];
+                    return (
+                      <label className="profile-color-field" key={control.key}>
+                        <span>
+                          <strong>{control.label}</strong>
+                          <small>{control.helper}</small>
+                        </span>
+                        <span className="profile-color-input-row">
+                          <input
+                            aria-label={control.label}
+                            type="color"
+                            value={colorPickerValue}
+                            onChange={(event) => updateColor(control.key, event.target.value)}
+                          />
+                          <input
+                            aria-label={`${control.label} hex value`}
+                            className="input"
+                            value={colorValue}
+                            onChange={(event) => updateColor(control.key, event.target.value)}
+                            maxLength={7}
+                            spellCheck={false}
+                          />
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <aside className="profile-color-preview-panel" aria-label="Live color preview" style={previewStyle}>
+                <div className="profile-color-live-status">
+                  <span aria-hidden="true" />
+                  <strong>Live preview active</strong>
+                </div>
+                <ProfileColorMiniScreen preview={preview} />
+              </aside>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function OperationsShell({ children }: { children: ReactNode }) {
   const { session, logout } = useAppState();
   const location = useLocation();
+
+  useEffect(() => {
+    applyStoredVisualTheme(session?.email);
+    return () => applyVisualTheme(undefined);
+  }, [session?.email]);
 
   return (
     <StaffOperationsShell sessionEmail={session?.email} logout={logout} path={location.pathname}>
@@ -632,7 +1098,7 @@ function ManagerLauncherIcon({ icon }: { icon: ManagerLauncherIconKind }) {
   const launcherIconImage = managerLauncherIconImages[icon];
 
   if (!launcherIconImage) {
-    const LauncherSymbol = icon === "studyGuide" ? BookOpen : Video;
+    const LauncherSymbol = icon === "create" ? UserPlus : icon === "studyGuide" ? BookOpen : Video;
 
     return (
       <span className={frameClassName} aria-hidden="true">
@@ -657,11 +1123,6 @@ function managerLauncherPath(item: ManagerLauncherItem) {
   return `/manager?tool=${item.icon}`;
 }
 
-function getSelectedManagerLauncherItem(search: string) {
-  const requestedTool = new URLSearchParams(search).get("tool");
-  return managerLauncherItems.find((item) => item.icon === requestedTool) ?? managerLauncherItems[0];
-}
-
 function getSelectedStudentLauncherItem(search: string) {
   const requestedTool = new URLSearchParams(search).get("tool");
   return studentLauncherItems.find((item) => item.icon === requestedTool) ?? studentLauncherItems[0];
@@ -671,6 +1132,8 @@ function ManagerLauncherWorkspace({ tool }: { tool: ManagerLauncherIconKind }) {
   switch (tool) {
     case "dashboard":
       return <DashboardPage />;
+    case "create":
+      return <CreateAccountsPage />;
     case "messages":
       return <MessagesPage />;
     case "students":
@@ -1595,6 +2058,19 @@ const studentHomeThreads: ManagerHomeThread[] = [
 ];
 
 type ParentProfileTab = "dashboard" | "classes" | "study" | "test" | "messages" | "notifications";
+type ParentTutorialStepId = "add-child" | "child-name" | "child-age" | "child-username" | "child-password" | "child-belt" | "save-child" | "created-child";
+type ParentTutorialCompletion = "completed" | "skipped";
+type ParentTutorialTargetRect = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+type ParentTutorialTargetPosition = {
+  spotlight: ParentTutorialTargetRect;
+  coach: ParentTutorialTargetRect;
+  placement: "above" | "below" | "center";
+};
 
 const parentProfileTabs: { id: ParentProfileTab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
@@ -1604,6 +2080,24 @@ const parentProfileTabs: { id: ParentProfileTab; label: string }[] = [
   { id: "messages", label: "Messages" },
   { id: "notifications", label: "Notifications" }
 ];
+
+function childUsernameFromName(name: string) {
+  const usernameBase = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `${usernameBase || "student"}.child`;
+}
+
+function normalizeChildUsername(username: string) {
+  return username
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]+/g, "")
+    .replace(/^-|-$/g, "");
+}
 
 const parentStudyItems = [
   { title: "Forms at home", detail: "Review the current form slowly, then let the child perform it once without coaching." },
@@ -1616,6 +2110,92 @@ const parentTestingItems = [
   { title: "Instructor approval", detail: "Ask Cho's staff to confirm forms, kicks, attitude, and focus before the testing event." },
   { title: "Family logistics", detail: "Check arrival time, uniform, belt card, water, and event notifications before test day." }
 ];
+
+const parentTutorialStepOrder: ParentTutorialStepId[] = ["add-child", "child-name", "child-age", "child-username", "child-password", "child-belt", "save-child", "created-child"];
+
+const parentTutorialSteps: Record<ParentTutorialStepId, { title: string; detail: string; target: string }> = {
+  "add-child": {
+    title: "Tap Add Child",
+    detail: "Start here. This opens the child profile window where you will create the first student account.",
+    target: "add-child"
+  },
+  "child-name": {
+    title: "Type your child's name",
+    detail: "Enter the student's name. This is the name parents and staff will see on the child profile card.",
+    target: "child-name"
+  },
+  "child-age": {
+    title: "Add their age",
+    detail: "Enter the child's age so their profile feels clear when you manage more than one student.",
+    target: "child-age"
+  },
+  "child-username": {
+    title: "Create their username",
+    detail: "Choose the username your child will type on the login screen. Keep it simple and easy to remember.",
+    target: "child-username"
+  },
+  "child-password": {
+    title: "Create their password",
+    detail: "Choose the password your child will use with that username when they log into the app.",
+    target: "child-password"
+  },
+  "child-belt": {
+    title: "Confirm the current belt",
+    detail: "Open or focus the belt selector. White belt is already selected for brand-new students.",
+    target: "child-belt"
+  },
+  "save-child": {
+    title: "Save the profile",
+    detail: "Click the real save button. The new child profile will be created and selected for you.",
+    target: "save-child"
+  },
+  "created-child": {
+    title: "First child profile created",
+    detail: "This profile is ready. Open the student side now, or finish here and keep managing from the parent profile.",
+    target: "created-child"
+  }
+};
+
+function parentTutorialStorageKey(sessionEmail?: string) {
+  const keyEmail = (sessionEmail ?? "parent")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `chos.parentTutorial.${keyEmail || "parent"}.v1`;
+}
+
+function readParentTutorialCompletion(key: string) {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const saved = window.localStorage.getItem(key);
+    return saved === "completed" || saved === "skipped" ? saved : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeParentTutorialCompletion(key: string, completion: ParentTutorialCompletion) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, completion);
+  } catch {
+    // The tutorial still works in-memory if localStorage is unavailable.
+  }
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function isParentTutorialModalStep(stepId: ParentTutorialStepId | null) {
+  return stepId === "child-name" || stepId === "child-age" || stepId === "child-username" || stepId === "child-password" || stepId === "child-belt" || stepId === "save-child";
+}
+
+function getNextParentTutorialStep(stepId: ParentTutorialStepId) {
+  const currentIndex = parentTutorialStepOrder.indexOf(stepId);
+  return parentTutorialStepOrder[currentIndex + 1] ?? stepId;
+}
 
 function childBeltLabel(beltSlug: string) {
   const normalizedSlug = beltSlug.toLowerCase().replace(/\s+/g, "-");
@@ -1913,6 +2493,23 @@ function StudentProfilePage() {
   const studentRoleLabel = `${selectedStudent?.program ?? "Cho's Martial Arts"} Student`;
   const memberSinceLabel = formatMonthYear(selectedStudent?.joinedAt ?? session?.createdAt);
   const studentPortrait = studentProfile.photoDataUrl ?? (selectedStudent?.profileImagePath ? publicAsset(selectedStudent.profileImagePath) : publicAsset("assets/CheetahProfilePic/Cheetah.png"));
+  const studentColorPreview: ProfileColorPreviewData = {
+    kind: "student",
+    title: "Student Profile",
+    displayName: studentName,
+    roleLabel: studentRoleLabel,
+    portraitSrc: studentPortrait,
+    avatarText: childInitials(studentName),
+    facts: [
+      { icon: <Award size={18} />, label: `Rank: ${selectedStudent?.beltRank ?? "Green"} Belt` },
+      { icon: <Target size={18} />, label: `Member Since: ${memberSinceLabel}` },
+      { icon: <Users size={18} />, label: `Classes: ${selectedStudent?.classesAttended ?? 24} Attended` }
+    ],
+    counts: [
+      { label: messageCount === 1 ? "Message" : "Messages", value: messageCount, tone: "message" },
+      { label: eventCount === 1 ? "Event" : "Events", value: eventCount, tone: "event" }
+    ]
+  };
 
   useEffect(() => {
     setStudentProfile(readStudentProfile(session?.email, selectedStudent));
@@ -2503,6 +3100,7 @@ function StudentProfilePage() {
                     <span>Receive class and event updates</span>
                   </label>
                 </div>
+                <ProfileColorEditingTool sessionEmail={session?.email} showToast={showToast} preview={studentColorPreview} />
               </section>
               <div className="student-editor-actions manager-profile-actions">
                 <button type="submit">
@@ -2689,13 +3287,15 @@ function ParentProfileTabContent({
 function ParentChildProfileModal({
   form,
   mode,
+  onBeltInteract,
   onChange,
   onClose,
   onSubmit
 }: {
-  form: { name: string; age: string; beltSlug: string };
+  form: { name: string; age: string; beltSlug: string; username: string; password: string };
   mode: "add" | "edit";
-  onChange: (form: { name: string; age: string; beltSlug: string }) => void;
+  onBeltInteract: () => void;
+  onChange: (form: { name: string; age: string; beltSlug: string; username: string; password: string }) => void;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
@@ -2716,15 +3316,33 @@ function ParentChildProfileModal({
         <section className="student-form-section manager-profile-form-section">
           <label className="field-label">
             Child name
-            <input className="input" value={form.name} onChange={(event) => onChange({ ...form, name: event.target.value })} placeholder="Mina Cho" />
+            <input data-parent-tutorial-target="child-name" className="input" value={form.name} onChange={(event) => onChange({ ...form, name: event.target.value })} placeholder="Mina Cho" />
           </label>
           <label className="field-label">
             Child age
-            <input className="input" inputMode="numeric" value={form.age} onChange={(event) => onChange({ ...form, age: event.target.value })} placeholder="8" />
+            <input data-parent-tutorial-target="child-age" className="input" inputMode="numeric" value={form.age} onChange={(event) => onChange({ ...form, age: event.target.value })} placeholder="8" />
+          </label>
+          <label className="field-label">
+            Child username
+            <input data-parent-tutorial-target="child-username" className="input" autoComplete="username" value={form.username} onChange={(event) => onChange({ ...form, username: event.target.value })} placeholder={childUsernameFromName(form.name)} />
+          </label>
+          <label className="field-label">
+            Child password
+            <input data-parent-tutorial-target="child-password" className="input" type="password" autoComplete="new-password" value={form.password} onChange={(event) => onChange({ ...form, password: event.target.value })} placeholder="Create a password" />
           </label>
           <label className="field-label">
             Current belt
-            <select className="input" value={form.beltSlug} onChange={(event) => onChange({ ...form, beltSlug: event.target.value })}>
+            <select
+              data-parent-tutorial-target="child-belt"
+              className="input"
+              value={form.beltSlug}
+              onClick={onBeltInteract}
+              onFocus={onBeltInteract}
+              onChange={(event) => {
+                onChange({ ...form, beltSlug: event.target.value });
+                onBeltInteract();
+              }}
+            >
               {beltOptions.map((belt) => (
                 <option key={belt} value={belt.toLowerCase().replace(/\s+/g, "-")}>
                   {belt}
@@ -2734,7 +3352,7 @@ function ParentChildProfileModal({
           </label>
         </section>
         <div className="student-editor-actions manager-profile-actions">
-          <button type="submit">
+          <button data-parent-tutorial-target="save-child" type="submit">
             <CheckCircle2 size={18} /> Save Child Profile
           </button>
         </div>
@@ -2743,16 +3361,159 @@ function ParentChildProfileModal({
   );
 }
 
+function ParentFirstChildTutorialOverlay({
+  createdChild,
+  onBack,
+  onFinish,
+  onOpenChildSide,
+  onSkip,
+  stepId,
+  targetPosition
+}: {
+  createdChild?: ChildAccount;
+  onBack: () => void;
+  onFinish: () => void;
+  onOpenChildSide?: () => void;
+  onSkip: () => void;
+  stepId: ParentTutorialStepId;
+  targetPosition: ParentTutorialTargetPosition | null;
+}) {
+  const step = parentTutorialSteps[stepId];
+  const stepIndex = parentTutorialStepOrder.indexOf(stepId);
+  const isFirstStep = stepIndex <= 0;
+  const isFinalStep = stepId === "created-child";
+  const spotlightStyle = targetPosition
+    ? ({
+        "--parent-tutorial-top": `${targetPosition.spotlight.top}px`,
+        "--parent-tutorial-left": `${targetPosition.spotlight.left}px`,
+        "--parent-tutorial-width": `${targetPosition.spotlight.width}px`,
+        "--parent-tutorial-height": `${targetPosition.spotlight.height}px`
+      } as CSSProperties)
+    : undefined;
+  const coachStyle = targetPosition
+    ? ({
+        "--parent-tutorial-coach-top": `${targetPosition.coach.top}px`,
+        "--parent-tutorial-coach-left": `${targetPosition.coach.left}px`,
+        "--parent-tutorial-coach-width": `${targetPosition.coach.width}px`
+      } as CSSProperties)
+    : undefined;
+
+  return (
+    <div className="parent-tutorial-layer" aria-live="polite">
+      {targetPosition && <div className="parent-tutorial-spotlight" style={spotlightStyle} aria-hidden="true" />}
+      <section
+        className={`parent-tutorial-coach parent-tutorial-coach--${targetPosition?.placement ?? "center"}`}
+        role="region"
+        aria-label="Parent first child tutorial"
+        style={coachStyle}
+      >
+        <p>Step {stepIndex + 1} of {parentTutorialStepOrder.length}</p>
+        <h2>{step.title}</h2>
+        <span>{step.detail}</span>
+        <div className="parent-tutorial-actions">
+          {!isFirstStep && !isFinalStep && (
+            <button type="button" onClick={onBack}>
+              Back
+            </button>
+          )}
+          {isFinalStep ? (
+            <>
+              {createdChild && onOpenChildSide && (
+                <button className="parent-tutorial-open-child" type="button" onClick={onOpenChildSide}>
+                  Open {createdChild.name}&apos;s Student Side
+                </button>
+              )}
+              <button className="parent-tutorial-finish" type="button" onClick={onFinish}>
+                Finish
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={onSkip}>
+              Skip tutorial
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ParentChildHandoffPrompt({
+  child,
+  onDismiss,
+  onOpenChildSide
+}: {
+  child: ChildAccount;
+  onDismiss: () => void;
+  onOpenChildSide: () => void;
+}) {
+  return (
+    <section className="parent-child-handoff" role="region" aria-label="Child account handoff">
+      <span className="parent-child-handoff-icon" aria-hidden="true">
+        <CheckCircle2 size={22} />
+      </span>
+      <div>
+        <p>Child account created</p>
+        <h3>{child.name} is ready to use the student side.</h3>
+        <span>Use the saved username and password later, or open the child app view now.</span>
+      </div>
+      <div className="parent-child-handoff-actions">
+        <button className="parent-child-handoff-primary" type="button" onClick={onOpenChildSide}>
+          Open {child.name}&apos;s Student Side
+        </button>
+        <button type="button" onClick={onDismiss}>
+          Stay on Parent Profile
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function ParentProfilePage() {
-  const { addChildAccount, guardianChildren, logout, scheduledClasses, showToast, studioClasses, studioEvents, updateChildAccount } = useAppState();
+  const { addChildAccount, guardianChildren, loginChildAccount, logout, scheduledClasses, session, showToast, studioClasses, studioEvents, updateChildAccount } = useAppState();
   const [activeTab, setActiveTab] = useState<ParentProfileTab>("dashboard");
   const [selectedChildId, setSelectedChildId] = useState(() => guardianChildren[0]?.id ?? "");
   const [childModalMode, setChildModalMode] = useState<"add" | "edit" | null>(null);
   const [editingChildId, setEditingChildId] = useState("");
-  const [childForm, setChildForm] = useState({ name: "", age: "", beltSlug: "white" });
+  const [childForm, setChildForm] = useState({ name: "", age: "", beltSlug: "white", username: "", password: "" });
+  const [childHandoffId, setChildHandoffId] = useState("");
+  const [parentProfileOpen, setParentProfileOpen] = useState(false);
+  const [parentTheme, setParentTheme] = useState<AppThemeMode>(() => readStoredAppTheme());
+  const [tutorialStepId, setTutorialStepId] = useState<ParentTutorialStepId | null>(null);
+  const [tutorialFinishedChildId, setTutorialFinishedChildId] = useState("");
+  const [tutorialTargetPosition, setTutorialTargetPosition] = useState<ParentTutorialTargetPosition | null>(null);
+  const tutorialStorageKey = useMemo(() => parentTutorialStorageKey(session?.email), [session?.email]);
   const selectedChild = guardianChildren.find((child) => child.id === selectedChildId) ?? guardianChildren[0];
+  const childHandoff = guardianChildren.find((child) => child.id === childHandoffId);
+  const tutorialFinishedChild = guardianChildren.find((child) => child.id === tutorialFinishedChildId);
   const messageCount = studentHomeThreads.filter((thread) => thread.kind === "message").length;
   const notificationCount = studentHomeThreads.filter((thread) => thread.kind === "event").length + studioEvents.length;
+  const tutorialActive = tutorialStepId !== null;
+  const parentColorPreview: ProfileColorPreviewData = {
+    kind: "parent",
+    title: "Parent Profile",
+    displayName: "Family Profile",
+    roleLabel: guardianChildren.length
+      ? `${guardianChildren.length} child profile${guardianChildren.length === 1 ? "" : "s"} connected to this parent login.`
+      : "Create the first child profile to unlock student tools.",
+    avatarText: "P",
+    facts: [],
+    counts: [
+      { label: "Child Profiles", value: guardianChildren.length },
+      { label: "Messages", value: messageCount, tone: "message" },
+      { label: "Notifications", value: notificationCount, tone: "event" }
+    ],
+    children: guardianChildren.map((child) => ({
+      id: child.id,
+      name: child.name,
+      initials: childInitials(child.name),
+      meta: `${child.age ? `Age ${child.age}` : "Age not set"} - ${childBeltLabel(child.beltSlug)} Belt`,
+      selected: child.id === selectedChild?.id
+    })),
+    selectedChildLabel: selectedChild
+      ? `${selectedChild.age ? `Age ${selectedChild.age}` : "Age not set"} - ${childBeltLabel(selectedChild.beltSlug)} Belt`
+      : "Add a child profile to unlock student tools."
+  };
 
   useEffect(() => {
     if (!guardianChildren.length) {
@@ -2764,32 +3525,220 @@ function ParentProfilePage() {
     }
   }, [guardianChildren, selectedChildId]);
 
+  useEffect(() => {
+    if (guardianChildren.length || tutorialActive || readParentTutorialCompletion(tutorialStorageKey)) return;
+    setTutorialFinishedChildId("");
+    setTutorialStepId("add-child");
+  }, [guardianChildren.length, tutorialActive, tutorialStorageKey]);
+
+  useEffect(() => {
+    if (!tutorialStepId) {
+      setTutorialTargetPosition(null);
+      return;
+    }
+
+    let frameId = 0;
+    let timeoutId = 0;
+    const cancelScheduledMeasure = () => {
+      if (frameId && typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(frameId);
+      }
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+      frameId = 0;
+      timeoutId = 0;
+    };
+    const scheduleMeasure = () => {
+      cancelScheduledMeasure();
+      const measure = () => {
+        const target = document.querySelector<HTMLElement>(`[data-parent-tutorial-target="${parentTutorialSteps[tutorialStepId].target}"]`);
+        if (!target) {
+          setTutorialTargetPosition(null);
+          return;
+        }
+        if (typeof target.scrollIntoView === "function") {
+          target.scrollIntoView({ block: "center", inline: "nearest" });
+        }
+        const rect = target.getBoundingClientRect();
+        const spotlightPadding = 10;
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 768;
+        const spotlight = {
+          top: clampNumber(rect.top - spotlightPadding, 8, Math.max(8, viewportHeight - 52)),
+          left: clampNumber(rect.left - spotlightPadding, 8, Math.max(8, viewportWidth - 52)),
+          width: Math.max(rect.width + spotlightPadding * 2, 52),
+          height: Math.max(rect.height + spotlightPadding * 2, 52)
+        };
+        const coachWidth = Math.min(380, Math.max(280, viewportWidth - 28));
+        const coachHeight = 210;
+        const hasRoomBelow = spotlight.top + spotlight.height + coachHeight + 28 < viewportHeight;
+        const placement = hasRoomBelow || spotlight.top < coachHeight + 34 ? "below" : "above";
+        const coachTop = placement === "below"
+          ? clampNumber(spotlight.top + spotlight.height + 14, 14, Math.max(14, viewportHeight - coachHeight - 14))
+          : clampNumber(spotlight.top - coachHeight - 14, 14, Math.max(14, viewportHeight - coachHeight - 14));
+        const coachLeft = clampNumber(spotlight.left + spotlight.width / 2 - coachWidth / 2, 14, Math.max(14, viewportWidth - coachWidth - 14));
+        setTutorialTargetPosition({
+          spotlight,
+          coach: { top: coachTop, left: coachLeft, width: coachWidth, height: coachHeight },
+          placement
+        });
+      };
+
+      if (typeof window.requestAnimationFrame === "function") {
+        frameId = window.requestAnimationFrame(measure);
+        return;
+      }
+      timeoutId = window.setTimeout(measure, 0);
+    };
+
+    scheduleMeasure();
+    window.addEventListener("resize", scheduleMeasure);
+    window.addEventListener("scroll", scheduleMeasure, true);
+
+    return () => {
+      cancelScheduledMeasure();
+      window.removeEventListener("resize", scheduleMeasure);
+      window.removeEventListener("scroll", scheduleMeasure, true);
+    };
+  }, [childModalMode, guardianChildren.length, selectedChildId, tutorialFinishedChildId, tutorialStepId]);
+
+  const advanceTutorialFrom = (stepId: ParentTutorialStepId) => {
+    setTutorialStepId((currentStepId) => (currentStepId === stepId ? getNextParentTutorialStep(stepId) : currentStepId));
+  };
+
+  const skipParentTutorial = () => {
+    writeParentTutorialCompletion(tutorialStorageKey, "skipped");
+    setTutorialStepId(null);
+    setTutorialTargetPosition(null);
+  };
+
+  const finishParentTutorial = () => {
+    writeParentTutorialCompletion(tutorialStorageKey, "completed");
+    setTutorialStepId(null);
+    setTutorialTargetPosition(null);
+  };
+
+  const openChildSide = (childId: string) => {
+    writeParentTutorialCompletion(tutorialStorageKey, "completed");
+    setTutorialStepId(null);
+    setTutorialTargetPosition(null);
+    setChildHandoffId("");
+    loginChildAccount(childId);
+  };
+
+  const goBackParentTutorial = () => {
+    if (!tutorialStepId) return;
+    const currentIndex = parentTutorialStepOrder.indexOf(tutorialStepId);
+    const previousStepId = parentTutorialStepOrder[Math.max(currentIndex - 1, 0)];
+    if (tutorialStepId === "child-name") {
+      setChildModalMode(null);
+      setEditingChildId("");
+    }
+    setTutorialStepId(previousStepId);
+  };
+
   const openAddChild = () => {
-    setChildForm({ name: "", age: "", beltSlug: "white" });
+    setChildForm({ name: "", age: "", beltSlug: "white", username: "", password: "" });
     setEditingChildId("");
     setChildModalMode("add");
+    advanceTutorialFrom("add-child");
+  };
+
+  const openParentProfileSettings = () => {
+    setParentTheme(readStoredAppTheme());
+    setParentProfileOpen(true);
+  };
+
+  const saveParentProfileSettings = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    applyAppTheme(parentTheme);
+    writeStoredAppTheme(parentTheme);
+    setParentProfileOpen(false);
+    showToast("Parent profile settings saved.");
   };
 
   const openEditChild = (child: ChildAccount) => {
-    setChildForm({ name: child.name, age: child.age, beltSlug: child.beltSlug });
+    setChildForm({ name: child.name, age: child.age, beltSlug: child.beltSlug, username: child.username, password: child.password ?? "" });
     setEditingChildId(child.id);
     setChildModalMode("edit");
   };
 
-  const closeChildModal = () => {
+  const closeChildModal = (options?: { preserveTutorialStep?: boolean }) => {
     setChildModalMode(null);
     setEditingChildId("");
+    if (!options?.preserveTutorialStep && isParentTutorialModalStep(tutorialStepId)) {
+      setTutorialStepId("add-child");
+    }
+  };
+
+  const updateChildForm = (nextForm: { name: string; age: string; beltSlug: string; username: string; password: string }) => {
+    setChildForm(nextForm);
+    if (nextForm.name.trim()) {
+      advanceTutorialFrom("child-name");
+    }
+    if (nextForm.age.trim()) {
+      advanceTutorialFrom("child-age");
+    }
+    if (nextForm.username.trim()) {
+      advanceTutorialFrom("child-username");
+    }
+    if (nextForm.password.trim()) {
+      advanceTutorialFrom("child-password");
+    }
+  };
+
+  const handleBeltTutorialInteraction = () => {
+    advanceTutorialFrom("child-belt");
   };
 
   const saveChildProfile = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const normalizedUsername = normalizeChildUsername(childForm.username);
+    const isFirstChildCreation = childModalMode === "add" && guardianChildren.length === 0;
+    if (!childForm.name.trim()) {
+      if (tutorialActive && childModalMode === "add") {
+        setTutorialStepId("child-name");
+      }
+      showToast("Enter a child name.");
+      return;
+    }
+    if (!normalizedUsername) {
+      if (tutorialActive && childModalMode === "add") {
+        setTutorialStepId("child-username");
+      }
+      showToast("Enter a child username.");
+      return;
+    }
+    if (childModalMode === "add" && !childForm.password.trim()) {
+      if (tutorialActive) {
+        setTutorialStepId("child-password");
+      }
+      showToast("Create a child password.");
+      return;
+    }
+    if (guardianChildren.some((child) => child.id !== editingChildId && child.username.toLowerCase() === normalizedUsername.toLowerCase())) {
+      if (tutorialActive && childModalMode === "add") {
+        setTutorialStepId("child-username");
+      }
+      showToast("That child username is already used.");
+      return;
+    }
     const savedChild = childModalMode === "edit" && editingChildId ? updateChildAccount(editingChildId, childForm) : addChildAccount(childForm);
     if (!savedChild) {
+      if (tutorialActive && childModalMode === "add") {
+        setTutorialStepId("child-name");
+      }
       showToast("Enter a child name.");
       return;
     }
     setSelectedChildId(savedChild.id);
-    closeChildModal();
+    setChildHandoffId(isFirstChildCreation ? savedChild.id : "");
+    closeChildModal({ preserveTutorialStep: true });
+    if (tutorialActive && childModalMode === "add") {
+      setTutorialFinishedChildId(savedChild.id);
+      setTutorialStepId("created-child");
+    }
     showToast(`${savedChild.name} child profile saved.`);
   };
 
@@ -2798,7 +3747,11 @@ function ParentProfilePage() {
       <header className="manager-home-profile-title manager-page-title-bar" aria-label="Parent profile page header">
         <ManagerPageTitleFrame title="Parent Profile" className="manager-home-profile-title-frame" />
         <nav className="manager-home-top-actions" aria-label="Parent profile quick actions">
-          <button className="manager-home-top-action parent-profile-add-action" type="button" aria-label="Add Child Profile" onClick={openAddChild}>
+          <button className="manager-home-top-action parent-profile-settings-action" type="button" aria-label="Profile Settings" onClick={openParentProfileSettings}>
+            <img className="manager-home-panel-icon" src={managerProfileSettingsIcon} alt="" draggable="false" />
+            <span className="manager-home-top-action-label">Settings</span>
+          </button>
+          <button data-parent-tutorial-target="add-child" className="manager-home-top-action parent-profile-add-action" type="button" aria-label="Add Child Profile" onClick={openAddChild}>
             <Plus size={28} aria-hidden="true" />
             <span className="manager-home-top-action-label">Add Child</span>
           </button>
@@ -2842,6 +3795,7 @@ function ParentProfilePage() {
                     <article
                       aria-label={`${child.name} profile card`}
                       className={`parent-child-card${isSelected ? " is-selected" : ""}`}
+                      data-parent-tutorial-target={child.id === tutorialFinishedChildId ? "created-child" : undefined}
                       key={child.id}
                       onClick={() => setSelectedChildId(child.id)}
                       role="group"
@@ -2891,6 +3845,14 @@ function ParentProfilePage() {
             )}
           </div>
 
+          {childHandoff && (
+            <ParentChildHandoffPrompt
+              child={childHandoff}
+              onDismiss={() => setChildHandoffId("")}
+              onOpenChildSide={() => openChildSide(childHandoff.id)}
+            />
+          )}
+
           <nav className="parent-tool-tabs" aria-label="Parent student tools">
             {parentProfileTabs.map((tab) => (
               <button className={activeTab === tab.id ? "is-active" : ""} key={tab.id} type="button" aria-pressed={activeTab === tab.id} onClick={() => setActiveTab(tab.id)}>
@@ -2909,13 +3871,76 @@ function ParentProfilePage() {
         </section>
       </main>
 
+      {parentProfileOpen && (
+        <div className="modal-backdrop manager-profile-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setParentProfileOpen(false)}>
+          <form className="modal-card manager-profile-modal parent-profile-settings-modal" role="dialog" aria-modal="true" aria-label="Parent profile settings" onSubmit={saveParentProfileSettings}>
+            <header className="student-modal-head">
+              <div>
+                <h2>Profile Settings</h2>
+                <p>Edit parent app theme and personal color settings.</p>
+              </div>
+              <button className="student-modal-close" type="button" aria-label="Close parent profile settings" onClick={() => setParentProfileOpen(false)}>
+                <X size={20} />
+              </button>
+            </header>
+            <section className="student-form-section manager-profile-form-section parent-profile-settings-form">
+              <div className="manager-profile-preferences">
+                <div className="manager-theme-setting" role="group" aria-label="App theme">
+                  <span>App Theme</span>
+                  <div className="manager-theme-options">
+                    <button
+                      type="button"
+                      className={`manager-theme-option${parentTheme === "light" ? " is-active" : ""}`}
+                      aria-pressed={parentTheme === "light"}
+                      onClick={() => setParentTheme("light")}
+                    >
+                      <Sun size={16} /> Light
+                    </button>
+                    <button
+                      type="button"
+                      className={`manager-theme-option${parentTheme === "dark" ? " is-active" : ""}`}
+                      aria-pressed={parentTheme === "dark"}
+                      onClick={() => setParentTheme("dark")}
+                    >
+                      <Moon size={16} /> Dark
+                    </button>
+                  </div>
+                </div>
+                <div className="manager-profile-check parent-profile-settings-note">
+                  <Palette size={18} aria-hidden="true" />
+                  <span>Saved colors apply only to this parent login.</span>
+                </div>
+              </div>
+              <ProfileColorEditingTool sessionEmail={session?.email} showToast={showToast} preview={parentColorPreview} />
+            </section>
+            <div className="student-editor-actions manager-profile-actions">
+              <button type="submit">
+                <CheckCircle2 size={18} /> Save Profile Settings
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {childModalMode && (
         <ParentChildProfileModal
           form={childForm}
           mode={childModalMode}
-          onChange={setChildForm}
-          onClose={closeChildModal}
+          onBeltInteract={handleBeltTutorialInteraction}
+          onChange={updateChildForm}
+          onClose={() => closeChildModal()}
           onSubmit={saveChildProfile}
+        />
+      )}
+      {tutorialStepId && (
+        <ParentFirstChildTutorialOverlay
+          createdChild={tutorialStepId === "created-child" ? tutorialFinishedChild : undefined}
+          onBack={goBackParentTutorial}
+          onFinish={finishParentTutorial}
+          onOpenChildSide={tutorialFinishedChild ? () => openChildSide(tutorialFinishedChild.id) : undefined}
+          onSkip={skipParentTutorial}
+          stepId={tutorialStepId}
+          targetPosition={tutorialTargetPosition}
         />
       )}
     </section>
@@ -4089,7 +5114,7 @@ function ManagerHomePage() {
 }
 
 function ManagerLauncherPage() {
-  const { accountRole, logout, session, showToast, students } = useAppState();
+  const { accountRole, logout, managerAccountAccess, session, showToast, students } = useAppState();
   const location = useLocation();
   const navigate = useNavigate();
   const [profileOpen, setProfileOpen] = useState(false);
@@ -4097,8 +5122,12 @@ function ManagerLauncherPage() {
   const [profilePassword, setProfilePassword] = useState({ newPassword: "", confirmPassword: "" });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const isStudentPanel = accountRole === "student";
-  const launcherItems = isStudentPanel ? studentLauncherItems : managerLauncherItems;
-  const selectedLauncherItem = isStudentPanel ? getSelectedStudentLauncherItem(location.search) : getSelectedManagerLauncherItem(location.search);
+  const launcherItems = isStudentPanel
+    ? studentLauncherItems
+    : managerLauncherItems.filter((item) => managerAccountAccess.allowedTools.includes(item.icon as ManagerAccessKey));
+  const selectedLauncherItem = isStudentPanel
+    ? getSelectedStudentLauncherItem(location.search)
+    : launcherItems.find((item) => item.icon === new URLSearchParams(location.search).get("tool")) ?? launcherItems[0] ?? managerLauncherItems[0];
   const launcherName = isStudentPanel ? "student" : "manager";
   const sidebarToggleLabel = isSidebarCollapsed ? `Expand ${launcherName} app launcher` : `Collapse ${launcherName} app launcher`;
   const studentRecord = students[0];
@@ -4106,6 +5135,24 @@ function ManagerLauncherPage() {
   const profileActionPhoto = isStudentPanel
     ? studentPanelProfile?.photoDataUrl ?? (studentRecord?.profileImagePath ? publicAsset(studentRecord.profileImagePath) : publicAsset("assets/CheetahProfilePic/Cheetah.png"))
     : profileSettings.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png");
+  const activeStudentCount = students.filter((student) => (student.status ?? "Active").toLowerCase() === "active").length;
+  const managerColorPreview: ProfileColorPreviewData = {
+    kind: "manager",
+    title: "Manager Profile",
+    displayName: profileSettings.name.trim() || "Cho's Manager",
+    roleLabel: "Head Coach & Manager",
+    portraitSrc: profileSettings.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png"),
+    avatarText: "CM",
+    facts: [
+      { icon: <Award size={18} />, label: "Team: Summer Champions" },
+      { icon: <Target size={18} />, label: `Member Since: ${formatMonthYear(session?.createdAt)}` },
+      { icon: <Users size={18} />, label: `Team Size: ${activeStudentCount} Member${activeStudentCount === 1 ? "" : "s"}` }
+    ],
+    counts: [
+      { label: "Messages", value: managerHomeThreads.filter((thread) => thread.kind === "message").length, tone: "message" },
+      { label: "Events", value: managerHomeThreads.filter((thread) => thread.kind === "event").length, tone: "event" }
+    ]
+  };
 
   useEffect(() => {
     if (new URLSearchParams(location.search).get("profile") !== "settings") return;
@@ -4349,6 +5396,7 @@ function ManagerLauncherPage() {
                   <span>Receive manager updates and reminders</span>
                 </label>
               </div>
+              <ProfileColorEditingTool sessionEmail={session?.email} showToast={showToast} preview={managerColorPreview} />
             </section>
             <div className="student-editor-actions manager-profile-actions">
               <button type="submit">
@@ -4359,6 +5407,446 @@ function ManagerLauncherPage() {
         </div>
       )}
     </section>
+  );
+}
+
+type StaffAccountForm = {
+  displayName: string;
+  username: string;
+  password: string;
+  confirmPassword: string;
+  email: string;
+  phone: string;
+  title: string;
+  notes: string;
+  access: ManagerAccessKey[];
+};
+
+type StudentAccountForm = {
+  fullName: string;
+  username: string;
+  password: string;
+  confirmPassword: string;
+  dateOfBirth: string;
+  gender: string;
+  studentEmail: string;
+  guardianName: string;
+  guardianPhone: string;
+  guardianEmail: string;
+  program: string;
+  status: string;
+  beltRank: string;
+  notes: string;
+};
+
+const staffAccessOptions: { key: ManagerAccessKey; label: string; helper: string }[] = [
+  { key: "dashboard", label: "Dashboard", helper: "Calendar and overview" },
+  { key: "students", label: "Students", helper: "Student directory" },
+  { key: "classes", label: "Classes", helper: "Class setup" },
+  { key: "scheduling", label: "Scheduling", helper: "Calendar scheduling" },
+  { key: "messages", label: "Messages", helper: "Messaging tools" },
+  { key: "events", label: "Events", helper: "Event creation" },
+  { key: "merchandise", label: "Merchandise", helper: "Store tools" },
+  { key: "videos", label: "Videos", helper: "Training videos" },
+  { key: "studyGuide", label: "Study Guide", helper: "Study files" },
+  { key: "reports", label: "Reports", helper: "Reports tab" },
+  { key: "create", label: "Create account access", helper: "Create staff and students" }
+];
+
+const managerAccessLabelMap: Record<ManagerAccessKey, string> = staffAccessOptions.reduce(
+  (labels, option) => ({ ...labels, [option.key]: option.key === "create" ? "Create" : option.label }),
+  {} as Record<ManagerAccessKey, string>
+);
+
+const defaultCreateStaffAccess: ManagerAccessKey[] = ["dashboard", "students", "classes", "scheduling", "messages"];
+
+function makeBlankStaffAccountForm(): StaffAccountForm {
+  return {
+    displayName: "",
+    username: "",
+    password: "",
+    confirmPassword: "",
+    email: "",
+    phone: "",
+    title: "Instructor",
+    notes: "",
+    access: defaultCreateStaffAccess
+  };
+}
+
+function makeBlankStudentAccountForm(): StudentAccountForm {
+  return {
+    fullName: "",
+    username: "",
+    password: "",
+    confirmPassword: "",
+    dateOfBirth: "",
+    gender: "Not specified",
+    studentEmail: "",
+    guardianName: "",
+    guardianPhone: "",
+    guardianEmail: "",
+    program: "Youth Taekwondo",
+    status: "Active",
+    beltRank: "White",
+    notes: ""
+  };
+}
+
+function normalizeCreateUsername(username: string) {
+  return username
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ".")
+    .replace(/[^a-z0-9._-]+/g, "")
+    .replace(/^[._-]+|[._-]+$/g, "");
+}
+
+function CreateAccountsPage() {
+  const {
+    addOperationsStudent,
+    createManagedAccount,
+    managedAccounts,
+    managedUsernameExists,
+    managerAccountAccess,
+    showToast
+  } = useAppState();
+  const [mode, setMode] = useState<"staff" | "student">("staff");
+  const [staffForm, setStaffForm] = useState(makeBlankStaffAccountForm);
+  const [studentForm, setStudentForm] = useState(makeBlankStudentAccountForm);
+  const staffAccounts = managedAccounts.filter((account) => account.role === "staff");
+  const studentAccounts = managedAccounts.filter((account) => account.role === "student");
+  const canGrantCreateAccess = managerAccountAccess.canGrantCreateAccess;
+  const visibleStaffAccessOptions = staffAccessOptions.filter((option) => option.key !== "create" || canGrantCreateAccess);
+  const createAccessCount = staffAccounts.filter((account) => account.access.includes("create")).length;
+
+  const toggleStaffAccess = (key: ManagerAccessKey) => {
+    setStaffForm((current) => {
+      const access = current.access.includes(key) ? current.access.filter((item) => item !== key) : [...current.access, key];
+      return { ...current, access };
+    });
+  };
+
+  const validatePasswordPair = (password: string, confirmPassword: string) => {
+    if (password.trim().length < 8) {
+      showToast("Enter a password with at least 8 characters.");
+      return false;
+    }
+
+    if (password.trim() !== confirmPassword.trim()) {
+      showToast("The passwords do not match.");
+      return false;
+    }
+
+    return true;
+  };
+
+  const submitStaffAccount = (event: FormEvent) => {
+    event.preventDefault();
+    const username = normalizeCreateUsername(staffForm.username);
+    if (!staffForm.displayName.trim() || !username || !staffForm.email.trim() || !staffForm.phone.trim()) {
+      showToast("Enter staff name, username, email, and phone.");
+      return;
+    }
+
+    if (!validateEmail(staffForm.email)) {
+      showToast("Enter a valid staff email.");
+      return;
+    }
+
+    if (!validatePasswordPair(staffForm.password, staffForm.confirmPassword)) return;
+
+    if (managedUsernameExists(username)) {
+      showToast("That username is already in use.");
+      return;
+    }
+
+    const access = canGrantCreateAccess ? staffForm.access : staffForm.access.filter((key) => key !== "create");
+    const account = createManagedAccount({
+      displayName: staffForm.displayName,
+      username,
+      password: staffForm.password,
+      role: "staff",
+      status: "active",
+      email: staffForm.email,
+      phone: staffForm.phone,
+      title: staffForm.title,
+      notes: staffForm.notes,
+      access
+    });
+
+    if (!account) {
+      showToast("Unable to create staff account.");
+      return;
+    }
+
+    setStaffForm(makeBlankStaffAccountForm());
+    showToast(`${account.displayName} staff account created.`);
+  };
+
+  const submitStudentAccount = (event: FormEvent) => {
+    event.preventDefault();
+    const username = normalizeCreateUsername(studentForm.username);
+    if (!studentForm.fullName.trim() || !username || !studentForm.studentEmail.trim() || !studentForm.guardianPhone.trim()) {
+      showToast("Enter student name, username, email, and guardian phone.");
+      return;
+    }
+
+    if (!validateEmail(studentForm.studentEmail)) {
+      showToast("Enter a valid student email.");
+      return;
+    }
+
+    if (!validatePasswordPair(studentForm.password, studentForm.confirmPassword)) return;
+
+    if (managedUsernameExists(username)) {
+      showToast("That username is already in use.");
+      return;
+    }
+
+    const student = addOperationsStudent({
+      fullName: studentForm.fullName,
+      dateOfBirth: studentForm.dateOfBirth,
+      gender: studentForm.gender,
+      studentEmail: studentForm.studentEmail,
+      guardianName: studentForm.guardianName,
+      guardianPhone: studentForm.guardianPhone,
+      guardianEmail: studentForm.guardianEmail,
+      program: studentForm.program,
+      status: studentForm.status,
+      beltRank: studentForm.beltRank,
+      notes: studentForm.notes
+    });
+
+    if (!student) {
+      showToast("Enter student name, guardian phone, and email.");
+      return;
+    }
+
+    const account = createManagedAccount({
+      displayName: fullName(student),
+      username,
+      password: studentForm.password,
+      role: "student",
+      status: "active",
+      email: student.email,
+      phone: student.phone,
+      title: `${student.beltRank} Belt Student`,
+      notes: studentForm.notes,
+      studentId: student.id
+    });
+
+    if (!account) {
+      showToast("Student record saved, but the login account could not be created.");
+      return;
+    }
+
+    setStudentForm(makeBlankStudentAccountForm());
+    showToast(`${account.displayName} student login created.`);
+  };
+
+  const renderAccountCard = (account: ManagedAccount) => (
+    <article className="create-account-card" key={account.id} aria-label={`${account.displayName} ${account.role} account`}>
+      <div className="create-account-card-main">
+        <span className={`create-account-avatar create-account-avatar--${account.role}`} aria-hidden="true">
+          {account.role === "staff" ? <ShieldCheck size={20} /> : <Users size={20} />}
+        </span>
+        <div>
+          <h3>{account.displayName}</h3>
+          <p>{account.username}</p>
+        </div>
+      </div>
+      <div className="create-account-card-meta">
+        <span>{account.role === "staff" ? account.title || "Staff" : "Student"}</span>
+        <span>{account.status === "active" ? "Active" : "Inactive"}</span>
+      </div>
+      {account.role === "staff" && (
+        <div className="create-account-access-list" aria-label={`${account.displayName} access`}>
+          {account.access.length ? account.access.map((key) => <span key={key}>{managerAccessLabelMap[key]}</span>) : <span>No manager tools</span>}
+        </div>
+      )}
+    </article>
+  );
+
+  return (
+    <OperationsPage
+      className="operations-page--create-accounts"
+      title="Create Accounts"
+      text="Create custom staff and student logins, assign manager-panel access, and keep the setup simple enough to complete in one pass."
+    >
+      <div className="operations-stats create-account-stats">
+        <StatCard label="Staff accounts" value={staffAccounts.length} icon={<ShieldCheck />} />
+        <StatCard label="Student logins" value={studentAccounts.length} icon={<Users />} />
+        <StatCard label="Create access" value={createAccessCount} icon={<UserPlus />} />
+      </div>
+
+      <section className="operations-panel create-account-builder" aria-label="Create account builder">
+        <div className="create-account-mode-tabs" role="group" aria-label="Account type">
+          <button type="button" aria-pressed={mode === "staff"} onClick={() => setMode("staff")}>
+            <ShieldCheck size={18} /> Staff
+          </button>
+          <button type="button" aria-pressed={mode === "student"} onClick={() => setMode("student")}>
+            <Users size={18} /> Student
+          </button>
+        </div>
+
+        {mode === "staff" ? (
+          <form className="create-account-form" aria-label="Create staff account" onSubmit={submitStaffAccount}>
+            <div className="student-form-grid">
+              <label>
+                Staff full name
+                <input autoFocus value={staffForm.displayName} onChange={(event) => setStaffForm({ ...staffForm, displayName: event.target.value })} placeholder="Jordan Lee" />
+              </label>
+              <label>
+                Staff username
+                <input autoComplete="username" value={staffForm.username} onChange={(event) => setStaffForm({ ...staffForm, username: event.target.value })} placeholder="jordan.staff" />
+              </label>
+              <label>
+                Staff password
+                <input type="password" autoComplete="new-password" value={staffForm.password} onChange={(event) => setStaffForm({ ...staffForm, password: event.target.value })} placeholder="Minimum 8 characters" />
+              </label>
+              <label>
+                Confirm staff password
+                <input type="password" autoComplete="new-password" value={staffForm.confirmPassword} onChange={(event) => setStaffForm({ ...staffForm, confirmPassword: event.target.value })} placeholder="Repeat password" />
+              </label>
+              <label>
+                Staff email
+                <input inputMode="email" value={staffForm.email} onChange={(event) => setStaffForm({ ...staffForm, email: event.target.value })} placeholder="staff@chos.prototype" />
+              </label>
+              <label>
+                Staff phone
+                <input value={staffForm.phone} onChange={(event) => setStaffForm({ ...staffForm, phone: event.target.value })} placeholder="(262) 555-0100" />
+              </label>
+              <label>
+                Staff title
+                <input value={staffForm.title} onChange={(event) => setStaffForm({ ...staffForm, title: event.target.value })} placeholder="Instructor" />
+              </label>
+            </div>
+
+            <fieldset className="create-account-access-grid">
+              <legend>Manager panel access</legend>
+              {visibleStaffAccessOptions.map((option) => (
+                <label className="create-account-access-option" key={option.key}>
+                  <input aria-label={option.label} type="checkbox" checked={staffForm.access.includes(option.key)} onChange={() => toggleStaffAccess(option.key)} />
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{option.helper}</small>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+
+            <label className="create-account-notes">
+              Notes
+              <textarea rows={3} value={staffForm.notes} onChange={(event) => setStaffForm({ ...staffForm, notes: event.target.value })} placeholder="Optional internal notes" />
+            </label>
+
+            <div className="student-editor-actions">
+              <button type="submit">
+                <UserPlus size={18} /> Create Staff Account
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form className="create-account-form" aria-label="Create student account" onSubmit={submitStudentAccount}>
+            <div className="student-form-grid">
+              <label>
+                Student full name
+                <input autoFocus value={studentForm.fullName} onChange={(event) => setStudentForm({ ...studentForm, fullName: event.target.value })} placeholder="Avery Kim" />
+              </label>
+              <label>
+                Student username
+                <input autoComplete="username" value={studentForm.username} onChange={(event) => setStudentForm({ ...studentForm, username: event.target.value })} placeholder="avery.student" />
+              </label>
+              <label>
+                Student password
+                <input type="password" autoComplete="new-password" value={studentForm.password} onChange={(event) => setStudentForm({ ...studentForm, password: event.target.value })} placeholder="Minimum 8 characters" />
+              </label>
+              <label>
+                Confirm student password
+                <input type="password" autoComplete="new-password" value={studentForm.confirmPassword} onChange={(event) => setStudentForm({ ...studentForm, confirmPassword: event.target.value })} placeholder="Repeat password" />
+              </label>
+              <label>
+                Student email
+                <input inputMode="email" value={studentForm.studentEmail} onChange={(event) => setStudentForm({ ...studentForm, studentEmail: event.target.value })} placeholder="student@chos.prototype" />
+              </label>
+              <label>
+                Date of birth
+                <input type="date" value={studentForm.dateOfBirth} onChange={(event) => setStudentForm({ ...studentForm, dateOfBirth: event.target.value })} />
+              </label>
+              <label>
+                Gender
+                <select value={studentForm.gender} onChange={(event) => setStudentForm({ ...studentForm, gender: event.target.value })}>
+                  {genderOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Parent/guardian name
+                <input value={studentForm.guardianName} onChange={(event) => setStudentForm({ ...studentForm, guardianName: event.target.value })} placeholder="Parent or guardian" />
+              </label>
+              <label>
+                Parent/guardian phone
+                <input value={studentForm.guardianPhone} onChange={(event) => setStudentForm({ ...studentForm, guardianPhone: event.target.value })} placeholder="(262) 555-0122" />
+              </label>
+              <label>
+                Parent/guardian email
+                <input inputMode="email" value={studentForm.guardianEmail} onChange={(event) => setStudentForm({ ...studentForm, guardianEmail: event.target.value })} placeholder="parent@chos.prototype" />
+              </label>
+              <label>
+                Program
+                <input value={studentForm.program} onChange={(event) => setStudentForm({ ...studentForm, program: event.target.value })} />
+              </label>
+              <label>
+                Status
+                <select value={studentForm.status} onChange={(event) => setStudentForm({ ...studentForm, status: event.target.value })}>
+                  {statusOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Belt rank
+                <select value={studentForm.beltRank} onChange={(event) => setStudentForm({ ...studentForm, beltRank: event.target.value })}>
+                  {beltOptions.map((rank) => (
+                    <option key={rank} value={rank}>{rank}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <label className="create-account-notes">
+              Notes
+              <textarea rows={3} value={studentForm.notes} onChange={(event) => setStudentForm({ ...studentForm, notes: event.target.value })} placeholder="Optional student notes" />
+            </label>
+
+            <div className="student-editor-actions">
+              <button type="submit">
+                <UserPlus size={18} /> Create Student Account
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
+
+      <section className="operations-panel create-account-directory" aria-label="Created custom accounts">
+        <div className="student-roster-head">
+          <div>
+            <h2>Created Accounts</h2>
+            <p>Saved staff and student usernames can sign in from the main login screen immediately.</p>
+          </div>
+          <span>{managedAccounts.length} account{managedAccounts.length === 1 ? "" : "s"}</span>
+        </div>
+        {managedAccounts.length ? (
+          <div className="create-account-card-grid">
+            {managedAccounts.map(renderAccountCard)}
+          </div>
+        ) : (
+          <p className="operations-note">No custom staff or student accounts have been created yet.</p>
+        )}
+      </section>
+    </OperationsPage>
   );
 }
 

@@ -246,7 +246,7 @@ function LaunchLogoAnimation({ onReveal, onComplete }: { onReveal: () => void; o
 }
 
 function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean; handoffActive?: boolean }) {
-  const { login, register, showToast } = useAppState();
+  const { childUsernameExists, login, loginChildCredentials, loginManagedAccount, managedUsernameExists, register, showToast } = useAppState();
   const navigate = useNavigate();
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [registerForm, setRegisterForm] = useState({ email: "", password: "" });
@@ -278,6 +278,24 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
     if (isPrototypeParentLogin(loginForm)) {
       login(prototypeParentLogin.email, true, prototypeParentLogin.role);
       navigate("/");
+      return;
+    }
+    const childAccount = loginChildCredentials(loginForm);
+    if (childAccount) {
+      navigate("/");
+      return;
+    }
+    const managedAccount = loginManagedAccount(loginForm);
+    if (managedAccount) {
+      navigate("/");
+      return;
+    }
+    if (managedUsernameExists(loginForm.username)) {
+      showToast("Check the username and password.");
+      return;
+    }
+    if (childUsernameExists(loginForm.username)) {
+      showToast("Check the child username and password.");
       return;
     }
     login(loginForm.username, true, "staff");
@@ -352,12 +370,14 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
           <button className="login-submit" type="submit">
             Sign In
           </button>
-          <button className="login-create" type="button" onClick={() => setRegisterOpen(true)}>
-            Create New Account
-          </button>
-          <button className="login-guest" type="button" onClick={guest}>
-            Sign in as Guest
-          </button>
+          <div className="login-secondary-actions">
+            <button className="login-create" type="button" onClick={() => setRegisterOpen(true)}>
+              Create New Account
+            </button>
+            <button className="login-guest" type="button" onClick={guest}>
+              Sign in as Guest
+            </button>
+          </div>
         </form>
         <div className="login-divider" aria-hidden="true">
           <span></span>

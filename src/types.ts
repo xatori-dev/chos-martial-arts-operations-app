@@ -177,11 +177,42 @@ export interface AccountSession {
 
 export type AccountRole = "guardian" | "student" | "staff";
 
+export type ManagerAccessKey =
+  | "dashboard"
+  | "messages"
+  | "students"
+  | "classes"
+  | "studyGuide"
+  | "events"
+  | "scheduling"
+  | "merchandise"
+  | "videos"
+  | "reports"
+  | "create";
+
+export interface ManagedAccount {
+  id: string;
+  displayName: string;
+  username: string;
+  password: string;
+  role: "staff" | "student";
+  status: "active" | "inactive";
+  email?: string;
+  phone?: string;
+  title?: string;
+  notes?: string;
+  access: ManagerAccessKey[];
+  studentId?: string;
+  createdBy?: string;
+  createdAt: string;
+}
+
 export interface ChildAccount {
   id: string;
   parentEmail: string;
   name: string;
   username: string;
+  password?: string;
   age: string;
   beltSlug: string;
   createdAt: string;

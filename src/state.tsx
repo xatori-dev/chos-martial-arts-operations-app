@@ -10,6 +10,8 @@ import type {
   Coupon,
   CustomerInfo,
   DirectMessage,
+  ManagedAccount,
+  ManagerAccessKey,
   MerchandiseItem,
   MessageCampaign,
   MessageLog,
@@ -34,6 +36,7 @@ const keys = {
   session: "chos.session.v1",
   accounts: "chos.accounts.v1",
   accountRoles: "chos.accountRoles.v1",
+  managedAccounts: "chos.managedAccounts.v1",
   childAccounts: "chos.childAccounts.v1",
   coupon: "chos.coupon.v1",
   students: "chos.operations.students.v1",
@@ -651,6 +654,22 @@ interface AccountRoleRecord {
   role: AccountRole;
 }
 
+const managerAccessKeys: ManagerAccessKey[] = [
+  "dashboard",
+  "messages",
+  "students",
+  "classes",
+  "studyGuide",
+  "events",
+  "scheduling",
+  "merchandise",
+  "videos",
+  "reports",
+  "create"
+];
+
+const defaultStaffAccess: ManagerAccessKey[] = ["dashboard", "messages", "students", "classes", "events", "scheduling"];
+
 type StudioClassInput = {
   name: string;
   daysOfWeek: StudioClass["daysOfWeek"];
@@ -699,6 +718,27 @@ type StudentInput = {
   status?: string;
   beltRank: string;
   notes?: string;
+};
+
+type ManagedAccountInput = {
+  displayName: string;
+  username: string;
+  password: string;
+  role: "staff" | "student";
+  status?: ManagedAccount["status"];
+  email?: string;
+  phone?: string;
+  title?: string;
+  notes?: string;
+  access?: ManagerAccessKey[];
+  studentId?: string;
+};
+
+type ManagerAccountAccess = {
+  isManagerOwner: boolean;
+  canCreateAccounts: boolean;
+  canGrantCreateAccess: boolean;
+  allowedTools: ManagerAccessKey[];
 };
 
 type MerchandiseInput = {
@@ -753,6 +793,9 @@ interface AppState {
   session?: AccountSession;
   accountRole?: AccountRole;
   accounts: AccountRecord[];
+  managedAccounts: ManagedAccount[];
+  currentManagedAccount?: ManagedAccount;
+  managerAccountAccess: ManagerAccountAccess;
   guardianChildren: ChildAccount[];
   students: StudentRecord[];
   studioClasses: StudioClass[];
@@ -781,12 +824,17 @@ interface AppState {
   saveBooking: (booking: BookingDetails) => void;
   saveContact: (contact: ContactSubmission) => void;
   login: (email: string, remembered: boolean, role?: AccountRole) => void;
+  loginManagedAccount: (credentials: { username: string; password: string }) => ManagedAccount | undefined;
   loginChildAccount: (childId: string) => void;
+  loginChildCredentials: (credentials: { username: string; password: string }) => ChildAccount | undefined;
+  managedUsernameExists: (username: string) => boolean;
+  childUsernameExists: (username: string) => boolean;
   logout: () => void;
   register: (email: string) => void;
   setAccountRole: (role: AccountRole) => void;
-  addChildAccount: (child: { name: string; age: string; beltSlug: string }) => ChildAccount | undefined;
-  updateChildAccount: (childId: string, child: { name: string; age: string; beltSlug: string }) => ChildAccount | undefined;
+  createManagedAccount: (account: ManagedAccountInput) => ManagedAccount | undefined;
+  addChildAccount: (child: { name: string; age: string; beltSlug: string; username: string; password: string }) => ChildAccount | undefined;
+  updateChildAccount: (childId: string, child: { name: string; age: string; beltSlug: string; username: string; password: string }) => ChildAccount | undefined;
   addOperationsStudent: (student: StudentInput) => StudentRecord | undefined;
   updateOperationsStudent: (studentId: string, student: StudentInput) => StudentRecord | undefined;
   deleteOperationsStudent: (studentId: string) => StudentRecord | undefined;
@@ -859,6 +907,10 @@ function readPrototypeSession() {
   if (session.email.toLowerCase() === prototypeManagerLogin.email.toLowerCase()) return session;
   if (session.email.toLowerCase() === prototypeStudentLogin.email.toLowerCase()) return session;
   if (session.email.toLowerCase() === prototypeParentLogin.email.toLowerCase()) return session;
+  const managedAccounts = readStorage<ManagedAccount[]>(keys.managedAccounts, []);
+  if (managedAccounts.some((account) => account.username.toLowerCase() === session.email.toLowerCase() && account.status !== "inactive")) return session;
+  const childAccounts = readStorage<ChildAccount[]>(keys.childAccounts, seedChildAccounts);
+  if (childAccounts.some((child) => child.username.toLowerCase() === session.email.toLowerCase())) return session;
   if (session.email.toLowerCase().endsWith(".child")) return session;
   removeStorage(keys.session);
   return undefined;
@@ -895,6 +947,43 @@ function todayStamp() {
 
 function createPrototypeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeChildUsername(username: string) {
+  return username
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]+/g, "")
+    .replace(/^-|-$/g, "");
+}
+
+function normalizeAccountUsername(username: string) {
+  return username
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ".")
+    .replace(/[^a-z0-9._-]+/g, "")
+    .replace(/^[._-]+|[._-]+$/g, "");
+}
+
+function normalizeManagerAccess(access?: ManagerAccessKey[]) {
+  const selected = access?.length ? access : defaultStaffAccess;
+  return managerAccessKeys.filter((key) => selected.includes(key));
+}
+
+function isPrototypeLoginUsername(username: string) {
+  const normalizedUsername = username.trim().toLowerCase();
+  return [prototypeManagerLogin.username, prototypeStudentLogin.username, prototypeParentLogin.username].some((prototypeUsername) => prototypeUsername.toLowerCase() === normalizedUsername);
+}
+
+function childUsernameFromName(name: string) {
+  const usernameBase = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `${usernameBase || "student"}.child`;
 }
 
 function studentFullName(student: Pick<StudentRecord, "firstName" | "lastName">) {
@@ -965,6 +1054,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useSessionState();
   const [accounts, setAccounts] = useStoredState<AccountRecord[]>(keys.accounts, []);
   const [accountRoles, setAccountRoles] = useStoredState<AccountRoleRecord[]>(keys.accountRoles, []);
+  const [managedAccounts, setManagedAccounts] = useStoredState<ManagedAccount[]>(keys.managedAccounts, []);
   const [childAccounts, setChildAccounts] = useStoredState<ChildAccount[]>(keys.childAccounts, seedChildAccounts);
   const [coupon, setCoupon] = useStoredState<Coupon | undefined>(keys.coupon, undefined);
   const [students, setStudents] = useStoredState<StudentRecord[]>(keys.students, seedStudents);
@@ -1009,11 +1099,35 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   );
 
   const totals = useMemo(() => calculateTotals(cart, coupon), [cart, coupon]);
+  const currentManagedAccount = useMemo(() => {
+    if (!session) return undefined;
+    const normalizedEmail = session.email.toLowerCase();
+    return managedAccounts.find((account) => account.username.toLowerCase() === normalizedEmail && account.status !== "inactive");
+  }, [managedAccounts, session]);
   const accountRole = useMemo(() => {
     if (!session) return undefined;
     const normalizedEmail = session.email.toLowerCase();
-    return accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role ?? inferPrototypeAccountRole(session.email);
-  }, [accountRoles, session]);
+    return accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role ?? currentManagedAccount?.role ?? inferPrototypeAccountRole(session.email);
+  }, [accountRoles, currentManagedAccount, session]);
+  const managerAccountAccess = useMemo<ManagerAccountAccess>(() => {
+    const isManagerOwner = session?.email.toLowerCase() === prototypeManagerLogin.email.toLowerCase();
+    const normalizedEmail = session?.email.toLowerCase();
+    const storedRole = normalizedEmail ? accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role : undefined;
+    const allowedTools = isManagerOwner
+      ? managerAccessKeys
+      : currentManagedAccount?.role === "staff"
+        ? normalizeManagerAccess(currentManagedAccount.access)
+        : storedRole === "staff"
+          ? defaultStaffAccess
+        : [];
+
+    return {
+      isManagerOwner,
+      canCreateAccounts: isManagerOwner || allowedTools.includes("create"),
+      canGrantCreateAccess: isManagerOwner,
+      allowedTools
+    };
+  }, [accountRoles, currentManagedAccount, session]);
   const guardianChildren = useMemo(
     () => (session ? childAccounts.filter((child) => child.parentEmail.toLowerCase() === session.email.toLowerCase()) : []),
     [childAccounts, session]
@@ -1139,6 +1253,35 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [saveRoleForEmail, setSession]
   );
 
+  const managedUsernameExists = useCallback(
+    (username: string) => {
+      const normalizedUsername = normalizeAccountUsername(username);
+      if (!normalizedUsername) return false;
+      return (
+        isPrototypeLoginUsername(normalizedUsername) ||
+        managedAccounts.some((account) => account.username.toLowerCase() === normalizedUsername.toLowerCase()) ||
+        childAccounts.some((child) => child.username.toLowerCase() === normalizedUsername.toLowerCase())
+      );
+    },
+    [childAccounts, managedAccounts]
+  );
+
+  const loginManagedAccount = useCallback(
+    (credentials: { username: string; password: string }) => {
+      const normalizedUsername = normalizeAccountUsername(credentials.username);
+      const password = credentials.password.trim();
+      if (!normalizedUsername || !password) return undefined;
+      const account = managedAccounts.find(
+        (item) => item.username.toLowerCase() === normalizedUsername.toLowerCase() && item.password === password && item.status !== "inactive"
+      );
+      if (!account) return undefined;
+      saveRoleForEmail(account.username, account.role);
+      setSession({ email: account.username, remembered: true, createdAt: new Date().toISOString() });
+      return account;
+    },
+    [managedAccounts, saveRoleForEmail, setSession]
+  );
+
   const logout = useCallback(() => setSession(undefined), [setSession]);
 
   const setAccountRole = useCallback(
@@ -1149,21 +1292,52 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [saveRoleForEmail, session]
   );
 
+  const createManagedAccount = useCallback(
+    (account: ManagedAccountInput) => {
+      const displayName = account.displayName.trim();
+      const username = normalizeAccountUsername(account.username);
+      const password = account.password.trim();
+      if (!displayName || !username || !password) return undefined;
+      if (managedUsernameExists(username)) return undefined;
+      const role = account.role;
+      const createdAccount: ManagedAccount = {
+        id: createPrototypeId("managed-account"),
+        displayName,
+        username,
+        password,
+        role,
+        status: account.status ?? "active",
+        email: account.email?.trim() || undefined,
+        phone: account.phone?.trim() || undefined,
+        title: account.title?.trim() || undefined,
+        notes: account.notes?.trim() || undefined,
+        access: role === "staff" ? normalizeManagerAccess(account.access) : [],
+        studentId: account.studentId,
+        createdBy: session?.email,
+        createdAt: new Date().toISOString()
+      };
+      setManagedAccounts((current) => [createdAccount, ...current]);
+      saveRoleForEmail(username, role);
+      return createdAccount;
+    },
+    [managedUsernameExists, saveRoleForEmail, session?.email, setManagedAccounts]
+  );
+
   const addChildAccount = useCallback(
-    (child: { name: string; age: string; beltSlug: string }) => {
+    (child: { name: string; age: string; beltSlug: string; username: string; password: string }) => {
       if (!session) return undefined;
       const cleanedName = child.name.trim();
       if (!cleanedName) return undefined;
-      const usernameBase = cleanedName
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "");
-      const username = `${usernameBase || "student"}.child`;
+      const username = normalizeChildUsername(child.username) || childUsernameFromName(cleanedName);
+      const password = child.password.trim();
+      if (!username || !password) return undefined;
+      if (childAccounts.some((item) => item.username.toLowerCase() === username.toLowerCase())) return undefined;
       const createdChild: ChildAccount = {
         id: createPrototypeId("child"),
         parentEmail: session.email,
         name: cleanedName,
         username,
+        password,
         age: child.age.trim(),
         beltSlug: child.beltSlug,
         createdAt: new Date().toISOString()
@@ -1172,26 +1346,33 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       saveRoleForEmail(username, "student");
       return createdChild;
     },
-    [saveRoleForEmail, session, setChildAccounts]
+    [childAccounts, saveRoleForEmail, session, setChildAccounts]
   );
 
   const updateChildAccount = useCallback(
-    (childId: string, child: { name: string; age: string; beltSlug: string }) => {
+    (childId: string, child: { name: string; age: string; beltSlug: string; username: string; password: string }) => {
       if (!session) return undefined;
       const existingChild = childAccounts.find((item) => item.id === childId && item.parentEmail.toLowerCase() === session.email.toLowerCase());
       if (!existingChild) return undefined;
       const cleanedName = child.name.trim();
       if (!cleanedName) return undefined;
+      const username = normalizeChildUsername(child.username) || existingChild.username;
+      const password = child.password.trim() || existingChild.password || "";
+      if (!username) return undefined;
+      if (childAccounts.some((item) => item.id !== childId && item.username.toLowerCase() === username.toLowerCase())) return undefined;
       const updatedChild: ChildAccount = {
         ...existingChild,
         name: cleanedName,
+        username,
+        password: password || undefined,
         age: child.age.trim(),
         beltSlug: child.beltSlug
       };
       setChildAccounts((current) => current.map((item) => (item.id === childId ? updatedChild : item)));
+      saveRoleForEmail(username, "student");
       return updatedChild;
     },
-    [childAccounts, session, setChildAccounts]
+    [childAccounts, saveRoleForEmail, session, setChildAccounts]
   );
 
   const loginChildAccount = useCallback(
@@ -1202,6 +1383,28 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       setSession({ email: child.username, remembered: true, createdAt: new Date().toISOString() });
     },
     [childAccounts, saveRoleForEmail, setSession]
+  );
+
+  const loginChildCredentials = useCallback(
+    (credentials: { username: string; password: string }) => {
+      const normalizedUsername = normalizeChildUsername(credentials.username);
+      const password = credentials.password.trim();
+      if (!normalizedUsername || !password) return undefined;
+      const child = childAccounts.find((item) => item.username.toLowerCase() === normalizedUsername.toLowerCase() && item.password === password);
+      if (!child) return undefined;
+      saveRoleForEmail(child.username, "student");
+      setSession({ email: child.username, remembered: true, createdAt: new Date().toISOString() });
+      return child;
+    },
+    [childAccounts, saveRoleForEmail, setSession]
+  );
+
+  const childUsernameExists = useCallback(
+    (username: string) => {
+      const normalizedUsername = normalizeChildUsername(username);
+      return Boolean(normalizedUsername && childAccounts.some((item) => item.username.toLowerCase() === normalizedUsername.toLowerCase()));
+    },
+    [childAccounts]
   );
 
   const register = useCallback(
@@ -1616,6 +1819,9 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     session,
     accountRole,
     accounts,
+    managedAccounts,
+    currentManagedAccount,
+    managerAccountAccess,
     guardianChildren,
     students,
     studioClasses,
@@ -1644,10 +1850,15 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     saveBooking,
     saveContact,
     login,
+    loginManagedAccount,
     loginChildAccount,
+    loginChildCredentials,
+    managedUsernameExists,
+    childUsernameExists,
     logout,
     register,
     setAccountRole,
+    createManagedAccount,
     addChildAccount,
     updateChildAccount,
     addOperationsStudent,
