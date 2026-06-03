@@ -1,7 +1,7 @@
-import { Eye, EyeOff, Lock, User, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { AlertTriangle, ArrowRight, Award, BookOpenCheck, ChevronLeft, Dumbbell, Eye, EyeOff, HeartHandshake, Lock, ShieldCheck, User, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router";
-import { OperationsApp } from "./OperationsApp";
+import { publicAsset } from "./appAssets";
 import { useAppState } from "./state";
 import { initializeAppTheme } from "./theme";
 import {
@@ -18,11 +18,8 @@ import {
   validateRegisterForm
 } from "./utils";
 
-function publicAsset(path: string) {
-  const base = import.meta.env.BASE_URL || "/";
-  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
-  return `${normalizedBase}${path.replace(/^\/+/, "")}`;
-}
+const LazyOperationsApp = lazy(() => import("./OperationsApp").then(({ OperationsApp }) => ({ default: OperationsApp })));
+const TestOperationsApp = import.meta.env.MODE === "test" ? (await import("./OperationsApp")).OperationsApp : undefined;
 
 type FullscreenCapableDocument = Document & {
   webkitFullscreenElement?: Element | null;
@@ -34,6 +31,10 @@ type FullscreenCapableDocument = Document & {
 type FullscreenCapableElement = HTMLElement & {
   webkitRequestFullscreen?: () => Promise<void> | void;
   msRequestFullscreen?: () => Promise<void> | void;
+};
+
+type PortraitLockableScreenOrientation = ScreenOrientation & {
+  lock?: (orientation: "portrait") => Promise<void> | void;
 };
 
 function getActiveFullscreenElement(doc: FullscreenCapableDocument) {
@@ -54,33 +55,43 @@ function requestDocumentFullscreen() {
   return Promise.resolve(requestFullscreen.call(element)).catch(() => undefined);
 }
 
-function useAppFullscreen() {
+function requestPortraitOrientationLock() {
+  const orientation = window.screen.orientation as PortraitLockableScreenOrientation | undefined;
+  const lockOrientation = orientation?.lock;
+  if (!lockOrientation) return Promise.resolve();
+
+  return Promise.resolve(lockOrientation.call(orientation, "portrait")).catch(() => undefined);
+}
+
+function useAppPortraitRuntime() {
   useEffect(() => {
     let requestInFlight = false;
 
-    const requestFullscreenFromGesture = () => {
+    const requestPortraitRuntimeFromGesture = () => {
       if (requestInFlight) return;
       requestInFlight = true;
-      requestDocumentFullscreen().finally(() => {
-        requestInFlight = false;
-      });
+      requestDocumentFullscreen()
+        .then(() => requestPortraitOrientationLock())
+        .finally(() => {
+          requestInFlight = false;
+        });
     };
 
     const interactionEvents = ["pointerdown", "touchstart", "click", "keydown"];
     interactionEvents.forEach((eventName) => {
-      document.addEventListener(eventName, requestFullscreenFromGesture, { capture: true });
+      document.addEventListener(eventName, requestPortraitRuntimeFromGesture, { capture: true });
     });
 
     return () => {
       interactionEvents.forEach((eventName) => {
-        document.removeEventListener(eventName, requestFullscreenFromGesture, { capture: true });
+        document.removeEventListener(eventName, requestPortraitRuntimeFromGesture, { capture: true });
       });
     };
   }, []);
 }
 
 function App() {
-  useAppFullscreen();
+  useAppPortraitRuntime();
   useEffect(() => {
     initializeAppTheme();
   }, []);
@@ -107,11 +118,13 @@ function App() {
   if (loginGateState === "login") {
     return (
       <>
-        <div className="auth-gate" data-testid="auth-gate">
-          <AuthLaunchLogo animating={!launchComplete} />
-          <LoginLandingPage visible={true} handoffActive={!launchComplete} />
-          {!launchComplete && <LaunchLogoAnimation onReveal={revealLogin} onComplete={completeLaunch} />}
-        </div>
+        <PortraitAppShell>
+          <div className="auth-gate" data-testid="auth-gate">
+            <AuthLaunchLogo animating={!launchComplete} />
+            <LoginLandingPage visible={true} handoffActive={!launchComplete} />
+            {!launchComplete && <LaunchLogoAnimation onReveal={revealLogin} onComplete={completeLaunch} />}
+          </div>
+        </PortraitAppShell>
         <ToastViewport />
       </>
     );
@@ -119,11 +132,29 @@ function App() {
 
   return (
     <>
-      <div className={`authenticated-app-shell${loginJustCompleted || loginTransitionActive ? " is-login-transitioning" : ""}`} data-testid="authenticated-app-shell">
-        <OperationsApp />
-      </div>
+      <PortraitAppShell>
+        <div className={`authenticated-app-shell${loginJustCompleted || loginTransitionActive ? " is-login-transitioning" : ""}`} data-testid="authenticated-app-shell">
+          {TestOperationsApp ? (
+            <TestOperationsApp />
+          ) : (
+            <Suspense fallback={<div className="authenticated-app-loading" role="status" aria-live="polite">Loading Cho&apos;s workspace...</div>}>
+              <LazyOperationsApp />
+            </Suspense>
+          )}
+        </div>
+      </PortraitAppShell>
       <ToastViewport />
     </>
+  );
+}
+
+function PortraitAppShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="portrait-app-shell" data-testid="portrait-app-shell" data-orientation-lock="portrait" aria-label="Cho's Martial Arts portrait app frame">
+      <div className="portrait-app-frame">
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -245,9 +276,54 @@ function LaunchLogoAnimation({ onReveal, onComplete }: { onReveal: () => void; o
   );
 }
 
+const guestTeachingHighlights = [
+  {
+    cue: "01",
+    icon: <BookOpenCheck size={20} />,
+    title: "Focus",
+    text: "Listen. Practice. Improve."
+  },
+  {
+    cue: "02",
+    icon: <HeartHandshake size={20} />,
+    title: "Respect",
+    text: "Courtesy. Control. Confidence."
+  },
+  {
+    cue: "03",
+    icon: <Dumbbell size={20} />,
+    title: "Strength",
+    text: "Balance. Fitness. Awareness."
+  }
+];
+
+const guestProgramAudiences = ["Kids", "Teens", "Adults", "Families"];
+
+const guestIntroStages = [
+  {
+    id: "arrive",
+    label: "Arrive",
+    title: "Step onto the mat",
+    text: "Settle in with a clear view of the studio and class energy."
+  },
+  {
+    id: "practice",
+    label: "Practice",
+    title: "Follow the rhythm",
+    text: "See focus, respect, and technique build through guided repetition."
+  },
+  {
+    id: "belong",
+    label: "Belong",
+    title: "Preview the path",
+    text: "Continue into the app with the full guest workspace ready."
+  }
+];
+
 function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean; handoffActive?: boolean }) {
   const { childUsernameExists, login, loginChildCredentials, loginManagedAccount, loginRegisteredAccount, managedUsernameExists, register, showToast } = useAppState();
   const navigate = useNavigate();
+  const prefersReducedMotion = usePrefersReducedMotion();
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [registerForm, setRegisterForm] = useState({ email: "", password: "" });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -255,14 +331,23 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [portraitVisible, setPortraitVisible] = useState(true);
   const [registerOpen, setRegisterOpen] = useState(false);
+  const [guestIntroOpen, setGuestIntroOpen] = useState(false);
+  const [loginFailedOpen, setLoginFailedOpen] = useState(false);
   const loginLandingStyle = { "--login-bg-image": `url("${publicAsset("NewFinalBackground.png")}")` } as CSSProperties;
+  const guestIntroImage = publicAsset("assets/guest-intro/cho-guest-class-intro-v2.png");
+  const guestIntroStyle = { "--guest-intro-image": `url("${guestIntroImage}")` } as CSSProperties;
+
+  const failLogin = (message: string) => {
+    showToast(message);
+    setLoginFailedOpen(true);
+  };
 
   const submitLogin = (event: FormEvent) => {
     event.preventDefault();
     const nextErrors = validateLoginForm(loginForm);
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) {
-      showToast("Enter a username and password.");
+      failLogin("Enter a username and password.");
       return;
     }
     if (isPrototypeManagerLogin(loginForm)) {
@@ -296,14 +381,14 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
       return;
     }
     if (managedUsernameExists(loginForm.username)) {
-      showToast("Check the username and password.");
+      failLogin("Check the username and password.");
       return;
     }
     if (childUsernameExists(loginForm.username)) {
-      showToast("Check the child username and password.");
+      failLogin("Check the child username and password.");
       return;
     }
-    showToast("Check the username and password.");
+    failLogin("Check the username and password.");
   };
 
   const submitRegister = (event: FormEvent) => {
@@ -323,7 +408,7 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
     navigate("/");
   };
 
-  const guest = () => {
+  const continueAsGuest = () => {
     const guestSession = createGuestSession();
     login(guestSession.email, guestSession.remembered, "staff");
     navigate("/");
@@ -382,7 +467,7 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
             <button className="login-create" type="button" onClick={() => setRegisterOpen(true)}>
               Create New Account
             </button>
-            <button className="login-guest" type="button" onClick={guest}>
+            <button className="login-guest" type="button" onClick={() => setGuestIntroOpen(true)}>
               Sign in as Guest
             </button>
           </div>
@@ -414,6 +499,110 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
             </button>
           </form>
         </ModalShell>
+      )}
+      {loginFailedOpen && (
+        <ModalShell label="Login failed" onClose={() => setLoginFailedOpen(false)} panelClass="modal-card login-failed-modal">
+          <div className="login-failed-content">
+            <span className="login-failed-icon" aria-hidden="true">
+              <AlertTriangle size={24} strokeWidth={2.4} />
+            </span>
+            <h2>Login failed</h2>
+            <p>Please check your username and password and try again.</p>
+            <button className="btn btn-red login-failed-action" type="button" onClick={() => setLoginFailedOpen(false)}>
+              Try Again
+            </button>
+          </div>
+        </ModalShell>
+      )}
+      {guestIntroOpen && (
+        <section
+          className="guest-intro-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Cho's Martial Arts guest introduction"
+          aria-describedby="guest-intro-description"
+          data-motion={prefersReducedMotion ? "reduced" : "sequence"}
+        >
+          <div className="guest-intro-panel" data-testid="guest-intro-panel" style={guestIntroStyle}>
+            <div className="guest-intro-frame" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <div className="guest-intro-media" aria-hidden="true">
+              <div className="guest-intro-sequence" data-testid="guest-intro-sequence">
+                {guestIntroStages.map((stage) => (
+                  <figure
+                    className={`guest-intro-scene guest-intro-scene--${stage.id}`}
+                    data-testid={`guest-intro-scene-${stage.id}`}
+                    key={stage.id}
+                  >
+                    <span className="guest-intro-scene-image"></span>
+                    <figcaption>
+                      <span>{stage.label}</span>
+                      <strong>{stage.title}</strong>
+                      <small>{stage.text}</small>
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+              <div className="guest-intro-timeline" data-testid="guest-intro-timeline">
+                {guestIntroStages.map((stage) => (
+                  <span key={stage.id}>{stage.label}</span>
+                ))}
+              </div>
+            </div>
+            <div className="guest-intro-content">
+              <div className="guest-intro-copy">
+                <div className="guest-intro-brand">
+                  <span className="guest-intro-mark" aria-hidden="true">
+                    <ShieldCheck size={20} />
+                  </span>
+                  <span>Cho's Martial Arts</span>
+                </div>
+                <p className="guest-intro-eyebrow">Guest preview</p>
+                <h2 id="guest-intro-title">Confidence. Respect. Focus.</h2>
+                <p id="guest-intro-description">A guided first look at the mat, the rhythm, and the class community.</p>
+                <p className="guest-intro-subcopy">Discipline. Fitness. Self-defense. Character.</p>
+              </div>
+              <div className="guest-intro-highlights" aria-label="What Cho's Martial Arts teaches">
+                {guestTeachingHighlights.map((highlight) => (
+                  <article key={highlight.title}>
+                    <span className="guest-intro-highlight-icon" aria-hidden="true">{highlight.icon}</span>
+                    <div>
+                      <span className="guest-intro-highlight-cue">{highlight.cue}</span>
+                      <h3>{highlight.title}</h3>
+                      <p>{highlight.text}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              <div className="guest-intro-programs" aria-label="Guest introduction class overview">
+                {guestProgramAudiences.map((audience) => (
+                  <span key={audience}>
+                    <Award size={15} aria-hidden="true" />
+                    {audience}
+                  </span>
+                ))}
+              </div>
+              <div className="guest-intro-actions">
+                <div className="guest-intro-action-note" aria-hidden="true">
+                  <span></span>
+                  Ready when you are
+                </div>
+                <div className="guest-intro-action-buttons">
+                  <button className="guest-intro-back" type="button" onClick={() => setGuestIntroOpen(false)}>
+                    <ChevronLeft size={18} /> Back
+                  </button>
+                  <button className="guest-intro-continue" type="button" onClick={continueAsGuest}>
+                    Enter as Guest <ArrowRight size={19} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
       )}
     </section>
   );

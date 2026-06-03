@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
+import { childUsernameFromName, normalizeChildUsername } from "./childAccountUtils";
 import { isSafeStudyMaterialFile, isSafeTrainingVideoFile } from "./contentSafety";
 import { getProduct, studio } from "./data";
 import { parseOperationsBackupSnapshot, type OperationsBackupData } from "./operationsBackup";
@@ -814,6 +815,7 @@ interface AppState {
   managerAccountAccess: ManagerAccountAccess;
   childAccounts: ChildAccount[];
   guardianChildren: ChildAccount[];
+  currentChildAccount?: ChildAccount;
   students: StudentRecord[];
   studioClasses: StudioClass[];
   scheduledClasses: ScheduledClass[];
@@ -1024,15 +1026,6 @@ function createPrototypeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function normalizeChildUsername(username: string) {
-  return username
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9._-]+/g, "")
-    .replace(/^-|-$/g, "");
-}
-
 function normalizeAccountUsername(username: string) {
   return username
     .trim()
@@ -1050,15 +1043,6 @@ function normalizeManagerAccess(access?: ManagerAccessKey[]) {
 function isPrototypeLoginUsername(username: string) {
   const normalizedUsername = username.trim().toLowerCase();
   return [prototypeManagerLogin.username, prototypeStudentLogin.username, prototypeParentLogin.username].some((prototypeUsername) => prototypeUsername.toLowerCase() === normalizedUsername);
-}
-
-function childUsernameFromName(name: string) {
-  const usernameBase = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  return `${usernameBase || "student"}.child`;
 }
 
 function isChildUsernameUnavailable(username: string, childAccounts: readonly ChildAccount[], managedAccounts: readonly ManagedAccount[], excludeChildId?: string) {
@@ -3232,6 +3216,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     managerAccountAccess,
     childAccounts,
     guardianChildren,
+    currentChildAccount,
     students,
     studioClasses,
     scheduledClasses,
