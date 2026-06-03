@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
+import { childUsernameFromName, normalizeChildUsername } from "./childAccountUtils";
 import { getProduct, studio } from "./data";
 import type {
   AccountRole,
@@ -797,6 +798,7 @@ interface AppState {
   currentManagedAccount?: ManagedAccount;
   managerAccountAccess: ManagerAccountAccess;
   guardianChildren: ChildAccount[];
+  currentChildAccount?: ChildAccount;
   students: StudentRecord[];
   studioClasses: StudioClass[];
   scheduledClasses: ScheduledClass[];
@@ -949,15 +951,6 @@ function createPrototypeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function normalizeChildUsername(username: string) {
-  return username
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9._-]+/g, "")
-    .replace(/^-|-$/g, "");
-}
-
 function normalizeAccountUsername(username: string) {
   return username
     .trim()
@@ -975,15 +968,6 @@ function normalizeManagerAccess(access?: ManagerAccessKey[]) {
 function isPrototypeLoginUsername(username: string) {
   const normalizedUsername = username.trim().toLowerCase();
   return [prototypeManagerLogin.username, prototypeStudentLogin.username, prototypeParentLogin.username].some((prototypeUsername) => prototypeUsername.toLowerCase() === normalizedUsername);
-}
-
-function childUsernameFromName(name: string) {
-  const usernameBase = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  return `${usernameBase || "student"}.child`;
 }
 
 function studentFullName(student: Pick<StudentRecord, "firstName" | "lastName">) {
@@ -1132,6 +1116,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     () => (session ? childAccounts.filter((child) => child.parentEmail.toLowerCase() === session.email.toLowerCase()) : []),
     [childAccounts, session]
   );
+  const currentChildAccount = useMemo(() => {
+    const normalizedEmail = session?.email.toLowerCase();
+    return normalizedEmail ? childAccounts.find((child) => child.username.toLowerCase() === normalizedEmail) : undefined;
+  }, [childAccounts, session]);
 
   const saveRoleForEmail = useCallback(
     (email: string, role: AccountRole) => {
@@ -1823,6 +1811,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     currentManagedAccount,
     managerAccountAccess,
     guardianChildren,
+    currentChildAccount,
     students,
     studioClasses,
     scheduledClasses,

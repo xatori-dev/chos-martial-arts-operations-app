@@ -22,6 +22,7 @@ import {
   ShoppingCart,
   Search,
   Send,
+  Sparkles,
   Sun,
   Target,
   Trash2,
@@ -44,6 +45,38 @@ import messagesLauncherIcon from "./assets/manager-icons/Messages.webp";
 import reportsLauncherIcon from "./assets/manager-icons/Reports.webp";
 import schedulingLauncherIcon from "./assets/manager-icons/Scheduling.webp";
 import studentsLauncherIcon from "./assets/manager-icons/Students.webp";
+import { publicAsset } from "./appAssets";
+import {
+  beltCaseAsset,
+  beltCaseBackgrounds,
+  beltCaseDisplayModes,
+  beltCaseEffects,
+  beltCaseFrames,
+  beltCaseLightingOptions,
+  beltCaseRailBeltAsset,
+  beltCaseStickers,
+  beltCaseTrophyBeltAsset,
+  defaultBeltCaseSettings,
+  defaultBeltCasePlaqueText,
+  getBeltJourneyStats,
+  readBeltCaseSettings,
+  resolveBeltCaseSelection,
+  resolveBeltRank,
+  sanitizeBeltCasePlaqueText,
+  writeBeltCaseSettings,
+  type BeltCaseSettings,
+  type BeltCaseSticker,
+  type BeltCaseStickerId
+} from "./beltCase";
+import { childUsernameFromName, normalizeChildUsername } from "./childAccountUtils";
+import { beltRanks } from "./data";
+import {
+  readManagerProfile,
+  readStudentProfile,
+  writeManagerProfile,
+  writeStudentProfile,
+  type ProfileSettings as ManagerProfileSettings
+} from "./profileStorage";
 import { useAppState } from "./state";
 import {
   applyAppTheme,
@@ -61,10 +94,10 @@ import {
   type VisualColorKey,
   type VisualThemeColors
 } from "./theme";
-import type { ChildAccount, ClassWeekday, ManagedAccount, ManagerAccessKey, MerchandiseItem, MessageLog, ScheduledClass, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TrainingVideo, TrainingVideoFolder } from "./types";
+import type { AccountRole, BeltRank, ChildAccount, ClassWeekday, ManagedAccount, ManagerAccessKey, MerchandiseItem, MessageLog, ScheduledClass, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TrainingVideo, TrainingVideoFolder } from "./types";
 import { formatMoney, validateEmail } from "./utils";
 
-const beltOptions = ["White", "Yellow", "Orange", "Green", "Blue", "Purple", "Brown", "Red", "Dark Brown", "Black"];
+const beltOptions = beltRanks.map((beltRank) => beltRank.name);
 const weekdayOptions: { value: ClassWeekday; label: string; short: string }[] = [
   { value: 0, label: "Sunday", short: "Sun" },
   { value: 1, label: "Monday", short: "Mon" },
@@ -122,124 +155,6 @@ const managerLauncherIconImages: Partial<Record<ManagerLauncherIconKind, string>
   study: reportsLauncherIcon,
   test: eventsLauncherIcon
 };
-
-type ManagerProfileSettings = {
-  name: string;
-  username: string;
-  email: string;
-  phone: string;
-  updates: boolean;
-  theme: AppThemeMode;
-  photoDataUrl?: string;
-  passwordUpdatedAt?: string;
-};
-
-const legacyProfileStorageKey = "chos.profile.v1";
-
-function profileStorageKey(scope: "manager" | "student", sessionEmail?: string) {
-  const keyEmail = (sessionEmail ?? `${scope}@chos.prototype`)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-|-$/g, "");
-  return `chos.profile.${scope}.${keyEmail || "account"}.v1`;
-}
-
-function normalizeStoredProfile(saved: string | null, fallback: ManagerProfileSettings) {
-  if (!saved) return undefined;
-  const parsed = JSON.parse(saved) as Partial<ManagerProfileSettings>;
-  const photoDataUrl = typeof parsed.photoDataUrl === "string" && parsed.photoDataUrl.startsWith("data:image/") ? parsed.photoDataUrl : undefined;
-  return {
-    name: parsed.name?.trim() || fallback.name,
-    username: parsed.username?.trim() || fallback.username,
-    email: parsed.email?.trim() || fallback.email,
-    phone: parsed.phone?.trim() || fallback.phone,
-    updates: parsed.updates ?? fallback.updates,
-    theme: parsed.theme === "light" || parsed.theme === "dark" ? parsed.theme : fallback.theme,
-    photoDataUrl,
-    passwordUpdatedAt: parsed.passwordUpdatedAt
-  };
-}
-
-function readProfileStorage(key: string, fallback: ManagerProfileSettings) {
-  if (typeof window === "undefined") return undefined;
-  try {
-    return normalizeStoredProfile(window.localStorage.getItem(key), fallback);
-  } catch {
-    return undefined;
-  }
-}
-
-function storedProfileBelongsToSession(profile: ManagerProfileSettings | undefined, sessionEmail?: string) {
-  return Boolean(profile && sessionEmail && profile.email.trim().toLowerCase() === sessionEmail.trim().toLowerCase());
-}
-
-function writeProfileStorage(key: string, profile: ManagerProfileSettings) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(profile));
-  } catch {
-    // Profile changes still update local React state when storage is blocked.
-  }
-}
-
-function fallbackManagerProfile(sessionEmail?: string): ManagerProfileSettings {
-  const email = sessionEmail ?? "team@chos.prototype";
-  const username = email.split("@")[0]?.replace(/[^a-z0-9._-]/gi, "") || "chos-manager";
-  return {
-    name: "Cho's Manager",
-    username,
-    email,
-    phone: "(262) 555-0100",
-    updates: true,
-    theme: readStoredAppTheme()
-  };
-}
-
-function readManagerProfile(sessionEmail?: string): ManagerProfileSettings {
-  const fallback = fallbackManagerProfile(sessionEmail);
-  return readProfileStorage(profileStorageKey("manager", sessionEmail), fallback) ?? readProfileStorage(legacyProfileStorageKey, fallback) ?? fallback;
-}
-
-function writeManagerProfile(profile: ManagerProfileSettings, sessionEmail?: string) {
-  writeProfileStorage(profileStorageKey("manager", sessionEmail ?? profile.email), profile);
-  writeProfileStorage(legacyProfileStorageKey, profile);
-}
-
-function fallbackStudentProfile(sessionEmail?: string, student?: StudentRecord): ManagerProfileSettings {
-  const email = sessionEmail ?? student?.email ?? "student@chos.prototype";
-  const studentName = student ? fullName(student) : "";
-  const fallbackName = studentName || "Cho's Student";
-  const usernameSource = fallbackName === "Cho's Student" ? email.split("@")[0] : fallbackName;
-  const username = usernameSource.replace(/[^a-z0-9._-]/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "chos-student";
-
-  return {
-    name: fallbackName,
-    username,
-    email,
-    phone: student?.phone ?? "(262) 555-0100",
-    updates: true,
-    theme: readStoredAppTheme()
-  };
-}
-
-function readStudentProfile(sessionEmail?: string, student?: StudentRecord): ManagerProfileSettings {
-  const fallback = fallbackStudentProfile(sessionEmail, student);
-  const scopedProfile = readProfileStorage(profileStorageKey("student", sessionEmail), fallback);
-  if (scopedProfile) return scopedProfile;
-  const legacyProfile = readProfileStorage(legacyProfileStorageKey, fallback);
-  return legacyProfile && storedProfileBelongsToSession(legacyProfile, sessionEmail) ? legacyProfile : fallback;
-}
-
-function writeStudentProfile(profile: ManagerProfileSettings, sessionEmail?: string) {
-  writeProfileStorage(profileStorageKey("student", sessionEmail ?? profile.email), profile);
-}
-
-function publicAsset(path: string) {
-  const base = import.meta.env.BASE_URL || "/";
-  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
-  return `${normalizedBase}${path.replace(/^\/+/, "")}`;
-}
 
 function fullName(student: StudentRecord) {
   return `${student.firstName} ${student.lastName}`.trim();
@@ -716,7 +631,7 @@ function ProfileColorEditingTool({ sessionEmail, showToast, preview }: { session
 }
 
 function OperationsShell({ children }: { children: ReactNode }) {
-  const { session, logout } = useAppState();
+  const { accountRole, session, logout } = useAppState();
   const location = useLocation();
 
   useEffect(() => {
@@ -725,7 +640,7 @@ function OperationsShell({ children }: { children: ReactNode }) {
   }, [session?.email]);
 
   return (
-    <StaffOperationsShell sessionEmail={session?.email} logout={logout} path={location.pathname}>
+    <StaffOperationsShell accountRole={accountRole} sessionEmail={session?.email} logout={logout} path={location.pathname}>
       {children}
     </StaffOperationsShell>
   );
@@ -733,21 +648,25 @@ function OperationsShell({ children }: { children: ReactNode }) {
 
 function StaffOperationsShell({
   children,
+  accountRole,
   sessionEmail,
   logout,
   path
 }: {
   children: ReactNode;
+  accountRole?: AccountRole;
   sessionEmail?: string;
   logout: () => void;
   path: string;
 }) {
+  const shellClassName = `manager-shell${accountRole === "student" && path === "/" ? " manager-shell--student-reference" : ""}`;
+
   if (path === "/" || path === "/manager") {
-    return <div className="manager-shell">{children}</div>;
+    return <div className={shellClassName}>{children}</div>;
   }
 
   return (
-    <div className="manager-shell">
+    <div className={shellClassName}>
       <section className="manager-full-page-shell" aria-label="Manager workspace">
         <header className="manager-full-topbar" aria-label="Manager page controls">
           <Link className="manager-back-link" to="/manager" aria-label="Back to Manager Page">
@@ -1128,6 +1047,93 @@ function getSelectedStudentLauncherItem(search: string) {
   return studentLauncherItems.find((item) => item.icon === requestedTool) ?? studentLauncherItems[0];
 }
 
+function useStudentPanelSummary() {
+  const { currentChildAccount, session, students } = useAppState();
+  const selectedStudent = useMemo(() => {
+    const sessionEmail = session?.email.toLowerCase();
+    const sessionStudent = sessionEmail ? students.find((student) => student.email.toLowerCase() === sessionEmail) : undefined;
+    if (sessionStudent) return sessionStudent;
+    if (currentChildAccount) return undefined;
+    return students.find((student) => (student.status ?? "Active").toLowerCase() === "active") ?? students[0];
+  }, [currentChildAccount, session?.email, students]);
+  const studentProfile = readStudentProfile(session?.email, selectedStudent, currentChildAccount);
+  const studentName = studentProfile.name || (selectedStudent ? fullName(selectedStudent) : currentChildAccount?.name.trim() || "Cho's Student");
+  const studentFirstName = studentName.trim().split(/\s+/)[0] || "Student";
+  const studentBeltRank = resolveBeltRank(currentChildAccount?.beltSlug ?? selectedStudent?.beltRank ?? "White");
+  const classesAttended = selectedStudent?.classesAttended ?? 0;
+  const journeyStats = getBeltJourneyStats(studentBeltRank, classesAttended);
+  const studentPortrait = studentProfile.photoDataUrl ?? (selectedStudent?.profileImagePath ? publicAsset(selectedStudent.profileImagePath) : publicAsset("assets/CheetahProfilePic/Cheetah.png"));
+
+  return {
+    classesAttended,
+    journeyStats,
+    selectedStudent,
+    studentBeltRank,
+    studentFirstName,
+    studentName,
+    studentPortrait
+  };
+}
+
+function StudentPanelToolPage({
+  actionLabel,
+  children,
+  text,
+  title
+}: {
+  actionLabel: string;
+  children: ReactNode;
+  text: string;
+  title: string;
+}) {
+  const { journeyStats, studentBeltRank, studentPortrait } = useStudentPanelSummary();
+  const progressStyle = {
+    "--student-belt-case-progress": `${journeyStats.progressPercent}%`
+  } as CSSProperties;
+
+  return (
+    <OperationsPage className={`operations-page--workflow student-panel-tool-page student-panel-tool-page--${title.toLowerCase()}`} title={title} text={text}>
+      <section className="student-panel-tool-surface" aria-label={`Student ${title} page`}>
+        <aside className="student-panel-quick-status" aria-label="Student page quick belt status">
+          <div className="student-panel-quick-status-head">
+            <img src={studentPortrait} alt="" aria-hidden="true" draggable="false" />
+            <div>
+              <span>{actionLabel}</span>
+              <strong>{studentBeltRank.name} Belt</strong>
+              <p>{journeyStats.progressLabel}</p>
+            </div>
+          </div>
+          <div
+            className="student-panel-progress student-panel-progress--compact"
+            role="progressbar"
+            aria-label={`${title} progress to ${journeyStats.nextBeltName}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={journeyStats.progressPercent}
+            style={progressStyle}
+          >
+            <span aria-hidden="true" />
+            <small>{journeyStats.progressLabel}</small>
+          </div>
+          <div className="student-panel-action-row student-panel-action-row--compact">
+            <Link to="/">
+              <Award size={16} aria-hidden="true" />
+              <span>Open Belt Case</span>
+            </Link>
+            <Link to={managerLauncherPath({ label: "Dashboard", icon: "dashboard" })}>
+              <BarChart3 size={16} aria-hidden="true" />
+              <span>Dashboard</span>
+            </Link>
+          </div>
+        </aside>
+        <div className="student-panel-tool-content">
+          {children}
+        </div>
+      </section>
+    </OperationsPage>
+  );
+}
+
 function ManagerLauncherWorkspace({ tool }: { tool: ManagerLauncherIconKind }) {
   switch (tool) {
     case "dashboard":
@@ -1158,18 +1164,96 @@ function ManagerLauncherWorkspace({ tool }: { tool: ManagerLauncherIconKind }) {
 }
 
 function StudentPanelDashboardPage() {
-  const { scheduledClasses, students, studioEvents } = useAppState();
-  const selectedStudent = students[0];
+  const { scheduledClasses, studioEvents } = useAppState();
+  const { classesAttended, journeyStats, selectedStudent, studentBeltRank, studentFirstName, studentName, studentPortrait } = useStudentPanelSummary();
   const nextScheduledClass = scheduledClasses.find((item) => !item.studentId || item.studentId === selectedStudent?.id) ?? scheduledClasses[0];
   const nextEvent = studioEvents[0];
-  const studentName = selectedStudent ? fullName(selectedStudent) : "Cho's Student";
+  const progressStyle = {
+    "--student-belt-case-progress": `${journeyStats.progressPercent}%`
+  } as CSSProperties;
 
   return (
-    <OperationsPage className="operations-page--workflow" title="Dashboard" text="Student overview, upcoming class reminders, and account shortcuts.">
+    <OperationsPage className="operations-page--workflow student-panel-dashboard-page" title="Dashboard" text="Student overview, upcoming class reminders, and account shortcuts.">
+      <section className="student-panel-training-dashboard" aria-label="Student training dashboard">
+        <article className="student-panel-journey-card">
+          <div className="student-panel-hero-copy">
+            <img src={studentPortrait} alt="" aria-hidden="true" draggable="false" />
+            <div>
+              <span>My Training Journey</span>
+              <h2>{studentFirstName}'s Training Panel</h2>
+              <p>Keep your belt progress, class plan, and practice goals in one place.</p>
+            </div>
+          </div>
+          <div className="student-panel-rank-row">
+            <div>
+              <span>Current Rank</span>
+              <strong>{studentBeltRank.name} Belt</strong>
+            </div>
+            <div>
+              <span>Next: {journeyStats.nextBeltName}</span>
+              <strong>{journeyStats.encouragement}</strong>
+            </div>
+          </div>
+          <div
+            className="student-panel-progress"
+            role="progressbar"
+            aria-label={`Student panel progress to ${journeyStats.nextBeltName}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={journeyStats.progressPercent}
+            style={progressStyle}
+          >
+            <span aria-hidden="true" />
+            <small>{journeyStats.progressLabel}</small>
+          </div>
+          <dl className="student-panel-stat-strip" aria-label="Student training stats">
+            <div>
+              <dt>{journeyStats.classesAttended}</dt>
+              <dd>Classes</dd>
+            </div>
+            <div>
+              <dt>{journeyStats.skillsLearned}</dt>
+              <dd>Skills</dd>
+            </div>
+            <div>
+              <dt>{journeyStats.achievementsEarned}</dt>
+              <dd>Achievements</dd>
+            </div>
+          </dl>
+        </article>
+        <aside className="student-panel-next-card" aria-label="Student next steps">
+          <article>
+            <CalendarDays size={18} aria-hidden="true" />
+            <div>
+              <span>Next Class</span>
+              <strong>{nextScheduledClass ? nextScheduledClass.title : "No class scheduled"}</strong>
+              <p>{nextScheduledClass ? `${nextScheduledClass.date} at ${nextScheduledClass.time}` : "Check back for your next class."}</p>
+            </div>
+          </article>
+          <article>
+            <Award size={18} aria-hidden="true" />
+            <div>
+              <span>Next Event</span>
+              <strong>{nextEvent?.title ?? "No event posted"}</strong>
+              <p>{nextEvent ? `${nextEvent.date} at ${nextEvent.time}` : "Watch this space for testing and school events."}</p>
+            </div>
+          </article>
+          <div className="student-panel-action-row">
+            <Link to="/">
+              <Award size={16} aria-hidden="true" />
+              <span>Open Belt Case</span>
+            </Link>
+            <Link to={managerLauncherPath({ label: "Classes", icon: "classes" })}>
+              <Users size={16} aria-hidden="true" />
+              <span>View Classes</span>
+            </Link>
+          </div>
+        </aside>
+      </section>
       <div className="operations-stats">
         <StatCard label="Student" value={studentName} icon={<Users />} />
-        <StatCard label="Rank" value={selectedStudent?.beltRank ?? "White"} icon={<Award />} />
-        <StatCard label="Classes attended" value={selectedStudent?.classesAttended ?? 0} icon={<CheckCircle2 />} />
+        <StatCard label="Rank" value={studentBeltRank.name} icon={<Award />} />
+        <StatCard label="Classes attended" value={classesAttended} icon={<CheckCircle2 />} />
       </div>
       <section className="operations-panel workflow-directory-panel" aria-label="Student dashboard summary">
         <div className="student-roster-head">
@@ -1209,7 +1293,7 @@ function StudentPanelClassesPage() {
   const { studioClasses } = useAppState();
 
   return (
-    <OperationsPage className="operations-page--workflow" title="Classes" text="Review current Cho's class options and weekly training times.">
+    <StudentPanelToolPage actionLabel="Class Plan" title="Classes" text="Review current Cho's class options and weekly training times.">
       <section className="operations-panel workflow-directory-panel" aria-label="Student class list">
         <div className="student-roster-head">
           <div>
@@ -1234,7 +1318,7 @@ function StudentPanelClassesPage() {
           ))}
         </div>
       </section>
-    </OperationsPage>
+    </StudentPanelToolPage>
   );
 }
 
@@ -1247,7 +1331,7 @@ function StudentStudyPage() {
   ];
 
   return (
-    <OperationsPage className="operations-page--workflow" title="Study" text="Student practice reminders for at-home martial arts review.">
+    <StudentPanelToolPage actionLabel="Study Focus" title="Study" text="Student practice reminders for at-home martial arts review.">
       <StudyGuideLibrarySection
         ariaLabel="Student study guide materials"
         emptyText="No manager study materials have been published yet."
@@ -1277,7 +1361,7 @@ function StudentStudyPage() {
           ))}
         </div>
       </section>
-    </OperationsPage>
+    </StudentPanelToolPage>
   );
 }
 
@@ -1289,7 +1373,7 @@ function StudentTestPage() {
   ];
 
   return (
-    <OperationsPage className="operations-page--workflow" title="Test" text="Testing readiness reminders and next-step preparation for students.">
+    <StudentPanelToolPage actionLabel="Testing Path" title="Test" text="Testing readiness reminders and next-step preparation for students.">
       <section className="operations-panel workflow-directory-panel" aria-label="Student test readiness">
         <div className="student-roster-head">
           <div>
@@ -1312,7 +1396,7 @@ function StudentTestPage() {
           ))}
         </div>
       </section>
-    </OperationsPage>
+    </StudentPanelToolPage>
   );
 }
 
@@ -1829,7 +1913,7 @@ function StudentVideosPage() {
   const { trainingVideoFolders, trainingVideos } = useAppState();
 
   return (
-    <OperationsPage className="operations-page--workflow" title="Videos" text="Watch training videos published by Cho's managers.">
+    <StudentPanelToolPage actionLabel="Video Practice" title="Videos" text="Watch training videos published by Cho's managers.">
       <VideoLibrarySection
         ariaLabel="Student video library"
         emptyText="No training videos have been published yet."
@@ -1837,7 +1921,7 @@ function StudentVideosPage() {
         title="Videos"
         videos={trainingVideos}
       />
-    </OperationsPage>
+    </StudentPanelToolPage>
   );
 }
 
@@ -2081,24 +2165,6 @@ const parentProfileTabs: { id: ParentProfileTab; label: string }[] = [
   { id: "notifications", label: "Notifications" }
 ];
 
-function childUsernameFromName(name: string) {
-  const usernameBase = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  return `${usernameBase || "student"}.child`;
-}
-
-function normalizeChildUsername(username: string) {
-  return username
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9._-]+/g, "")
-    .replace(/^-|-$/g, "");
-}
-
 const parentStudyItems = [
   { title: "Forms at home", detail: "Review the current form slowly, then let the child perform it once without coaching." },
   { title: "Class focus", detail: "Ask what the instructor corrected last class and write one practice goal before the next visit." },
@@ -2198,8 +2264,7 @@ function getNextParentTutorialStep(stepId: ParentTutorialStepId) {
 }
 
 function childBeltLabel(beltSlug: string) {
-  const normalizedSlug = beltSlug.toLowerCase().replace(/\s+/g, "-");
-  return beltOptions.find((belt) => belt.toLowerCase().replace(/\s+/g, "-") === normalizedSlug) ?? `${beltSlug.slice(0, 1).toUpperCase()}${beltSlug.slice(1)}`;
+  return resolveBeltRank(beltSlug).name;
 }
 
 function childInitials(name: string) {
@@ -2418,18 +2483,599 @@ function ManagerPageTitleFrame({ title, className = "" }: { title: string; class
   );
 }
 
+type StudentProfileBottomPanel = "belt" | "messages";
+type BeltCaseEditorFrame = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
+function BeltCaseJourneyRail({
+  earnedBeltSlugs,
+  railBeltRanks,
+  selectedBeltRank
+}: {
+  earnedBeltSlugs: ReadonlySet<string>;
+  railBeltRanks: BeltRank[];
+  selectedBeltRank: BeltRank;
+}) {
+  const railStyle = {
+    "--student-belt-case-rail-count": Math.max(railBeltRanks.length - 1, 1)
+  } as CSSProperties;
+
+  return (
+    <div className="student-belt-case-rank-rail" data-testid="belt-journey-rank-rail" style={railStyle} aria-hidden="true">
+      <img className="student-belt-case-rail-base" data-testid="belt-journey-rail" src={beltCaseAsset("sprites/belt-rail.png")} alt="" draggable="false" />
+      <div className="student-belt-case-rail-belts">
+        {railBeltRanks.map((rank, index) => {
+          const isEarned = earnedBeltSlugs.has(rank.slug);
+          const isSelected = selectedBeltRank.slug === rank.slug;
+          const railBeltStyle = {
+            "--student-belt-case-rail-index": index
+          } as CSSProperties;
+          return (
+            <img
+              key={rank.slug}
+              className={`student-belt-case-rail-belt is-${rank.slug}${isEarned ? " is-earned" : " is-locked"}${isSelected ? " is-selected" : ""}`}
+              data-testid={`belt-journey-hanging-belt-${rank.slug}`}
+              data-earned={isEarned ? "true" : "false"}
+              data-selected={isSelected ? "true" : "false"}
+              style={railBeltStyle}
+              src={beltCaseRailBeltAsset(rank.slug)}
+              alt=""
+              draggable="false"
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BeltCaseAchievementPedestal({
+  plaqueText,
+  selectedBeltRank,
+  trophyBeltSrc
+}: {
+  plaqueText: string;
+  selectedBeltRank: BeltRank;
+  trophyBeltSrc: string;
+}) {
+  return (
+    <div className={`student-belt-case-pedestal is-${selectedBeltRank.slug}`} data-testid="belt-case-achievement-pedestal" data-rank={selectedBeltRank.slug}>
+      <img
+        className="student-belt-case-pedestal-shelf"
+        data-testid="belt-journey-current-plaque"
+        src={beltCaseAsset("overlays/current-rank-plaque.png")}
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+      />
+      {selectedBeltRank.slug === "white" && (
+        <img
+          className="student-belt-case-current-belt-shadow"
+          src={trophyBeltSrc}
+          alt=""
+          aria-hidden="true"
+          draggable="false"
+        />
+      )}
+      <img
+        className="student-belt-case-current-belt student-belt-trophy-belt"
+        data-testid="belt-journey-current-belt"
+        src={trophyBeltSrc}
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+      />
+      <div className="student-belt-case-plaque" data-testid="belt-case-plaque">
+        <span>{plaqueText}</span>
+        <small>Most Recent Achievement</small>
+      </div>
+    </div>
+  );
+}
+
+function BeltCaseGlassAndFrame({
+  selectedStickers,
+  trophyFrameSrc
+}: {
+  selectedStickers: BeltCaseSticker[];
+  trophyFrameSrc: string;
+}) {
+  return (
+    <>
+      <img
+        className="student-belt-case-layer student-belt-case-layer--frame"
+        data-testid="belt-journey-frame-overlay"
+        src={trophyFrameSrc}
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+      />
+      {selectedStickers.map((sticker) => (
+        <img
+          key={sticker.id}
+          className={`student-belt-case-sticker is-${sticker.placement}`}
+          data-testid="belt-journey-sticker"
+          src={beltCaseAsset(sticker.file)}
+          alt=""
+          aria-hidden="true"
+          draggable="false"
+        />
+      ))}
+      <span className="student-belt-case-glass-sheen" aria-hidden="true" />
+    </>
+  );
+}
+
+function StudentBeltCasePreview({ beltRank, classesAttended, settings }: { beltRank: BeltRank; classesAttended: number; settings: BeltCaseSettings }) {
+  const { earnedBeltRanks, selectedBackground, selectedBeltRank, selectedEffect, selectedFrame, selectedLighting, selectedStickers } = resolveBeltCaseSelection(settings, beltRank);
+  const beltDisplayName = `${selectedBeltRank.name} Belt`;
+  const earnedBeltCountLabel = `${earnedBeltRanks.length} earned ${earnedBeltRanks.length === 1 ? "belt" : "belts"}`;
+  const earnedBeltSlugs = new Set(earnedBeltRanks.map((earnedBeltRank) => earnedBeltRank.slug));
+  const isRailVisible = settings.displayModeId !== "spotlight";
+  const railBeltRanks = settings.displayModeId === "earned" ? beltRanks.filter((rank) => earnedBeltSlugs.has(rank.slug)) : beltRanks;
+  const journeyStats = getBeltJourneyStats(beltRank, classesAttended);
+  const trophyBackgroundSrc = beltCaseAsset(selectedBackground.file);
+  const trophyFrameSrc = beltCaseAsset(selectedFrame.file);
+  const trophyBeltSrc = beltCaseTrophyBeltAsset(selectedBeltRank.slug);
+  const previewClassName = `student-belt-case-art ${selectedLighting.className} is-display-${settings.displayModeId} is-rank-${selectedBeltRank.slug}`;
+  const previewStyle = {
+    "--student-belt-case-rank-color": selectedBeltRank.color,
+    "--student-belt-case-rank-text": selectedBeltRank.textColor
+  } as CSSProperties;
+
+  return (
+    <section className="student-belt-case-panel" aria-label="Student belt case">
+      <header className="student-belt-case-journey-head">
+        <div>
+          <Sparkles size={16} aria-hidden="true" />
+          <h2>My Belt Journey</h2>
+          <Sparkles size={16} aria-hidden="true" />
+        </div>
+        <p>Next: {journeyStats.nextBeltName}</p>
+        <div
+          className="student-belt-case-progress"
+          role="progressbar"
+          aria-label={`Belt journey progress to ${journeyStats.nextBeltName}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={journeyStats.progressPercent}
+          style={{ "--student-belt-case-progress": `${journeyStats.progressPercent}%` } as CSSProperties}
+        >
+          <span aria-hidden="true" />
+          <small>{journeyStats.progressLabel}</small>
+        </div>
+      </header>
+      <div className="student-belt-case-preview student-belt-case-preview--display">
+        <div className={previewClassName} data-testid="belt-case-showcase-stage" style={previewStyle} role="img" aria-label={`${beltDisplayName} custom display case with ${earnedBeltCountLabel}`}>
+          <img
+            className="student-belt-case-layer student-belt-case-layer--background student-belt-trophy-background"
+            data-testid="belt-journey-cabinet-base"
+            src={trophyBackgroundSrc}
+            alt=""
+            aria-hidden="true"
+            draggable="false"
+          />
+          <img
+            className="student-belt-case-layer student-belt-case-layer--title-arch"
+            data-testid="belt-journey-title-arch"
+            src={beltCaseAsset("overlays/title-arch.png")}
+            alt=""
+            aria-hidden="true"
+            draggable="false"
+          />
+          <span className="student-belt-case-title-layer" aria-hidden="true">My Belt Journey</span>
+          <img
+            className="student-belt-case-dragon-medallion"
+            data-testid="belt-journey-dragon-medallion"
+            src={beltCaseAsset("sprites/dragon-medallion.png")}
+            alt=""
+            aria-hidden="true"
+            draggable="false"
+          />
+          <span className="student-belt-case-vignette" aria-hidden="true" />
+          {"file" in selectedEffect && selectedEffect.file && (
+            <img
+              className="student-belt-case-layer student-belt-case-layer--effect"
+              data-testid="belt-journey-effect-overlay"
+              src={beltCaseAsset(selectedEffect.file)}
+              alt=""
+              aria-hidden="true"
+              draggable="false"
+            />
+          )}
+          {isRailVisible && (
+            <BeltCaseJourneyRail earnedBeltSlugs={earnedBeltSlugs} railBeltRanks={railBeltRanks} selectedBeltRank={selectedBeltRank} />
+          )}
+          <BeltCaseAchievementPedestal plaqueText={settings.plaqueText} selectedBeltRank={selectedBeltRank} trophyBeltSrc={trophyBeltSrc} />
+          <BeltCaseGlassAndFrame selectedStickers={selectedStickers} trophyFrameSrc={trophyFrameSrc} />
+        </div>
+        <div className="student-belt-case-preview-meta">
+          <span className="student-belt-case-rank-pill">{beltDisplayName}</span>
+          <p>{selectedBeltRank.focus}</p>
+        </div>
+      </div>
+      <section className="student-belt-case-current-rank-card" aria-label="Current student rank">
+        <img src={trophyBeltSrc} alt="" aria-hidden="true" draggable="false" />
+        <div>
+          <span>Current Rank</span>
+          <strong>{beltDisplayName}</strong>
+          <p>{journeyStats.encouragement}</p>
+        </div>
+        <Sparkles size={30} aria-hidden="true" />
+      </section>
+      <dl className="student-belt-case-stat-grid" aria-label="Belt journey stats">
+        <div>
+          <img className="student-belt-case-stat-bg" src={beltCaseAsset("overlays/stat-chip.png")} alt="" aria-hidden="true" draggable="false" />
+          <dt><Users size={22} aria-hidden="true" /> <strong>{journeyStats.classesAttended}</strong></dt>
+          <dd>Classes Attended</dd>
+        </div>
+        <div>
+          <img className="student-belt-case-stat-bg" src={beltCaseAsset("overlays/stat-chip.png")} alt="" aria-hidden="true" draggable="false" />
+          <dt><Sparkles size={22} aria-hidden="true" /> <strong>{journeyStats.skillsLearned}</strong></dt>
+          <dd>Skills Learned</dd>
+        </div>
+        <div>
+          <img className="student-belt-case-stat-bg" src={beltCaseAsset("overlays/stat-chip.png")} alt="" aria-hidden="true" draggable="false" />
+          <dt><Award size={22} aria-hidden="true" /> <strong>{journeyStats.achievementsEarned}</strong></dt>
+          <dd>Achievements Earned</dd>
+        </div>
+        <div>
+          <img className="student-belt-case-stat-bg" src={beltCaseAsset("overlays/stat-chip.png")} alt="" aria-hidden="true" draggable="false" />
+          <dt><ShieldCheck size={22} aria-hidden="true" /> <strong>Great Job!</strong></dt>
+          <dd>Keep it up!</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+function StudentBeltCaseControls({
+  beltRank,
+  onChange,
+  onReset,
+  onSave,
+  onToggleSticker,
+  saveStatus,
+  settings
+}: {
+  beltRank: BeltRank;
+  onChange: (patch: Partial<BeltCaseSettings>) => void;
+  onReset: () => void;
+  onSave: () => void;
+  onToggleSticker: (stickerId: BeltCaseStickerId) => void;
+  saveStatus: string;
+  settings: BeltCaseSettings;
+}) {
+  const { earnedBeltRanks, selectedBackground, selectedBeltRank, selectedEffect, selectedFrame, selectedLighting, selectedStickers } = resolveBeltCaseSelection(settings, beltRank);
+  const earnedBeltSlugs = new Set(earnedBeltRanks.map((earnedBeltRank) => earnedBeltRank.slug));
+  const selectedStickerLabel = selectedStickers.length > 0 ? `${selectedStickers.length}/4 stickers equipped` : "No stickers equipped";
+
+  return (
+    <div className="student-belt-case-controls student-belt-case-controls--top" aria-label="Belt case creator controls">
+      <section className="student-belt-case-loadout" aria-label="Belt case creator loadout">
+        <div className="student-belt-case-loadout-preview">
+          <span
+            className="student-belt-case-loadout-scene"
+            style={{ backgroundImage: `url(${beltCaseAsset(selectedBackground.file)})` }}
+            aria-hidden="true"
+          />
+          <div>
+            <small>Current Loadout</small>
+            <strong>{selectedBackground.label}</strong>
+            <span>{selectedFrame.label} case</span>
+          </div>
+        </div>
+        <div className="student-belt-case-loadout-tags" aria-label="Creator option totals">
+          <span>{beltCaseBackgrounds.length} scenes</span>
+          <span>{beltCaseFrames.length} case frames</span>
+          <span>{beltCaseStickers.length} stickers</span>
+          <span>{beltRanks.length} belt ranks</span>
+        </div>
+        <div className="student-belt-case-loadout-readout" aria-label="Current creator selections">
+          <span>{selectedLighting.label} lighting</span>
+          <span>{selectedEffect.label}</span>
+          <span>{selectedBeltRank.name} Belt</span>
+          <span>{selectedStickerLabel}</span>
+        </div>
+      </section>
+      <div className="student-belt-case-control-group student-belt-case-control-group--scene">
+        <div className="student-belt-case-control-head">
+          <Palette size={15} aria-hidden="true" />
+          <span>Scene</span>
+        </div>
+        <div className="student-belt-case-swatch-grid">
+          {beltCaseBackgrounds.map((background) => (
+            <button
+              key={background.id}
+              type="button"
+              className={`student-belt-case-swatch${settings.backgroundId === background.id ? " is-selected" : ""}`}
+              aria-pressed={settings.backgroundId === background.id}
+              onClick={() => onChange({ backgroundId: background.id })}
+            >
+              <span className="student-belt-case-swatch-thumb" style={{ backgroundImage: `url(${beltCaseAsset(background.file)})` }} aria-hidden="true" />
+              <span>{background.label}</span>
+              <small>{background.tone}</small>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="student-belt-case-control-group student-belt-case-control-group--case">
+        <div className="student-belt-case-control-head">
+          <ShieldCheck size={15} aria-hidden="true" />
+          <span>Case</span>
+        </div>
+        <div className="student-belt-case-chip-row">
+          {beltCaseFrames.map((frame) => (
+            <button
+              key={frame.id}
+              type="button"
+              className={`student-belt-case-chip${settings.caseId === frame.id ? " is-selected" : ""}`}
+              aria-pressed={settings.caseId === frame.id}
+              onClick={() => onChange({ caseId: frame.id })}
+            >
+              <span className="student-belt-case-chip-thumb" style={{ backgroundImage: `url(${beltCaseAsset(frame.file)})` }} aria-hidden="true" />
+              <span>{frame.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="student-belt-case-chip-row">
+          {beltCaseLightingOptions.map((lighting) => (
+            <button
+              key={lighting.id}
+              type="button"
+              className={`student-belt-case-chip${settings.lightingId === lighting.id ? " is-selected" : ""}`}
+              aria-pressed={settings.lightingId === lighting.id}
+              onClick={() => onChange({ lightingId: lighting.id })}
+            >
+              {lighting.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="student-belt-case-control-group student-belt-case-control-group--display">
+        <div className="student-belt-case-control-head">
+          <Sparkles size={15} aria-hidden="true" />
+          <span>Display</span>
+        </div>
+        <div className="student-belt-case-chip-row">
+          {beltCaseDisplayModes.map((mode) => (
+            <button
+              key={mode.id}
+              type="button"
+              className={`student-belt-case-chip${settings.displayModeId === mode.id ? " is-selected" : ""}`}
+              aria-pressed={settings.displayModeId === mode.id}
+              onClick={() => onChange({ displayModeId: mode.id })}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="student-belt-case-control-group student-belt-case-control-group--belt">
+        <div className="student-belt-case-control-head">
+          <Award size={15} aria-hidden="true" />
+          <span>Belt</span>
+        </div>
+        <div className="student-belt-case-belt-grid">
+          {beltRanks.map((rank) => {
+            const isEarned = earnedBeltSlugs.has(rank.slug);
+            const isSelected = selectedBeltRank.slug === rank.slug;
+            const rankStyle = {
+              "--student-belt-case-belt-color": rank.color,
+              "--student-belt-case-belt-text": rank.textColor
+            } as CSSProperties;
+            return (
+              <button
+                key={rank.slug}
+                type="button"
+                className={`student-belt-case-belt-button${isSelected ? " is-selected" : ""}${isEarned ? "" : " is-locked"}`}
+                style={rankStyle}
+                disabled={!isEarned}
+                aria-label={`${isEarned ? "Preview" : "Locked"} ${rank.name} Belt`}
+                aria-pressed={isEarned ? isSelected : undefined}
+                onClick={() => onChange({ selectedBeltSlug: rank.slug })}
+              >
+                <span aria-hidden="true" />
+                <strong>{rank.name}</strong>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="student-belt-case-control-group student-belt-case-control-group--details">
+        <div className="student-belt-case-control-head">
+          <Target size={15} aria-hidden="true" />
+          <span>Details</span>
+        </div>
+        <label className="student-belt-case-field">
+          <span>Plaque</span>
+          <input
+            aria-label="Customize belt case plaque text"
+            maxLength={38}
+            value={settings.plaqueText}
+            onChange={(event) => onChange({ plaqueText: event.target.value })}
+          />
+        </label>
+        <div className="student-belt-case-sticker-row" aria-label="Sticker badges">
+          {beltCaseStickers.map((sticker) => {
+            const isSelected = settings.stickerIds.includes(sticker.id);
+            return (
+              <button
+                key={sticker.id}
+                type="button"
+                className={`student-belt-case-sticker-button${isSelected ? " is-selected" : ""}`}
+                aria-pressed={isSelected}
+                onClick={() => onToggleSticker(sticker.id)}
+              >
+                <img src={beltCaseAsset(sticker.file)} alt="" aria-hidden="true" draggable="false" />
+                <span>{sticker.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="student-belt-case-control-group student-belt-case-control-group--effects">
+        <div className="student-belt-case-control-head">
+          <Sparkles size={15} aria-hidden="true" />
+          <span>Effects</span>
+        </div>
+        <div className="student-belt-case-chip-row">
+          {beltCaseEffects.map((effect) => (
+            <button
+              key={effect.id}
+              type="button"
+              className={`student-belt-case-chip${settings.effectId === effect.id ? " is-selected" : ""}`}
+              aria-pressed={settings.effectId === effect.id}
+              onClick={() => onChange({ effectId: effect.id })}
+            >
+              {"file" in effect && effect.file ? (
+                <span className="student-belt-case-chip-thumb" style={{ backgroundImage: `url(${beltCaseAsset(effect.file)})` }} aria-hidden="true" />
+              ) : (
+                <span className="student-belt-case-chip-empty" aria-hidden="true" />
+              )}
+              <span>{effect.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="student-belt-case-actions">
+        <button type="button" className="student-belt-case-secondary-action" onClick={onReset}>
+          Reset
+        </button>
+        <button type="button" className="student-belt-case-primary-action" onClick={onSave}>
+          Save
+        </button>
+        <span role="status" aria-live="polite">
+          {saveStatus}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function StudentBeltCaseEditor({
+  beltRank,
+  onChange,
+  onClose,
+  onReset,
+  onSave,
+  onToggleSticker,
+  saveStatus,
+  settings,
+  style
+}: {
+  beltRank: BeltRank;
+  onChange: (patch: Partial<BeltCaseSettings>) => void;
+  onClose: () => void;
+  onReset: () => void;
+  onSave: () => void;
+  onToggleSticker: (stickerId: BeltCaseStickerId) => void;
+  saveStatus: string;
+  settings: BeltCaseSettings;
+  style?: CSSProperties;
+}) {
+  return (
+    <section className="student-belt-case-editor" id="student-belt-case-editor" data-testid="belt-case-editor-drawer" aria-label="Belt case customize panel" style={style}>
+      <header className="student-belt-case-editor-head">
+        <div>
+          <span>Belt Case</span>
+          <h2>Customize Display</h2>
+        </div>
+        <button className="student-belt-case-editor-close" type="button" aria-label="Close belt case editor" onClick={onClose}>
+          <X size={18} aria-hidden="true" />
+        </button>
+      </header>
+      <StudentBeltCaseControls
+        beltRank={beltRank}
+        onChange={onChange}
+        onReset={onReset}
+        onSave={onSave}
+        onToggleSticker={onToggleSticker}
+        saveStatus={saveStatus}
+        settings={settings}
+      />
+    </section>
+  );
+}
+
+function StudentReferenceBeltJourney({ beltRank, classesAttended }: { beltRank: BeltRank; classesAttended: number }) {
+  const journeyStats = getBeltJourneyStats(beltRank, classesAttended);
+  const earnedBeltIndex = beltRanks.findIndex((rank) => rank.slug === beltRank.slug);
+  const earnedBeltCount = Math.max(earnedBeltIndex + 1, 1);
+  const earnedBeltCountLabel = `${earnedBeltCount} earned ${earnedBeltCount === 1 ? "belt" : "belts"}`;
+  const currentRankLabel = `${beltRank.name} Belt`;
+  const compactProgressLabel = journeyStats.progressLabel.replace(/ classes to .+$/, " classes left");
+  const journeyStyle = {
+    "--student-reference-rank-color": beltRank.color,
+    "--student-reference-rank-text": beltRank.textColor
+  } as CSSProperties;
+
+  return (
+    <section className="student-reference-journey" aria-label="Student reference belt journey" style={journeyStyle}>
+      <h2 className="student-reference-journey-heading">My Belt Journey</h2>
+      <div className="student-reference-journey-frame" role="img" aria-label={`${currentRankLabel} trophy belt case with ${earnedBeltCountLabel}`}>
+        <img
+          className="student-reference-journey-stage"
+          data-testid="student-reference-belt-stage"
+          src={publicAsset("assets/student-profile-reference/belt-case-stage.png")}
+          alt=""
+          aria-hidden="true"
+          draggable="false"
+        />
+        <div className="student-reference-journey-title" aria-hidden="true">
+          <Sparkles size={18} />
+          <span>My Belt Journey</span>
+          <Sparkles size={18} />
+        </div>
+        <div className="student-reference-belt-rail" aria-hidden="true">
+          {beltRanks.map((rank, index) => {
+            const isEarned = index <= earnedBeltIndex;
+            return (
+              <span
+                key={rank.slug}
+                className={`student-reference-belt-marker is-${rank.slug}${isEarned ? " is-earned" : " is-locked"}`}
+                data-testid={`student-reference-belt-${rank.slug}`}
+                data-earned={isEarned ? "true" : "false"}
+                style={{ "--student-reference-belt-color": rank.color } as CSSProperties}
+              />
+            );
+          })}
+        </div>
+      </div>
+      <div className="student-reference-journey-progress">
+        <p>{journeyStats.nextBeltName === "Black Belt" ? "Black belt focus" : `Next: ${journeyStats.nextBeltName}`}</p>
+        <div
+          className="student-reference-progress"
+          role="progressbar"
+          aria-label={`Belt journey progress to ${journeyStats.nextBeltName}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={journeyStats.progressPercent}
+          style={{ "--student-reference-progress": `${journeyStats.progressPercent}%` } as CSSProperties}
+        >
+          <span aria-hidden="true" />
+          <small>{compactProgressLabel}</small>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function StudentProfilePage() {
-  const { logout, scheduledClasses, session, showToast, studioClasses, studioEvents, students } = useAppState();
+  const { currentChildAccount, logout, scheduledClasses, session, showToast, studioClasses, studioEvents, students } = useAppState();
   const today = useLiveCalendarDate();
   const selectedStudent = useMemo(() => {
     const sessionEmail = session?.email.toLowerCase();
-    return (
-      (sessionEmail ? students.find((student) => student.email.toLowerCase() === sessionEmail) : undefined) ??
-      students.find((student) => (student.status ?? "Active").toLowerCase() === "active") ??
-      students[0]
-    );
-  }, [session?.email, students]);
-  const [studentProfile, setStudentProfile] = useState(() => readStudentProfile(session?.email, selectedStudent));
+    const sessionStudent = sessionEmail ? students.find((student) => student.email.toLowerCase() === sessionEmail) : undefined;
+    if (sessionStudent) return sessionStudent;
+    if (currentChildAccount) return undefined;
+    return students.find((student) => (student.status ?? "Active").toLowerCase() === "active") ?? students[0];
+  }, [currentChildAccount, session?.email, students]);
+  const [studentProfile, setStudentProfile] = useState(() => readStudentProfile(session?.email, selectedStudent, currentChildAccount));
   const [studentProfileOpen, setStudentProfileOpen] = useState(false);
   const [homeScheduleWeekStartKey, setHomeScheduleWeekStartKey] = useState(() => toDateKey(weekDaysForDate(today)[0]));
   const [selectedHomeScheduleDateKey, setSelectedHomeScheduleDateKey] = useState(() => toDateKey(today));
@@ -2439,9 +3085,608 @@ function StudentProfilePage() {
   const [isFeedSearchOpen, setIsFeedSearchOpen] = useState(false);
   const [feedFilter, setFeedFilter] = useState<ManagerHomeFeedFilter>("all");
   const [replyText, setReplyText] = useState("");
+  const [studentBottomPanel, setStudentBottomPanel] = useState<StudentProfileBottomPanel>("belt");
+  const feedSearchInputRef = useRef<HTMLInputElement>(null);
+  const messageCount = feedThreads.filter((thread) => thread.kind === "message").length;
+  const eventCount = feedThreads.filter((thread) => thread.kind === "event").length;
+  const visibleThreads = feedThreads.filter((thread) => {
+    if (feedFilter !== "all" && thread.kind !== feedFilter) return false;
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return true;
+    return `${thread.kind} ${thread.sender} ${thread.title} ${thread.preview}`.toLowerCase().includes(query);
+  });
+  const visibleFeedSections = visibleThreads.reduce<{ date: string; threads: ManagerHomeThread[] }[]>((sections, thread) => {
+    const currentSection = sections[sections.length - 1];
+    if (currentSection?.date === thread.sentDate) {
+      currentSection.threads.push(thread);
+      return sections;
+    }
+    sections.push({ date: thread.sentDate, threads: [thread] });
+    return sections;
+  }, []);
+  const homeScheduleWeekDays = useMemo(() => weekDaysForDate(parseCalendarDate(homeScheduleWeekStartKey)), [homeScheduleWeekStartKey]);
+  const homeAgendaItems = useMemo(
+    () => buildHomeAgendaItems(homeScheduleWeekDays, scheduledClasses, studioClasses, studioEvents),
+    [homeScheduleWeekDays, scheduledClasses, studioClasses, studioEvents]
+  );
+  const homeAgendaItemsByDate = useMemo(
+    () => homeAgendaItems.reduce<Record<string, ManagerHomeAgendaItem[]>>((groups, item) => {
+      groups[item.date] = [...(groups[item.date] ?? []), item];
+      return groups;
+    }, {}),
+    [homeAgendaItems]
+  );
+  const selectedHomeScheduleDate = parseCalendarDate(selectedHomeScheduleDateKey);
+  const selectedHomeAgendaItems = homeAgendaItemsByDate[selectedHomeScheduleDateKey] ?? [];
+  const studentName = studentProfile.name || (selectedStudent ? fullName(selectedStudent) : currentChildAccount?.name.trim() || "Cho's Student");
+  const studentBeltRank = resolveBeltRank(currentChildAccount?.beltSlug ?? selectedStudent?.beltRank ?? "White");
+  const studentBeltLabel = studentBeltRank.name;
+  const studentRoleLabel = currentChildAccount ? `${studentBeltLabel} Belt Student` : `${selectedStudent?.program ?? "Cho's Martial Arts"} Student`;
+  const memberSinceLabel = formatMonthYear(currentChildAccount?.createdAt ?? selectedStudent?.joinedAt ?? session?.createdAt);
+  const studentClassCount = selectedStudent?.classesAttended ?? 0;
+  const studentPortrait = studentProfile.photoDataUrl ?? (selectedStudent?.profileImagePath ? publicAsset(selectedStudent.profileImagePath) : publicAsset("assets/CheetahProfilePic/Cheetah.png"));
+  const studentColorPreview: ProfileColorPreviewData = {
+    kind: "student",
+    title: "Student Profile",
+    displayName: studentName,
+    roleLabel: studentRoleLabel,
+    portraitSrc: studentPortrait,
+    avatarText: childInitials(studentName),
+    facts: [
+      { icon: <Award size={18} />, label: `Rank: ${studentBeltLabel} Belt` },
+      { icon: <Target size={18} />, label: `Member Since: ${memberSinceLabel}` },
+      { icon: <Users size={18} />, label: `Classes: ${studentClassCount} Attended` }
+    ],
+    counts: [
+      { label: messageCount === 1 ? "Message" : "Messages", value: messageCount, tone: "message" },
+      { label: eventCount === 1 ? "Event" : "Events", value: eventCount, tone: "event" }
+    ]
+  };
+
+  useEffect(() => {
+    setStudentProfile(readStudentProfile(session?.email, selectedStudent, currentChildAccount));
+  }, [currentChildAccount, selectedStudent, session?.email]);
+
+  useEffect(() => {
+    const defaultDateKey = findInitialHomeAgendaDate(today, scheduledClasses, studioClasses, studioEvents);
+    const defaultWeekStart = weekDaysForDate(parseCalendarDate(defaultDateKey))[0];
+    setHomeScheduleWeekStartKey(toDateKey(defaultWeekStart));
+    setSelectedHomeScheduleDateKey(defaultDateKey);
+  }, [scheduledClasses, studioClasses, studioEvents, today]);
+
+  useEffect(() => {
+    if (isFeedSearchOpen) feedSearchInputRef.current?.focus();
+  }, [isFeedSearchOpen]);
+
+  const changeStudentProfilePhoto = (event: ReactChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      showToast("Choose an image file for the student profile picture.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result.startsWith("data:image/")) {
+        showToast("Could not read that profile image.");
+        return;
+      }
+
+      setStudentProfile((currentProfile) => {
+        const nextProfile = { ...currentProfile, photoDataUrl: result };
+        writeStudentProfile(nextProfile, session?.email);
+        return nextProfile;
+      });
+      showToast("Student profile picture updated.");
+    };
+    reader.onerror = () => showToast("Could not read that profile image.");
+    reader.readAsDataURL(file);
+  };
+
+  const shiftHomeScheduleWeek = (direction: number) => {
+    const nextWeekStart = parseCalendarDate(homeScheduleWeekStartKey);
+    nextWeekStart.setDate(nextWeekStart.getDate() + direction * 7);
+    const nextWeekDays = weekDaysForDate(nextWeekStart);
+    setHomeScheduleWeekStartKey(toDateKey(nextWeekDays[0]));
+    setSelectedHomeScheduleDateKey(findBestHomeAgendaDateInWeek(nextWeekDays, scheduledClasses, studioClasses, studioEvents));
+  };
+
+  const changeFeedFilter = (nextFilter: ManagerHomeThread["kind"]) => {
+    const resolvedFilter: ManagerHomeFeedFilter = feedFilter === nextFilter ? "all" : nextFilter;
+    setFeedFilter(resolvedFilter);
+    setSelectedThreadId((currentThreadId) => {
+      if (!currentThreadId || resolvedFilter === "all") return currentThreadId;
+      const currentThread = feedThreads.find((thread) => thread.id === currentThreadId);
+      return currentThread?.kind === resolvedFilter ? currentThreadId : null;
+    });
+  };
+
+  const openFeedThread = (threadId: string) => {
+    setSelectedThreadId((currentThreadId) => currentThreadId === threadId ? null : threadId);
+    setFeedThreads((currentThreads) =>
+      currentThreads.map((thread) => thread.id === threadId && thread.unread ? { ...thread, unread: false } : thread)
+    );
+  };
+
+  const closeFeedSearch = () => {
+    setSearchQuery("");
+    setIsFeedSearchOpen(false);
+  };
+
+  const handleFeedSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") closeFeedSearch();
+  };
+
+  const toggleStudentHomeTheme = () => {
+    const nextTheme: AppThemeMode = studentProfile.theme === "dark" ? "light" : "dark";
+    setStudentProfile((currentProfile) => {
+      const nextProfile = { ...currentProfile, theme: nextTheme };
+      writeStudentProfile(nextProfile, session?.email);
+      return nextProfile;
+    });
+    applyAppTheme(nextTheme);
+    writeStoredAppTheme(nextTheme);
+  };
+
+  const saveStudentProfileSettings = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!validateEmail(studentProfile.email)) {
+      showToast("Enter a valid profile email.");
+      return;
+    }
+    writeStudentProfile(studentProfile, session?.email);
+    applyAppTheme(studentProfile.theme);
+    writeStoredAppTheme(studentProfile.theme);
+    setStudentProfileOpen(false);
+    showToast("Student profile settings saved.");
+  };
+
+  const sendReply = () => {
+    if (!replyText.trim()) {
+      showToast("Write a reply before sending.");
+      return;
+    }
+    showToast("Reply queued for Cho's staff.");
+    setReplyText("");
+  };
+
+  return (
+    <section className="student-reference-page" aria-label="Student profile page">
+      <img
+        className="student-reference-background"
+        data-testid="student-reference-background"
+        src={publicAsset("assets/student-profile-reference/profile-bg.png")}
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+      />
+      <header className="student-reference-header" aria-label="Student profile page header">
+        <ManagerPageTitleFrame title="Profile" className="student-reference-title-frame" />
+        <nav className="student-reference-top-actions" aria-label="Student profile quick actions">
+          <button className="student-reference-top-action" type="button" aria-label="Student Panel" onClick={() => setStudentBottomPanel("belt")}>
+            <img src={managerPageIcon} alt="" aria-hidden="true" draggable="false" />
+            <span>Student Panel</span>
+          </button>
+          <button className="student-reference-top-action" type="button" aria-label="Log Out" onClick={logout}>
+            <img src={managerLogoutIcon} alt="" aria-hidden="true" draggable="false" />
+            <span>Log Out</span>
+          </button>
+        </nav>
+      </header>
+      <main className="student-reference-main">
+        <section className="student-reference-top-grid" aria-label="Student profile summary and schedule">
+          <article className="student-reference-profile-card" aria-label="Student reference profile card">
+            <button className="student-reference-profile-settings" type="button" aria-label="Profile Settings" onClick={() => setStudentProfileOpen(true)}>
+              <img src={managerProfileSettingsIcon} alt="" aria-hidden="true" draggable="false" />
+            </button>
+            <button
+              className="student-reference-theme-switch"
+              type="button"
+              role="switch"
+              aria-checked={studentProfile.theme === "dark"}
+              aria-label={studentProfile.theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              onClick={toggleStudentHomeTheme}
+            >
+              {studentProfile.theme === "dark" ? <Moon size={18} aria-hidden="true" /> : <Sun size={18} aria-hidden="true" />}
+            </button>
+            <div className="student-reference-portrait-wrap">
+              <img className="student-reference-portrait" src={studentPortrait} alt={`${studentName} profile portrait`} draggable="false" />
+              <label className="student-reference-camera" aria-label="Change student profile photo">
+                <Camera size={20} aria-hidden="true" />
+                <input className="sr-only" type="file" accept="image/*" onChange={changeStudentProfilePhoto} />
+              </label>
+            </div>
+            <h2>{studentName}</h2>
+            <p>{studentRoleLabel}</p>
+            <ul className="student-reference-facts" aria-label="Student quick facts">
+              <li><Award size={20} aria-hidden="true" /><span>Rank: {studentBeltLabel} Belt</span></li>
+              <li><Target size={20} aria-hidden="true" /><span>Member Since: {memberSinceLabel}</span></li>
+              <li><Users size={20} aria-hidden="true" /><span>Classes: {studentClassCount} Attended</span></li>
+            </ul>
+          </article>
+          <section className="student-reference-schedule-card" aria-label="Student reference weekly schedule">
+            <header className="student-reference-week-head">
+              <button type="button" aria-label="Previous week" onClick={() => shiftHomeScheduleWeek(-1)}>
+                <ChevronLeft size={24} aria-hidden="true" />
+              </button>
+              <h2>{formatWeekRange(homeScheduleWeekDays)}</h2>
+              <button type="button" aria-label="Next week" onClick={() => shiftHomeScheduleWeek(1)}>
+                <ChevronRight size={24} aria-hidden="true" />
+              </button>
+            </header>
+            <div className="student-reference-week-strip" role="group" aria-label="Select schedule date">
+              {homeScheduleWeekDays.map((day) => {
+                const dayKey = toDateKey(day);
+                const isSelected = dayKey === selectedHomeScheduleDateKey;
+                return (
+                  <button
+                    key={dayKey}
+                    type="button"
+                    aria-label={`Select ${formatHomeScheduleDay(day)}`}
+                    aria-pressed={isSelected}
+                    className={isSelected ? "is-selected" : ""}
+                    onClick={() => setSelectedHomeScheduleDateKey(dayKey)}
+                  >
+                    <span>{day.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase()}</span>
+                    <strong>{day.getDate()}</strong>
+                  </button>
+                );
+              })}
+            </div>
+            <section className="student-reference-agenda" aria-label={`Schedule for ${formatHomeScheduleDay(selectedHomeScheduleDate)}`}>
+              <h3>{formatHomeScheduleDay(selectedHomeScheduleDate)}</h3>
+              {selectedHomeAgendaItems.length ? (
+                <div className="student-reference-agenda-list">
+                  {selectedHomeAgendaItems.slice(0, 3).map((item) => (
+                    <article className="student-reference-agenda-item" key={item.id}>
+                      <time dateTime={`${item.date}T${item.time}`}>{item.time}</time>
+                      <span className={`student-reference-agenda-icon is-${item.kind}`} aria-hidden="true">
+                        {item.kind === "event" ? <CalendarDays size={22} /> : <Users size={22} />}
+                      </span>
+                      <div>
+                        <strong>{item.title}</strong>
+                        <p>{item.meta}</p>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="student-reference-empty">No classes or events scheduled for this day.</p>
+              )}
+            </section>
+          </section>
+        </section>
+        <section className="student-reference-action-row" aria-label="Student reference action row">
+          <div className="student-reference-tabs" role="tablist" aria-label="Student profile bottom views">
+            <button
+              type="button"
+              role="tab"
+              id="student-profile-belt-case-tab"
+              aria-selected={studentBottomPanel === "belt"}
+              aria-controls="student-profile-belt-case-panel"
+              tabIndex={studentBottomPanel === "belt" ? 0 : -1}
+              onClick={() => setStudentBottomPanel("belt")}
+            >
+              <Award size={18} aria-hidden="true" />
+              <span>Belt Case</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="student-profile-messages-tab"
+              aria-selected={studentBottomPanel === "messages"}
+              aria-controls="student-profile-messages-panel"
+              tabIndex={studentBottomPanel === "messages" ? 0 : -1}
+              onClick={() => setStudentBottomPanel("messages")}
+            >
+              <MessagesSquare size={18} aria-hidden="true" />
+              <span>Messages</span>
+            </button>
+          </div>
+          <button className="student-reference-star-button" type="button" aria-label="Great Job!">
+            <Sparkles size={24} aria-hidden="true" />
+          </button>
+          <button className="student-reference-edit-button" type="button" onClick={() => setStudentProfileOpen(true)}>
+            <FileText size={18} aria-hidden="true" />
+            <span>Edit Profile</span>
+          </button>
+        </section>
+        <section className="student-reference-bottom-panel" aria-label="Student profile bottom panel">
+          {studentBottomPanel === "belt" ? (
+            <section
+              className="student-reference-bottom-view is-active"
+              id="student-profile-belt-case-panel"
+              role="tabpanel"
+              aria-label="Student belt case display"
+            >
+              <StudentReferenceBeltJourney beltRank={studentBeltRank} classesAttended={studentClassCount} />
+            </section>
+          ) : (
+            <section
+              className="student-reference-bottom-view is-active"
+              id="student-profile-messages-panel"
+              role="tabpanel"
+              aria-label="Messages and event notifications"
+            >
+              <div className="manager-home-feed-head student-reference-feed-head">
+                <div className="manager-home-feed-counts" aria-label="Feed totals">
+                  <button
+                    className={`manager-home-count manager-home-count--message${feedFilter === "message" ? " is-active" : ""}`}
+                    type="button"
+                    aria-pressed={feedFilter === "message"}
+                    aria-controls="student-profile-unified-feed"
+                    onClick={() => changeFeedFilter("message")}
+                  >
+                    {messageCount} {messageCount === 1 ? "Message" : "Messages"}
+                  </button>
+                  <button
+                    className={`manager-home-count manager-home-count--event${feedFilter === "event" ? " is-active" : ""}`}
+                    type="button"
+                    aria-pressed={feedFilter === "event"}
+                    aria-controls="student-profile-unified-feed"
+                    onClick={() => changeFeedFilter("event")}
+                  >
+                    {eventCount} Event {eventCount === 1 ? "Notification" : "Notifications"}
+                  </button>
+                </div>
+              </div>
+              <div className={`manager-home-search-shell${isFeedSearchOpen ? " is-open" : ""}`}>
+                {isFeedSearchOpen ? (
+                  <div className="manager-home-search" role="search">
+                    <Search size={22} aria-hidden="true" />
+                    <label className="sr-only" htmlFor="student-profile-feed-search">Search messages and event notifications</label>
+                    <input
+                      aria-label="Search messages and event notifications"
+                      id="student-profile-feed-search"
+                      ref={feedSearchInputRef}
+                      type="search"
+                      placeholder="Search messages and event notifications..."
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      onKeyDown={handleFeedSearchKeyDown}
+                    />
+                    <button className="manager-home-search-close" type="button" aria-label="Close search messages and event notifications" onClick={closeFeedSearch}>
+                      <X size={18} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="manager-home-search-trigger"
+                    type="button"
+                    aria-label="Open search messages and event notifications"
+                    aria-controls="student-profile-feed-search"
+                    aria-expanded="false"
+                    onClick={() => setIsFeedSearchOpen(true)}
+                  >
+                    <Search size={24} />
+                  </button>
+                )}
+              </div>
+              <div className="manager-home-unified-feed student-reference-feed" id="student-profile-unified-feed" aria-label="Student message and notification feed">
+                {visibleFeedSections.length ? (
+                  visibleFeedSections.map((section) => (
+                    <section className="manager-home-date-section" key={section.date} aria-label={`Messages and event notifications from ${section.date}`}>
+                      <div className="manager-home-date-divider" role="separator" aria-label={`Messages and event notifications from ${section.date}`}>
+                        <span>{section.date}</span>
+                      </div>
+                      {section.threads.map((thread) => {
+                        const isSelected = thread.id === selectedThreadId;
+                        const isUnread = Boolean(thread.unread);
+                        const kindLabel = thread.kind === "event" ? "Event Notification" : "Message";
+                        const readStatusLabel = isUnread ? "Unread" : "Read";
+
+                        return (
+                          <article className={`manager-home-feed-item manager-home-feed-item--${thread.kind}${isUnread ? " is-unread" : " is-read"}${isSelected ? " is-selected" : ""}`} key={thread.id}>
+                            <div className="manager-home-feed-row student-profile-feed-row">
+                              <button
+                                className="manager-home-feed-button"
+                                type="button"
+                                aria-expanded={isSelected}
+                                aria-controls={`student-profile-feed-detail-${thread.id}`}
+                                onClick={() => openFeedThread(thread.id)}
+                              >
+                                <span className="manager-home-thread-avatar">
+                                  <img src={thread.avatar} alt="" draggable="false" />
+                                </span>
+                                <span className="manager-home-feed-copy">
+                                  <strong>{thread.sender}</strong>
+                                  <span className={`manager-home-read-status ${isUnread ? "is-unread" : "is-read"}`} aria-label={`${readStatusLabel} ${kindLabel.toLowerCase()}`}>
+                                    <span aria-hidden="true" />
+                                    <span>{readStatusLabel}</span>
+                                  </span>
+                                  <em>{kindLabel}</em>
+                                  <b>{thread.title}</b>
+                                  <small>{thread.preview}</small>
+                                  <time className="manager-home-inline-sent" dateTime={thread.sentDateTime} aria-label={`${thread.title} sent at ${thread.sentTime}`}>
+                                    {thread.sentTime}
+                                  </time>
+                                </span>
+                              </button>
+                            </div>
+                            {isSelected && (
+                              <div className="manager-home-feed-detail" id={`student-profile-feed-detail-${thread.id}`} aria-label={`${thread.title} details`}>
+                                <div className="manager-home-detail-title-row">
+                                  <span>{kindLabel}</span>
+                                  <time dateTime={thread.sentDateTime}>Sent {thread.sentDate} at {thread.sentTime}</time>
+                                </div>
+                                <h2>{thread.title}</h2>
+                                <header>
+                                  <span className="manager-home-thread-avatar">
+                                    <img src={thread.avatar} alt="" draggable="false" />
+                                  </span>
+                                  <div>
+                                    <strong>{thread.sender}</strong>
+                                    <p>{thread.kind === "event" ? "event notice for students and families" : "message for your student profile"}</p>
+                                  </div>
+                                  <button type="button" aria-label="More message actions">
+                                    <MoreHorizontal size={20} />
+                                  </button>
+                                </header>
+                                <div className="manager-home-message-copy">
+                                  <p>Hello {studentName},</p>
+                                  <p>{thread.preview.replace("...", ".")} Please review this update before your next class.</p>
+                                </div>
+                                {thread.kind === "event" && (
+                                  <section className="manager-home-event-card" aria-label="Event details">
+                                    <h3>Event Details</h3>
+                                    <p><CalendarDays size={18} /> <span>Date: July 25 - July 27, 2026</span></p>
+                                    <p><MapPin size={18} /> <span>Location: Cho&apos;s Martial Arts</span></p>
+                                    <p><Users size={18} /> <span>Participants: Students and families</span></p>
+                                    <p><CheckCircle2 size={18} /> <span>Check-in Time: 8:00 AM</span></p>
+                                  </section>
+                                )}
+                                <p>{thread.kind === "event" ? "Arrive on time, bring your gear, and check in with the front desk." : "This message is saved to your Profile page for quick follow-up."}</p>
+                                <p>Best regards,<br />{thread.sender}</p>
+                                <div className="manager-home-reply">
+                                  <input
+                                    aria-label="Write a reply"
+                                    placeholder="Write a reply..."
+                                    value={replyText}
+                                    onChange={(event) => setReplyText(event.target.value)}
+                                  />
+                                  <button type="button" onClick={sendReply}>
+                                    <Send size={20} /> Reply
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </article>
+                        );
+                      })}
+                    </section>
+                  ))
+                ) : (
+                  <p className="manager-home-empty">No messages or event notifications match your search.</p>
+                )}
+              </div>
+            </section>
+          )}
+        </section>
+      </main>
+      {studentProfileOpen && (
+        <div className="modal-backdrop manager-profile-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setStudentProfileOpen(false)}>
+          <form className="modal-card manager-profile-modal" role="dialog" aria-modal="true" aria-label="Student profile settings" onSubmit={saveStudentProfileSettings}>
+            <header className="student-modal-head">
+              <div>
+                <h2>Profile Settings</h2>
+                <p>Edit student contact settings and app theme.</p>
+              </div>
+              <button className="student-modal-close" type="button" aria-label="Close student profile settings" onClick={() => setStudentProfileOpen(false)}>
+                <X size={20} />
+              </button>
+            </header>
+            <section className="student-form-section manager-profile-form-section">
+              <label className="field-label">
+                Name
+                <input
+                  className="input"
+                  value={studentProfile.name}
+                  onChange={(event) => setStudentProfile({ ...studentProfile, name: event.target.value })}
+                  placeholder="Cho's Student"
+                />
+              </label>
+              <label className="field-label">
+                Username
+                <input
+                  className="input"
+                  value={studentProfile.username}
+                  onChange={(event) => setStudentProfile({ ...studentProfile, username: event.target.value })}
+                  autoComplete="username"
+                  placeholder="chos-student"
+                />
+              </label>
+              <label className="field-label">
+                Email
+                <input
+                  className="input"
+                  value={studentProfile.email}
+                  onChange={(event) => setStudentProfile({ ...studentProfile, email: event.target.value })}
+                  placeholder="student@chos.prototype"
+                />
+              </label>
+              <label className="field-label">
+                Phone
+                <input
+                  className="input"
+                  value={studentProfile.phone}
+                  onChange={(event) => setStudentProfile({ ...studentProfile, phone: event.target.value })}
+                  placeholder="(262) 555-0100"
+                />
+              </label>
+              <div className="manager-profile-preferences">
+                <div className="manager-theme-setting" role="group" aria-label="App theme">
+                  <span>App Theme</span>
+                  <div className="manager-theme-options">
+                    <button
+                      type="button"
+                      className={`manager-theme-option${studentProfile.theme === "light" ? " is-active" : ""}`}
+                      aria-pressed={studentProfile.theme === "light"}
+                      onClick={() => setStudentProfile({ ...studentProfile, theme: "light" })}
+                    >
+                      <Sun size={16} /> Light
+                    </button>
+                    <button
+                      type="button"
+                      className={`manager-theme-option${studentProfile.theme === "dark" ? " is-active" : ""}`}
+                      aria-pressed={studentProfile.theme === "dark"}
+                      onClick={() => setStudentProfile({ ...studentProfile, theme: "dark" })}
+                    >
+                      <Moon size={16} /> Dark
+                    </button>
+                  </div>
+                </div>
+                <label className="manager-profile-check">
+                  <input
+                    type="checkbox"
+                    checked={studentProfile.updates}
+                    onChange={(event) => setStudentProfile({ ...studentProfile, updates: event.target.checked })}
+                  />
+                  <span>Receive class and event updates</span>
+                </label>
+              </div>
+              <ProfileColorEditingTool sessionEmail={session?.email} showToast={showToast} preview={studentColorPreview} />
+            </section>
+            <div className="student-editor-actions manager-profile-actions">
+              <button type="submit">
+                <CheckCircle2 size={18} /> Save Profile Settings
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LegacyStudentProfilePage() {
+  const { currentChildAccount, logout, scheduledClasses, session, showToast, studioClasses, studioEvents, students } = useAppState();
+  const today = useLiveCalendarDate();
+  const selectedStudent = useMemo(() => {
+    const sessionEmail = session?.email.toLowerCase();
+    const sessionStudent = sessionEmail ? students.find((student) => student.email.toLowerCase() === sessionEmail) : undefined;
+    if (sessionStudent) return sessionStudent;
+    if (currentChildAccount) return undefined;
+    return students.find((student) => (student.status ?? "Active").toLowerCase() === "active") ?? students[0];
+  }, [currentChildAccount, session?.email, students]);
+  const [studentProfile, setStudentProfile] = useState(() => readStudentProfile(session?.email, selectedStudent, currentChildAccount));
+  const [studentProfileOpen, setStudentProfileOpen] = useState(false);
+  const [homeScheduleWeekStartKey, setHomeScheduleWeekStartKey] = useState(() => toDateKey(weekDaysForDate(today)[0]));
+  const [selectedHomeScheduleDateKey, setSelectedHomeScheduleDateKey] = useState(() => toDateKey(today));
+  const [feedThreads, setFeedThreads] = useState(() => studentHomeThreads);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isFeedSearchOpen, setIsFeedSearchOpen] = useState(false);
+  const [feedFilter, setFeedFilter] = useState<ManagerHomeFeedFilter>("all");
+  const [replyText, setReplyText] = useState("");
+  const [studentBottomPanel, setStudentBottomPanel] = useState<StudentProfileBottomPanel>("belt");
   const [overviewProgress, setOverviewProgress] = useState(1);
   const [overviewHeight, setOverviewHeight] = useState(0);
   const [isOverviewDragging, setIsOverviewDragging] = useState(false);
+  const [beltCaseEditorFrame, setBeltCaseEditorFrame] = useState<BeltCaseEditorFrame | null>(null);
   const feedSearchInputRef = useRef<HTMLInputElement>(null);
   const overviewContentRef = useRef<HTMLElement>(null);
   const overviewHandleRef = useRef<HTMLButtonElement>(null);
@@ -2452,6 +3697,12 @@ function StudentProfilePage() {
     startProgress: 1,
     startY: 0
   });
+  const beltCaseEditorStyle = beltCaseEditorFrame ? ({
+    "--student-belt-case-editor-top": `${beltCaseEditorFrame.top}px`,
+    "--student-belt-case-editor-left": `${beltCaseEditorFrame.left}px`,
+    "--student-belt-case-editor-width": `${beltCaseEditorFrame.width}px`,
+    "--student-belt-case-editor-height": `${beltCaseEditorFrame.height}px`
+  } as CSSProperties) : undefined;
   const messageCount = feedThreads.filter((thread) => thread.kind === "message").length;
   const eventCount = feedThreads.filter((thread) => thread.kind === "event").length;
   const visibleThreads = feedThreads.filter((thread) => {
@@ -2489,9 +3740,13 @@ function StudentProfilePage() {
     "--manager-home-overview-height": overviewHeight > 0 ? `${Math.round(overviewHeight * overviewProgress)}px` : "auto",
     "--manager-home-overview-progress": overviewProgress.toFixed(3)
   } as CSSProperties;
-  const studentName = studentProfile.name || (selectedStudent ? fullName(selectedStudent) : "Cho's Student");
-  const studentRoleLabel = `${selectedStudent?.program ?? "Cho's Martial Arts"} Student`;
-  const memberSinceLabel = formatMonthYear(selectedStudent?.joinedAt ?? session?.createdAt);
+  const studentName = studentProfile.name || (selectedStudent ? fullName(selectedStudent) : currentChildAccount?.name.trim() || "Cho's Student");
+  const studentFirstName = studentName.trim().split(/\s+/)[0] || "Student";
+  const studentBeltRank = resolveBeltRank(currentChildAccount?.beltSlug ?? selectedStudent?.beltRank ?? "Green");
+  const studentBeltLabel = studentBeltRank.name;
+  const studentRoleLabel = currentChildAccount ? `${studentBeltLabel} Belt Student` : `${selectedStudent?.program ?? "Cho's Martial Arts"} Student`;
+  const memberSinceLabel = formatMonthYear(currentChildAccount?.createdAt ?? selectedStudent?.joinedAt ?? session?.createdAt);
+  const studentClassCount = selectedStudent?.classesAttended ?? 0;
   const studentPortrait = studentProfile.photoDataUrl ?? (selectedStudent?.profileImagePath ? publicAsset(selectedStudent.profileImagePath) : publicAsset("assets/CheetahProfilePic/Cheetah.png"));
   const studentColorPreview: ProfileColorPreviewData = {
     kind: "student",
@@ -2501,19 +3756,28 @@ function StudentProfilePage() {
     portraitSrc: studentPortrait,
     avatarText: childInitials(studentName),
     facts: [
-      { icon: <Award size={18} />, label: `Rank: ${selectedStudent?.beltRank ?? "Green"} Belt` },
+      { icon: <Award size={18} />, label: `Rank: ${studentBeltLabel} Belt` },
       { icon: <Target size={18} />, label: `Member Since: ${memberSinceLabel}` },
-      { icon: <Users size={18} />, label: `Classes: ${selectedStudent?.classesAttended ?? 24} Attended` }
+      { icon: <Users size={18} />, label: `Classes: ${studentClassCount} Attended` }
     ],
     counts: [
       { label: messageCount === 1 ? "Message" : "Messages", value: messageCount, tone: "message" },
       { label: eventCount === 1 ? "Event" : "Events", value: eventCount, tone: "event" }
     ]
   };
+  const [beltCaseSettings, setBeltCaseSettings] = useState(() => readBeltCaseSettings(session?.email, studentBeltRank, studentName));
+  const [beltCaseSaveStatus, setBeltCaseSaveStatus] = useState("");
+  const [isBeltCaseEditorOpen, setIsBeltCaseEditorOpen] = useState(false);
 
   useEffect(() => {
-    setStudentProfile(readStudentProfile(session?.email, selectedStudent));
-  }, [selectedStudent, session?.email]);
+    setStudentProfile(readStudentProfile(session?.email, selectedStudent, currentChildAccount));
+  }, [currentChildAccount, selectedStudent, session?.email]);
+
+  useEffect(() => {
+    setBeltCaseSettings(readBeltCaseSettings(session?.email, studentBeltRank, studentName));
+    setBeltCaseSaveStatus("");
+    setIsBeltCaseEditorOpen(false);
+  }, [session?.email, studentBeltRank, studentName]);
 
   useEffect(() => {
     const defaultDateKey = findInitialHomeAgendaDate(today, scheduledClasses, studioClasses, studioEvents);
@@ -2550,6 +3814,74 @@ function StudentProfilePage() {
     observer.observe(node, { box: "border-box" });
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!isBeltCaseEditorOpen) {
+      setBeltCaseEditorFrame(null);
+      return;
+    }
+
+    let frameRequest = 0;
+    const measureEditorFrame = () => {
+      if (frameRequest) {
+        window.cancelAnimationFrame(frameRequest);
+      }
+      frameRequest = window.requestAnimationFrame(() => {
+        const overviewElement = overviewContentRef.current;
+        if (!overviewElement) return;
+
+        const rect = overviewElement.getBoundingClientRect();
+        const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+        const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+        const viewportLeft = window.visualViewport?.offsetLeft ?? 0;
+        const viewportTop = window.visualViewport?.offsetTop ?? 0;
+        const viewportPadding = viewportWidth <= 420 ? 8 : viewportWidth <= 760 ? 10 : 14;
+        const panelInset = viewportWidth <= 760 ? 8 : 12;
+        const left = Math.max(viewportLeft + viewportPadding, rect.left + panelInset);
+        const top = Math.max(viewportTop + viewportPadding, rect.top + panelInset);
+        const right = Math.min(viewportLeft + viewportWidth - viewportPadding, rect.right - panelInset);
+        const bottom = Math.min(viewportTop + viewportHeight - viewportPadding, rect.bottom - panelInset);
+        const width = Math.max(240, right - left);
+        const height = Math.max(120, bottom - top);
+        const nextFrame = {
+          top: Math.round(top),
+          left: Math.round(left),
+          width: Math.round(width),
+          height: Math.round(height)
+        };
+
+        setBeltCaseEditorFrame((currentFrame) => {
+          if (
+            currentFrame &&
+            currentFrame.top === nextFrame.top &&
+            currentFrame.left === nextFrame.left &&
+            currentFrame.width === nextFrame.width &&
+            currentFrame.height === nextFrame.height
+          ) {
+            return currentFrame;
+          }
+          return nextFrame;
+        });
+      });
+    };
+
+    measureEditorFrame();
+    window.addEventListener("resize", measureEditorFrame);
+    window.visualViewport?.addEventListener("resize", measureEditorFrame);
+    const resizeObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measureEditorFrame);
+    if (overviewContentRef.current) {
+      resizeObserver?.observe(overviewContentRef.current);
+    }
+
+    return () => {
+      if (frameRequest) {
+        window.cancelAnimationFrame(frameRequest);
+      }
+      window.removeEventListener("resize", measureEditorFrame);
+      window.visualViewport?.removeEventListener("resize", measureEditorFrame);
+      resizeObserver?.disconnect();
+    };
+  }, [isBeltCaseEditorOpen, overviewHeight, overviewProgress, overviewStageState]);
 
   useEffect(() => {
     if (isFeedSearchOpen) feedSearchInputRef.current?.focus();
@@ -2628,6 +3960,66 @@ function StudentProfilePage() {
 
     if (shouldToggleOnTap && !dragState.hasMoved) {
       toggleHomeOverview();
+    }
+  };
+
+  const updateBeltCaseSettings = (patch: Partial<BeltCaseSettings>) => {
+    setBeltCaseSaveStatus("");
+    setBeltCaseSettings((currentSettings) => ({
+      ...currentSettings,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    }));
+  };
+
+  const toggleBeltCaseSticker = (stickerId: BeltCaseStickerId) => {
+    setBeltCaseSaveStatus("");
+    setBeltCaseSettings((currentSettings) => {
+      const isSelected = currentSettings.stickerIds.includes(stickerId);
+      return {
+        ...currentSettings,
+        stickerIds: isSelected ? currentSettings.stickerIds.filter((id) => id !== stickerId) : [...currentSettings.stickerIds, stickerId],
+        updatedAt: new Date().toISOString()
+      };
+    });
+  };
+
+  const saveBeltCaseSettings = () => {
+    const { selectedBeltRank } = resolveBeltCaseSelection(beltCaseSettings, studentBeltRank);
+    const nextSettings = {
+      ...beltCaseSettings,
+      plaqueText: sanitizeBeltCasePlaqueText(beltCaseSettings.plaqueText, defaultBeltCasePlaqueText(studentName, selectedBeltRank)),
+      updatedAt: new Date().toISOString()
+    };
+    setBeltCaseSettings(nextSettings);
+    writeBeltCaseSettings(session?.email, nextSettings);
+    setBeltCaseSaveStatus("Saved for this student.");
+  };
+
+  const resetBeltCaseSettings = () => {
+    const nextSettings = {
+      ...defaultBeltCaseSettings(studentBeltRank, studentName),
+      updatedAt: new Date().toISOString()
+    };
+    setBeltCaseSettings(nextSettings);
+    writeBeltCaseSettings(session?.email, nextSettings);
+    setBeltCaseSaveStatus("Defaults restored.");
+  };
+
+  const toggleBeltCaseEditor = () => {
+    const shouldOpen = !isBeltCaseEditorOpen;
+    setStudentBottomPanel("belt");
+    setIsBeltCaseEditorOpen(shouldOpen);
+    if (shouldOpen) {
+      setIsOverviewDragging(false);
+      updateOverviewProgress(1);
+    }
+  };
+
+  const selectStudentBottomPanel = (panel: StudentProfileBottomPanel) => {
+    setStudentBottomPanel(panel);
+    if (panel === "messages") {
+      setIsBeltCaseEditorOpen(false);
     }
   };
 
@@ -2750,7 +4142,11 @@ function StudentProfilePage() {
           data-overview-state={overviewStageState}
           style={overviewStageStyle}
         >
-          <section className="manager-home-overview student-profile-overview" aria-label="Student profile overview section" ref={overviewContentRef}>
+          <section
+            className="manager-home-overview student-profile-overview"
+            aria-label="Student profile overview section"
+            ref={overviewContentRef}
+          >
             <article className="manager-home-profile-card" aria-label="Student profile overview">
               <button className="manager-home-profile-settings-link" type="button" aria-label="Profile Settings" onClick={() => setStudentProfileOpen(true)}>
                 <img className="manager-home-profile-settings-icon" src={managerProfileSettingsIcon} alt="" draggable="false" />
@@ -2783,10 +4179,29 @@ function StudentProfilePage() {
                 <h2>{studentName}</h2>
                 <p>{studentRoleLabel}</p>
               </div>
+              {currentChildAccount && (
+                <section className="student-profile-welcome" aria-label="Student welcome">
+                  <span className="student-profile-welcome-badge">
+                    <ShieldCheck size={16} aria-hidden="true" /> Ready
+                  </span>
+                  <h3>Hi {studentFirstName}, welcome to your student app.</h3>
+                  <p>Your parent set up this profile so you can practice, check in, and see what is next.</p>
+                  <div className="student-profile-welcome-actions">
+                    <Link to="/manager" aria-label="Open Practice Tools">
+                      <BookOpen size={16} aria-hidden="true" />
+                      <span>Practice Tools</span>
+                    </Link>
+                    <Link to="/check-ins" aria-label="Check In">
+                      <CheckCircle2 size={16} aria-hidden="true" />
+                      <span>Check In</span>
+                    </Link>
+                  </div>
+                </section>
+              )}
               <dl className="manager-home-profile-facts">
                 <div>
                   <dt><Award size={20} /></dt>
-                  <dd>Rank: {selectedStudent?.beltRank ?? "Green"} Belt</dd>
+                  <dd>Rank: {studentBeltLabel} Belt</dd>
                 </div>
                 <div>
                   <dt><Target size={20} /></dt>
@@ -2794,7 +4209,7 @@ function StudentProfilePage() {
                 </div>
                 <div>
                   <dt><Users size={20} /></dt>
-                  <dd>Classes: {selectedStudent?.classesAttended ?? 24} Attended</dd>
+                  <dd>Classes: {studentClassCount} Attended</dd>
                 </div>
               </dl>
             </article>
@@ -2847,6 +4262,10 @@ function StudentProfilePage() {
                     <p>No classes or events scheduled for this date.</p>
                   )}
                 </div>
+                <Link className="student-profile-full-schedule-link" to="/schedule">
+                  <span>View Full Schedule</span>
+                  <ChevronRight size={18} aria-hidden="true" />
+                </Link>
               </section>
             </section>
           </section>
@@ -2866,7 +4285,78 @@ function StudentProfilePage() {
         >
           <span className="manager-home-overview-handle-bar" aria-hidden="true" />
         </button>
-        <section className="manager-home-feed-panel student-profile-feed-panel" aria-label="Messages and event notifications">
+        <section className={`manager-home-feed-panel student-profile-bottom-panel${studentBottomPanel === "belt" ? " is-belt-case-active" : ""}${isBeltCaseEditorOpen ? " is-editing-belt-case" : ""}`} aria-label="Student profile bottom panel">
+          <header className="student-profile-bottom-head">
+            <div className="student-profile-bottom-tabs" role="tablist" aria-label="Student profile bottom views">
+              <button
+                type="button"
+                role="tab"
+                id="student-profile-belt-case-tab"
+                aria-selected={studentBottomPanel === "belt"}
+                aria-controls="student-profile-belt-case-panel"
+                tabIndex={studentBottomPanel === "belt" ? 0 : -1}
+                onClick={() => selectStudentBottomPanel("belt")}
+              >
+                <Award size={16} aria-hidden="true" />
+                <span>Belt Case</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="student-profile-messages-tab"
+                aria-selected={studentBottomPanel === "messages"}
+                aria-controls="student-profile-messages-panel"
+                tabIndex={studentBottomPanel === "messages" ? 0 : -1}
+                onClick={() => selectStudentBottomPanel("messages")}
+              >
+                <MessagesSquare size={16} aria-hidden="true" />
+                <span>Messages</span>
+              </button>
+            </div>
+            <div className="student-profile-bottom-actions">
+              {studentBottomPanel === "belt" && (
+                <>
+                  <button className="student-profile-achievement-button" type="button" aria-label={`${studentFirstName}'s achievement summary`}>
+                    <Sparkles size={20} aria-hidden="true" />
+                  </button>
+                  <button
+                    className={`student-profile-belt-edit-button${isBeltCaseEditorOpen ? " is-active" : ""}`}
+                    type="button"
+                    aria-controls="student-belt-case-editor"
+                    aria-expanded={isBeltCaseEditorOpen}
+                    aria-pressed={isBeltCaseEditorOpen}
+                    onClick={toggleBeltCaseEditor}
+                  >
+                    <Palette size={15} aria-hidden="true" />
+                    <span>Customize Belt Case</span>
+                  </button>
+                </>
+              )}
+              <button className="student-profile-edit-profile-button" type="button" onClick={() => setStudentProfileOpen(true)}>
+                <FileText size={16} aria-hidden="true" />
+                <span>Edit Profile</span>
+              </button>
+            </div>
+          </header>
+          <div className="student-profile-bottom-panels">
+            <section
+              className={`student-profile-bottom-view student-profile-belt-case-view${studentBottomPanel === "belt" ? " is-active" : ""}`}
+              id="student-profile-belt-case-panel"
+              role="tabpanel"
+              aria-label="Student belt case display"
+              aria-hidden={studentBottomPanel !== "belt"}
+              inert={studentBottomPanel !== "belt"}
+            >
+              <StudentBeltCasePreview beltRank={studentBeltRank} classesAttended={studentClassCount} settings={beltCaseSettings} />
+            </section>
+            <section
+              className={`student-profile-bottom-view student-profile-feed-panel${studentBottomPanel === "messages" ? " is-active" : ""}`}
+              id="student-profile-messages-panel"
+              role="tabpanel"
+              aria-label="Messages and event notifications"
+              aria-hidden={studentBottomPanel !== "messages"}
+              inert={studentBottomPanel !== "messages"}
+            >
           <div className="manager-home-feed-head">
             <div className="manager-home-feed-counts" aria-label="Feed totals">
               <button
@@ -3018,6 +4508,8 @@ function StudentProfilePage() {
               <p className="manager-home-empty">No messages or event notifications match your search.</p>
             )}
           </div>
+            </section>
+          </div>
         </section>
         {studentProfileOpen && (
           <div className="modal-backdrop manager-profile-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setStudentProfileOpen(false)}>
@@ -3111,6 +4603,19 @@ function StudentProfilePage() {
           </div>
         )}
       </main>
+      {isBeltCaseEditorOpen && (
+        <StudentBeltCaseEditor
+          beltRank={studentBeltRank}
+          onChange={updateBeltCaseSettings}
+          onClose={() => setIsBeltCaseEditorOpen(false)}
+          onReset={resetBeltCaseSettings}
+          onSave={saveBeltCaseSettings}
+          onToggleSticker={toggleBeltCaseSticker}
+          saveStatus={beltCaseSaveStatus}
+          settings={beltCaseSettings}
+          style={beltCaseEditorStyle}
+        />
+      )}
     </section>
   );
 }
@@ -7233,7 +8738,7 @@ function StaffOrStudentRoute({ children }: { children: ReactNode }) {
 
 function ManagerPanelRoute() {
   const { accountRole } = useAppState();
-  if (accountRole === "guardian") return <Navigate to="/" replace />;
+  if (accountRole !== "staff") return <Navigate to="/" replace />;
   return <ManagerLauncherPage />;
 }
 
