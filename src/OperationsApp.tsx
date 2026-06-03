@@ -1,6 +1,5 @@
 import {
   Award,
-  BarChart3,
   BookOpen,
   Camera,
   CalendarDays,
@@ -44,7 +43,11 @@ import messagesLauncherIcon from "./assets/manager-icons/Messages.webp";
 import reportsLauncherIcon from "./assets/manager-icons/Reports.webp";
 import schedulingLauncherIcon from "./assets/manager-icons/Scheduling.webp";
 import studentsLauncherIcon from "./assets/manager-icons/Students.webp";
+import { beltReadinessItems } from "./data";
+import { buildOperationsBackupSnapshot, makeOperationsBackupFilename } from "./operationsBackup";
+import { buildReportsCommandCenter, getMerchandiseReorderPoint, getMerchandiseTargetStock, isMissedClassFollowUpDue, isQueuedMessageDeliverable, type ReportsAttendanceGapCandidate, type ReportsCelebrationCandidate, type ReportsClassReminderCandidate, type ReportsDirectMessageReplyCandidate, type ReportsNewStudentCheckInCandidate, type ReportsPriorityAction, type ReportsProfileUpdateCandidate } from "./operationsReports";
 import { useAppState } from "./state";
+import { buildStudentBeltProgress, type StudentBeltProgress } from "./studentProgress";
 import {
   applyAppTheme,
   applyStoredVisualTheme,
@@ -61,8 +64,8 @@ import {
   type VisualColorKey,
   type VisualThemeColors
 } from "./theme";
-import type { ChildAccount, ClassWeekday, ManagedAccount, ManagerAccessKey, MerchandiseItem, MessageLog, ScheduledClass, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TrainingVideo, TrainingVideoFolder } from "./types";
-import { formatMoney, validateEmail } from "./utils";
+import type { ChildAccount, ClassWeekday, DirectMessage, ManagedAccount, ManagerAccessKey, MerchandiseItem, MessageLog, ScheduledClass, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TrainingVideo, TrainingVideoFolder } from "./types";
+import { downloadTextFile, formatMoney, validateEmail } from "./utils";
 
 const beltOptions = ["White", "Yellow", "Orange", "Green", "Blue", "Purple", "Brown", "Red", "Dark Brown", "Black"];
 const weekdayOptions: { value: ClassWeekday; label: string; short: string }[] = [
@@ -99,7 +102,7 @@ const managerLauncherItems: ManagerLauncherItem[] = [
   { label: "Scheduling", icon: "scheduling" },
   { label: "Merchandise", icon: "merchandise" },
   { label: "Videos", icon: "videos" },
-  { label: "Reports", icon: "reports", future: true }
+  { label: "Reports", icon: "reports" }
 ];
 
 const studentLauncherItems: ManagerLauncherItem[] = [
@@ -245,6 +248,57 @@ function fullName(student: StudentRecord) {
   return `${student.firstName} ${student.lastName}`.trim();
 }
 
+function isCurrentOperationsStudent(student: StudentRecord) {
+  return (student.status?.trim() || "Active").toLowerCase() !== "inactive";
+}
+
+function selectSessionStudent(students: StudentRecord[], sessionEmail?: string, managedStudentId?: string) {
+  const normalizedEmail = sessionEmail?.toLowerCase();
+  return (
+    (managedStudentId ? students.find((student) => student.id === managedStudentId) : undefined) ??
+    (normalizedEmail ? students.find((student) => student.email.toLowerCase() === normalizedEmail) : undefined) ??
+    students.find((student) => (student.status ?? "Active").toLowerCase() === "active") ??
+    students[0]
+  );
+}
+
+function scheduleTimeSortValue(time: string) {
+  const match = time.trim().match(/^(\d{1,2}):(\d{2})\s?(AM|PM)?$/i);
+  if (!match) return Number.MAX_SAFE_INTEGER;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const period = match[3]?.toUpperCase();
+  if (period === "PM" && hours !== 12) hours += 12;
+  if (period === "AM" && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+}
+
+function sortScheduledItemsByDateTime(items: ScheduledClass[]) {
+  return [...items].sort(
+    (left, right) =>
+      left.date.localeCompare(right.date) ||
+      scheduleTimeSortValue(left.time) - scheduleTimeSortValue(right.time) ||
+      left.title.localeCompare(right.title)
+  );
+}
+
+function findNextStudentScheduledClass(scheduledClasses: ScheduledClass[], studentId: string | undefined, today: string) {
+  const upcomingItems = sortScheduledItemsByDateTime(scheduledClasses.filter((item) => item.date >= today));
+  const linkedItem = studentId ? upcomingItems.find((item) => item.studentId === studentId) : undefined;
+  return linkedItem ?? upcomingItems.find((item) => !item.studentId);
+}
+
+function findNextStudioEvent(studioEvents: StudioEvent[], today: string) {
+  return [...studioEvents]
+    .filter((event) => event.date >= today)
+    .sort(
+      (left, right) =>
+        left.date.localeCompare(right.date) ||
+        scheduleTimeSortValue(left.time) - scheduleTimeSortValue(right.time) ||
+        left.title.localeCompare(right.title)
+    )[0];
+}
+
 function formatClockTime(time: string) {
   const [hours = "0", minutes = "00"] = time.split(":");
   const date = new Date(2026, 0, 1, Number(hours), Number(minutes));
@@ -267,6 +321,8 @@ function scheduleTypeLabel(type: string) {
 }
 
 function messageKindLabel(kind: MessageLog["kind"]) {
+  if (kind === "celebration") return "Celebration text";
+  if (kind === "profile-update") return "Profile update text";
   if (kind === "follow-up") return "Missed-class follow-up";
   if (kind === "marketing") return "Marketing blast";
   if (kind === "welcome") return "Welcome text";
@@ -1158,10 +1214,11 @@ function ManagerLauncherWorkspace({ tool }: { tool: ManagerLauncherIconKind }) {
 }
 
 function StudentPanelDashboardPage() {
-  const { scheduledClasses, students, studioEvents } = useAppState();
-  const selectedStudent = students[0];
-  const nextScheduledClass = scheduledClasses.find((item) => !item.studentId || item.studentId === selectedStudent?.id) ?? scheduledClasses[0];
-  const nextEvent = studioEvents[0];
+  const { currentManagedAccount, scheduledClasses, session, students, studioEvents } = useAppState();
+  const selectedStudent = selectSessionStudent(students, session?.email, currentManagedAccount?.studentId);
+  const today = toDateKey(useLiveCalendarDate());
+  const nextScheduledClass = findNextStudentScheduledClass(scheduledClasses, selectedStudent?.id, today);
+  const nextEvent = findNextStudioEvent(studioEvents, today);
   const studentName = selectedStudent ? fullName(selectedStudent) : "Cho's Student";
 
   return (
@@ -1281,31 +1338,77 @@ function StudentStudyPage() {
   );
 }
 
+function completedReadinessItemCount(progress: StudentBeltProgress) {
+  if (progress.readyForReview) return beltReadinessItems.length;
+  if (!progress.classesRequired) return 0;
+  return Math.min(beltReadinessItems.length, Math.max(1, Math.floor((progress.progressPercent / 100) * beltReadinessItems.length)));
+}
+
 function StudentTestPage() {
-  const testItems = [
-    { title: "Attendance", detail: "Stay consistent with classes before the next belt evaluation." },
-    { title: "Readiness", detail: "Ask an instructor to confirm forms, kicks, and focus before testing." },
-    { title: "Event Prep", detail: "Watch event notifications for color belt testing dates and arrival details." }
-  ];
+  const { currentManagedAccount, session, students } = useAppState();
+  const selectedStudent = selectSessionStudent(students, session?.email, currentManagedAccount?.studentId);
+  const progress = selectedStudent ? buildStudentBeltProgress(selectedStudent) : undefined;
+  const studentName = selectedStudent ? fullName(selectedStudent) : "Cho's Student";
+  const rankLabel = progress ? `${progress.rankName} Belt` : "No rank";
+  const classesLabel = progress ? `${progress.classesAttended} of ${progress.classesRequired} classes` : "No class count";
+  const reviewStatus = progress?.isBlackBelt
+    ? "Ongoing black belt training"
+    : progress?.readyForReview
+      ? "Ready for instructor review"
+      : `${progress?.classesRemaining ?? 0} class${progress?.classesRemaining === 1 ? "" : "es"} to testing review`;
+  const statusMetricLabel = progress?.readyForReview || progress?.isBlackBelt ? "Review status" : "Classes to review";
+  const statusMetricValue = progress?.readyForReview ? "Ready" : progress?.isBlackBelt ? "Ongoing" : progress?.classesRemaining ?? 0;
+  const completeReadinessItems = progress ? completedReadinessItemCount(progress) : 0;
 
   return (
-    <OperationsPage className="operations-page--workflow" title="Test" text="Testing readiness reminders and next-step preparation for students.">
+    <OperationsPage className="operations-page--workflow student-test-page" title="Test" text="Testing readiness reminders and next-step preparation for students.">
+      <div className="operations-stats student-test-stats">
+        <StatCard label="Student" value={studentName} icon={<Users />} />
+        <StatCard label="Current rank" value={rankLabel} icon={<Award />} />
+        <StatCard label={statusMetricLabel} value={statusMetricValue} icon={<Target />} />
+      </div>
+
+      <section className="operations-panel workflow-directory-panel student-test-progress-panel" aria-label="Student belt progress">
+        <div className="student-roster-head">
+          <div>
+            <h2>{studentName}</h2>
+            <p>{reviewStatus}</p>
+          </div>
+          <span className="student-test-rank-chip">{rankLabel}</span>
+        </div>
+        {progress ? (
+          <div className="student-test-progress-grid">
+            <div className="student-test-progress-copy">
+              <span>{classesLabel}</span>
+              <strong>{progress.progressPercent}% complete</strong>
+              <p>{progress.focus}</p>
+              {progress.nextRankName && <p>Next rank target: {progress.nextRankName} Belt.</p>}
+            </div>
+            <div className="student-test-progress-meter" aria-label={`${progress.progressPercent}% of ${progress.classesRequired} classes complete`}>
+              <span style={{ width: `${progress.progressPercent}%` }} />
+            </div>
+          </div>
+        ) : (
+          <p className="operations-note">No student record is linked to this account yet.</p>
+        )}
+      </section>
+
       <section className="operations-panel workflow-directory-panel" aria-label="Student test readiness">
         <div className="student-roster-head">
           <div>
             <h2>Testing Checklist</h2>
-            <p>Key readiness points before a student signs up for belt testing.</p>
+            <p>Key readiness points before {studentName} signs up for belt testing.</p>
           </div>
         </div>
         <div className="workflow-directory-grid" aria-label="Testing checklist cards">
-          {testItems.map((item) => (
-            <article className="workflow-directory-group" key={item.title}>
+          {beltReadinessItems.map((item, index) => (
+            <article className={`workflow-directory-group student-test-readiness-card${index < completeReadinessItems ? " is-complete" : ""}`} key={item.id}>
               <div className="workflow-directory-group-head">
                 <div>
                   <span className="workflow-directory-swatch" aria-hidden="true" />
-                  <h3>{item.title}</h3>
+                  <h3>{item.label}</h3>
                 </div>
-                <span>Test</span>
+                <span>{index < completeReadinessItems ? "Ready" : "Practice"}</span>
               </div>
               <p>{item.detail}</p>
             </article>
@@ -1869,6 +1972,11 @@ type ManagerHomeThread = {
   avatar: string;
   accent: string;
   unread?: boolean;
+  source?: "direct";
+  body?: string;
+  audienceLabel?: string;
+  replyRecipientId?: string;
+  replyRecipientName?: string;
 };
 
 type ManagerHomeFeedFilter = "all" | ManagerHomeThread["kind"];
@@ -2243,6 +2351,24 @@ function scheduleItemOccursOnDate(item: ScheduledClass, day: Date) {
   return toDateKey(startDate) <= dateKey && startDate.getDay() === day.getDay();
 }
 
+function nextWeeklyScheduleOccurrenceDate(item: ScheduledClass, todayKey: string) {
+  if (!item.recurring) return item.date;
+  const startDate = parseCalendarDate(item.date);
+  const todayDate = parseCalendarDate(todayKey);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(todayDate.getTime()) || item.date >= todayKey) return item.date;
+
+  const daysSinceStart = Math.ceil((todayDate.getTime() - startDate.getTime()) / 86_400_000);
+  const weeksSinceStart = Math.ceil(daysSinceStart / 7);
+  const nextDate = new Date(startDate);
+  nextDate.setDate(startDate.getDate() + weeksSinceStart * 7);
+  return toDateKey(nextDate);
+}
+
+function oneTimeScheduleStatusLabel(item: ScheduledClass, todayKey: string) {
+  if (item.recurring) return undefined;
+  return item.date < todayKey ? "Past one-time item" : "Upcoming one-time item";
+}
+
 function hasRecurringStudioClass(day: Date, studioClasses: StudioClass[]) {
   return studioClasses.some((studioClass) => studioClass.recurring !== false && studioClass.daysOfWeek.includes(day.getDay() as ClassWeekday));
 }
@@ -2344,6 +2470,114 @@ function formatManagerComposeTimestamp(date: Date) {
   };
 }
 
+function formatDirectMessageTimestamp(createdAt: string) {
+  const date = new Date(createdAt);
+  return formatManagerComposeTimestamp(Number.isNaN(date.getTime()) ? new Date() : date);
+}
+
+function isStaffDirectParticipant(participantId: string) {
+  return participantId.trim().toLowerCase().startsWith("direct-staff-");
+}
+
+function directParticipantStudentId(participantId: string) {
+  const id = participantId.trim();
+  return id.startsWith("parent-") ? id.slice("parent-".length) : id;
+}
+
+function latestDirectMessagesByThread(directMessages: readonly DirectMessage[]) {
+  const latestMessages = new Map<string, DirectMessage>();
+  directMessages.forEach((message) => {
+    const threadId = message.threadId.trim();
+    if (message.status !== "sent" || !threadId || !message.createdAt.trim() || !message.body.trim()) return;
+    const previous = latestMessages.get(threadId);
+    if (!previous || message.createdAt.localeCompare(previous.createdAt) > 0 || (message.createdAt === previous.createdAt && message.id.localeCompare(previous.id) > 0)) {
+      latestMessages.set(threadId, message);
+    }
+  });
+  return [...latestMessages.values()];
+}
+
+function sortHomeFeedThreads(threads: ManagerHomeThread[]) {
+  return [...threads].sort((left, right) => right.sentDateTime.localeCompare(left.sentDateTime) || left.title.localeCompare(right.title));
+}
+
+function buildManagerDirectMessageFeedThreads(
+  directMessages: readonly DirectMessage[],
+  students: readonly StudentRecord[],
+  readThreadIds: ReadonlySet<string>,
+  hiddenThreadIds: ReadonlySet<string>
+) {
+  const currentStudentsById = new Map(students.filter(isCurrentOperationsStudent).map((student) => [student.id, student]));
+  return latestDirectMessagesByThread(directMessages)
+    .flatMap((message): ManagerHomeThread[] => {
+      if (hiddenThreadIds.has(message.threadId) || (!isStaffDirectParticipant(message.senderId) && !isStaffDirectParticipant(message.recipientId))) return [];
+      const replyParticipantId = isStaffDirectParticipant(message.senderId) ? message.recipientId : message.senderId;
+      if (isStaffDirectParticipant(replyParticipantId)) return [];
+      const student = currentStudentsById.get(directParticipantStudentId(replyParticipantId));
+      if (!student) return [];
+      const timestamp = formatDirectMessageTimestamp(message.createdAt);
+      const senderName = message.senderName.trim() || fullName(student);
+      const replyRecipientName = (isStaffDirectParticipant(message.senderId) ? message.recipientName : message.senderName).trim() || fullName(student);
+      return [{
+        id: message.threadId,
+        kind: "message",
+        sender: senderName,
+        title: `App message from ${senderName}`,
+        preview: composeMessagePreview(message.body),
+        body: message.body.trim(),
+        sentDate: timestamp.sentDate,
+        sentTime: timestamp.sentTime,
+        sentDateTime: timestamp.sentDateTime,
+        avatar: messagesLauncherIcon,
+        accent: "#7be4ff",
+        unread: isStaffDirectParticipant(message.recipientId) && !readThreadIds.has(message.threadId),
+        source: "direct",
+        audienceLabel: replyParticipantId.startsWith("parent-") ? `${fullName(student)} family app message` : `${fullName(student)} student app message`,
+        replyRecipientId: replyParticipantId,
+        replyRecipientName
+      }];
+    });
+}
+
+function buildStudentDirectMessageFeedThreads(
+  directMessages: readonly DirectMessage[],
+  selectedStudent: StudentRecord | undefined,
+  readThreadIds: ReadonlySet<string>,
+  hiddenThreadIds: ReadonlySet<string>
+) {
+  if (!selectedStudent || !isCurrentOperationsStudent(selectedStudent)) return [];
+  return latestDirectMessagesByThread(directMessages)
+    .flatMap((message): ManagerHomeThread[] => {
+      if (hiddenThreadIds.has(message.threadId)) return [];
+      const studentIsSender = message.senderId === selectedStudent.id;
+      const studentIsRecipient = message.recipientId === selectedStudent.id;
+      if (!studentIsSender && !studentIsRecipient) return [];
+      const replyParticipantId = studentIsSender ? message.recipientId : message.senderId;
+      if (!isStaffDirectParticipant(replyParticipantId)) return [];
+      const timestamp = formatDirectMessageTimestamp(message.createdAt);
+      const senderName = message.senderName.trim() || (studentIsSender ? fullName(selectedStudent) : "Cho's Manager");
+      const replyRecipientName = (studentIsSender ? message.recipientName : message.senderName).trim() || "Cho's Manager";
+      return [{
+        id: message.threadId,
+        kind: "message",
+        sender: senderName,
+        title: `App message from ${senderName}`,
+        preview: composeMessagePreview(message.body),
+        body: message.body.trim(),
+        sentDate: timestamp.sentDate,
+        sentTime: timestamp.sentTime,
+        sentDateTime: timestamp.sentDateTime,
+        avatar: messagesLauncherIcon,
+        accent: "#7be4ff",
+        unread: studentIsRecipient && !readThreadIds.has(message.threadId),
+        source: "direct",
+        audienceLabel: studentIsSender ? "message to Cho's staff" : "message for your student profile",
+        replyRecipientId: replyParticipantId,
+        replyRecipientName
+      }];
+    });
+}
+
 function buildHomeAgendaItems(weekDays: Date[], scheduledClasses: ScheduledClass[], studioClasses: StudioClass[], studioEvents: StudioEvent[]) {
   return weekDays
     .flatMap<ManagerHomeAgendaItem>((day) => {
@@ -2419,21 +2653,18 @@ function ManagerPageTitleFrame({ title, className = "" }: { title: string; class
 }
 
 function StudentProfilePage() {
-  const { logout, scheduledClasses, session, showToast, studioClasses, studioEvents, students } = useAppState();
+  const { currentManagedAccount, directMessages, logout, scheduledClasses, sendDirectMessage, session, showToast, studioClasses, studioEvents, students } = useAppState();
   const today = useLiveCalendarDate();
   const selectedStudent = useMemo(() => {
-    const sessionEmail = session?.email.toLowerCase();
-    return (
-      (sessionEmail ? students.find((student) => student.email.toLowerCase() === sessionEmail) : undefined) ??
-      students.find((student) => (student.status ?? "Active").toLowerCase() === "active") ??
-      students[0]
-    );
-  }, [session?.email, students]);
+    return selectSessionStudent(students, session?.email, currentManagedAccount?.studentId);
+  }, [currentManagedAccount?.studentId, session?.email, students]);
   const [studentProfile, setStudentProfile] = useState(() => readStudentProfile(session?.email, selectedStudent));
   const [studentProfileOpen, setStudentProfileOpen] = useState(false);
   const [homeScheduleWeekStartKey, setHomeScheduleWeekStartKey] = useState(() => toDateKey(weekDaysForDate(today)[0]));
   const [selectedHomeScheduleDateKey, setSelectedHomeScheduleDateKey] = useState(() => toDateKey(today));
-  const [feedThreads, setFeedThreads] = useState(() => studentHomeThreads);
+  const [manualFeedThreads, setManualFeedThreads] = useState(() => studentHomeThreads);
+  const [readDirectThreadIds, setReadDirectThreadIds] = useState<Set<string>>(() => new Set());
+  const [hiddenDirectThreadIds] = useState<Set<string>>(() => new Set());
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isFeedSearchOpen, setIsFeedSearchOpen] = useState(false);
@@ -2452,6 +2683,14 @@ function StudentProfilePage() {
     startProgress: 1,
     startY: 0
   });
+  const directFeedThreads = useMemo(
+    () => buildStudentDirectMessageFeedThreads(directMessages, selectedStudent, readDirectThreadIds, hiddenDirectThreadIds),
+    [directMessages, hiddenDirectThreadIds, readDirectThreadIds, selectedStudent]
+  );
+  const feedThreads = useMemo(
+    () => sortHomeFeedThreads([...directFeedThreads, ...manualFeedThreads]),
+    [directFeedThreads, manualFeedThreads]
+  );
   const messageCount = feedThreads.filter((thread) => thread.kind === "message").length;
   const eventCount = feedThreads.filter((thread) => thread.kind === "event").length;
   const visibleThreads = feedThreads.filter((thread) => {
@@ -2680,7 +2919,12 @@ function StudentProfilePage() {
 
   const openFeedThread = (threadId: string) => {
     setSelectedThreadId((currentThreadId) => currentThreadId === threadId ? null : threadId);
-    setFeedThreads((currentThreads) =>
+    const selectedThread = feedThreads.find((thread) => thread.id === threadId);
+    if (selectedThread?.source === "direct") {
+      setReadDirectThreadIds((currentIds) => new Set(currentIds).add(threadId));
+      return;
+    }
+    setManualFeedThreads((currentThreads) =>
       currentThreads.map((thread) => thread.id === threadId && thread.unread ? { ...thread, unread: false } : thread)
     );
   };
@@ -2721,6 +2965,23 @@ function StudentProfilePage() {
   const sendReply = () => {
     if (!replyText.trim()) {
       showToast("Write a reply before sending.");
+      return;
+    }
+    const selectedThread = feedThreads.find((thread) => thread.id === selectedThreadId);
+    if (selectedThread?.source === "direct" && selectedThread.replyRecipientId && selectedStudent) {
+      const sentMessage = sendDirectMessage({
+        senderId: selectedStudent.id,
+        senderName: fullName(selectedStudent),
+        recipientId: selectedThread.replyRecipientId,
+        recipientName: selectedThread.replyRecipientName ?? "Cho's Manager",
+        body: replyText
+      });
+      if (sentMessage) {
+        showToast(`Reply sent to ${sentMessage.recipientName}.`);
+        setReplyText("");
+        return;
+      }
+      showToast("That app message thread is no longer available.");
       return;
     }
     showToast("Reply queued for Cho's staff.");
@@ -2975,15 +3236,21 @@ function StudentProfilePage() {
                               </span>
                               <div>
                                 <strong>{thread.sender}</strong>
-                                <p>{thread.kind === "event" ? "event notice for students and families" : "message for your student profile"}</p>
+                                <p>{thread.audienceLabel ?? (thread.kind === "event" ? "event notice for students and families" : "message for your student profile")}</p>
                               </div>
                               <button type="button" aria-label="More message actions">
                                 <MoreHorizontal size={20} />
                               </button>
                             </header>
                             <div className="manager-home-message-copy">
-                              <p>Hello {studentName},</p>
-                              <p>{thread.preview.replace("...", ".")} Please review this update before your next class.</p>
+                              {thread.source === "direct" ? (
+                                <p>{thread.body ?? thread.preview}</p>
+                              ) : (
+                                <>
+                                  <p>Hello {studentName},</p>
+                                  <p>{thread.preview.replace("...", ".")} Please review this update before your next class.</p>
+                                </>
+                              )}
                             </div>
                             {thread.kind === "event" && (
                               <section className="manager-home-event-card" aria-label="Event details">
@@ -2994,8 +3261,8 @@ function StudentProfilePage() {
                                 <p><CheckCircle2 size={18} /> <span>Check-in Time: 8:00 AM</span></p>
                               </section>
                             )}
-                            <p>{thread.kind === "event" ? "Arrive on time, bring your gear, and check in with the front desk." : "This message is saved to your Profile page for quick follow-up."}</p>
-                            <p>Best regards,<br />{thread.sender}</p>
+                            <p>{thread.source === "direct" ? "Reply here to keep the conversation with Cho's staff moving." : thread.kind === "event" ? "Arrive on time, bring your gear, and check in with the front desk." : "This message is saved to your Profile page for quick follow-up."}</p>
+                            {thread.source !== "direct" && <p>Best regards,<br />{thread.sender}</p>}
                             <div className="manager-home-reply">
                               <input
                                 aria-label="Write a reply"
@@ -3129,8 +3396,9 @@ function ParentProfileTabContent({
   studioEvents: StudioEvent[];
 }) {
   const childName = selectedChild?.name ?? "your child";
-  const nextClass = scheduledClasses.find((item) => !item.studentId) ?? scheduledClasses[0];
-  const nextEvent = studioEvents[0];
+  const today = toDateKey(useLiveCalendarDate());
+  const nextClass = findNextStudentScheduledClass(scheduledClasses, selectedChild?.id, today);
+  const nextEvent = findNextStudioEvent(studioEvents, today);
 
   if (activeTab === "classes") {
     return (
@@ -3470,7 +3738,7 @@ function ParentChildHandoffPrompt({
 }
 
 function ParentProfilePage() {
-  const { addChildAccount, guardianChildren, loginChildAccount, logout, scheduledClasses, session, showToast, studioClasses, studioEvents, updateChildAccount } = useAppState();
+  const { addChildAccount, childUsernameExists, guardianChildren, loginChildAccount, logout, scheduledClasses, session, showToast, studioClasses, studioEvents, updateChildAccount } = useAppState();
   const [activeTab, setActiveTab] = useState<ParentProfileTab>("dashboard");
   const [selectedChildId, setSelectedChildId] = useState(() => guardianChildren[0]?.id ?? "");
   const [childModalMode, setChildModalMode] = useState<"add" | "edit" | null>(null);
@@ -3717,7 +3985,7 @@ function ParentProfilePage() {
       showToast("Create a child password.");
       return;
     }
-    if (guardianChildren.some((child) => child.id !== editingChildId && child.username.toLowerCase() === normalizedUsername.toLowerCase())) {
+    if (childUsernameExists(normalizedUsername, { excludeChildId: childModalMode === "edit" ? editingChildId : undefined })) {
       if (tutorialActive && childModalMode === "add") {
         setTutorialStepId("child-username");
       }
@@ -3948,7 +4216,7 @@ function ParentProfilePage() {
 }
 
 function ManagerHomePage() {
-  const { addStudioEvent, logout, scheduledClasses, sendDirectMessage, session, showToast, studioClasses, studioEvents, students } = useAppState();
+  const { addStudioEvent, directMessages, logout, scheduledClasses, sendDirectMessage, session, showToast, studioClasses, studioEvents, students } = useAppState();
   const today = useLiveCalendarDate();
   const [managerProfile, setManagerProfile] = useState(() => readManagerProfile(session?.email));
   const activeStudentCount = students.filter((student) => (student.status ?? "Active").toLowerCase() === "active").length;
@@ -3959,7 +4227,9 @@ function ManagerHomePage() {
   );
   const [homeScheduleWeekStartKey, setHomeScheduleWeekStartKey] = useState(() => toDateKey(weekDaysForDate(parseCalendarDate(defaultHomeScheduleDateKey))[0]));
   const [selectedHomeScheduleDateKey, setSelectedHomeScheduleDateKey] = useState(defaultHomeScheduleDateKey);
-  const [feedThreads, setFeedThreads] = useState(() => managerHomeThreads);
+  const [manualFeedThreads, setManualFeedThreads] = useState(() => managerHomeThreads);
+  const [readDirectThreadIds, setReadDirectThreadIds] = useState<Set<string>>(() => new Set());
+  const [hiddenDirectThreadIds, setHiddenDirectThreadIds] = useState<Set<string>>(() => new Set());
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedFeedThreadIds, setSelectedFeedThreadIds] = useState<Set<string>>(() => new Set());
   const [searchQuery, setSearchQuery] = useState("");
@@ -3990,16 +4260,25 @@ function ManagerHomePage() {
     startProgress: 1,
     startY: 0
   });
+  const selectedFeedCount = selectedFeedThreadIds.size;
+  const currentComposeStudents = useMemo(() => students.filter(isCurrentOperationsStudent), [students]);
+  const directFeedThreads = useMemo(
+    () => buildManagerDirectMessageFeedThreads(directMessages, currentComposeStudents, readDirectThreadIds, hiddenDirectThreadIds),
+    [currentComposeStudents, directMessages, hiddenDirectThreadIds, readDirectThreadIds]
+  );
+  const feedThreads = useMemo(
+    () => sortHomeFeedThreads([...directFeedThreads, ...manualFeedThreads]),
+    [directFeedThreads, manualFeedThreads]
+  );
   const messageCount = feedThreads.filter((thread) => thread.kind === "message").length;
   const eventCount = feedThreads.filter((thread) => thread.kind === "event").length;
-  const selectedFeedCount = selectedFeedThreadIds.size;
   const composeRecipients = useMemo(
     () => [
       ...managerComposeStaffRecipients,
-      ...students.map(studentToComposeRecipient),
-      ...students.map(studentToParentComposeRecipient)
+      ...currentComposeStudents.map(studentToComposeRecipient),
+      ...currentComposeStudents.map(studentToParentComposeRecipient)
     ],
-    [students]
+    [currentComposeStudents]
   );
   const visibleComposeRecipients = useMemo(() => {
     const query = composeRecipientQuery.trim().toLowerCase();
@@ -4283,7 +4562,12 @@ function ManagerHomePage() {
 
   const openFeedThread = (threadId: string) => {
     setSelectedThreadId((currentThreadId) => currentThreadId === threadId ? null : threadId);
-    setFeedThreads((currentThreads) =>
+    const selectedThread = feedThreads.find((thread) => thread.id === threadId);
+    if (selectedThread?.source === "direct") {
+      setReadDirectThreadIds((currentIds) => new Set(currentIds).add(threadId));
+      return;
+    }
+    setManualFeedThreads((currentThreads) =>
       currentThreads.map((thread) => thread.id === threadId && thread.unread ? { ...thread, unread: false } : thread)
     );
   };
@@ -4291,7 +4575,14 @@ function ManagerHomePage() {
   const deleteSelectedFeedThreads = () => {
     if (!selectedFeedCount) return;
     const idsToDelete = selectedFeedThreadIds;
-    setFeedThreads((currentThreads) => currentThreads.filter((thread) => !idsToDelete.has(thread.id)));
+    setHiddenDirectThreadIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      feedThreads.forEach((thread) => {
+        if (thread.source === "direct" && idsToDelete.has(thread.id)) nextIds.add(thread.id);
+      });
+      return nextIds;
+    });
+    setManualFeedThreads((currentThreads) => currentThreads.filter((thread) => !idsToDelete.has(thread.id)));
     setSelectedThreadId((currentThreadId) => currentThreadId && idsToDelete.has(currentThreadId) ? null : currentThreadId);
     setSelectedFeedThreadIds(new Set());
     showToast(`${selectedFeedCount} ${selectedFeedCount === 1 ? "item" : "items"} deleted from the Home Page feed.`);
@@ -4468,7 +4759,7 @@ function ManagerHomePage() {
       });
     }
 
-    setFeedThreads((currentThreads) => [createdThread, ...currentThreads]);
+    setManualFeedThreads((currentThreads) => [createdThread, ...currentThreads]);
     setSelectedThreadId(createdThread.id);
     setSelectedFeedThreadIds(new Set());
     setFeedFilter("all");
@@ -4482,6 +4773,23 @@ function ManagerHomePage() {
   const sendReply = () => {
     if (!replyText.trim()) {
       showToast("Write a reply before sending.");
+      return;
+    }
+    const selectedThread = feedThreads.find((thread) => thread.id === selectedThreadId);
+    if (selectedThread?.source === "direct" && selectedThread.replyRecipientId) {
+      const sentMessage = sendDirectMessage({
+        senderId: "direct-staff-seed",
+        senderName: "Cho's Manager",
+        recipientId: selectedThread.replyRecipientId,
+        recipientName: selectedThread.replyRecipientName ?? selectedThread.sender,
+        body: replyText
+      });
+      if (sentMessage) {
+        showToast(`Reply sent to ${sentMessage.recipientName}.`);
+        setReplyText("");
+        return;
+      }
+      showToast("That app message thread is no longer available.");
       return;
     }
     showToast("Reply queued for the selected message.");
@@ -4760,15 +5068,21 @@ function ManagerHomePage() {
                               </span>
                               <div>
                                 <strong>{thread.sender}</strong>
-                                <p>{thread.kind === "event" ? "event notice to All Students, Coaches" : "message to All Students, Coaches"}</p>
+                                <p>{thread.audienceLabel ?? (thread.kind === "event" ? "event notice to All Students, Coaches" : "message to All Students, Coaches")}</p>
                               </div>
                               <button type="button" aria-label="More message actions">
                                 <MoreHorizontal size={20} />
                               </button>
                             </header>
                             <div className="manager-home-message-copy">
-                              <p>Hello everyone,</p>
-                              <p>{thread.preview.replace("...", ".")} Please read the details carefully and reach out if you have any questions.</p>
+                              {thread.source === "direct" ? (
+                                <p>{thread.body ?? thread.preview}</p>
+                              ) : (
+                                <>
+                                  <p>Hello everyone,</p>
+                                  <p>{thread.preview.replace("...", ".")} Please read the details carefully and reach out if you have any questions.</p>
+                                </>
+                              )}
                             </div>
                             {thread.kind === "event" && (
                               <section className="manager-home-event-card" aria-label="Event details">
@@ -4779,8 +5093,8 @@ function ManagerHomePage() {
                                 <p><CheckCircle2 size={18} /> <span>Check-in Time: 8:00 AM on July 25</span></p>
                               </section>
                             )}
-                            <p>{thread.kind === "event" ? "Make sure to arrive on time and bring all required gear. Let's make this a great event!" : "This message is ready for staff follow-up from the Home Page feed."}</p>
-                            <p>Best regards,<br />{thread.sender}</p>
+                            <p>{thread.source === "direct" ? "Reply here to answer the student or family without leaving the Profile feed." : thread.kind === "event" ? "Make sure to arrive on time and bring all required gear. Let's make this a great event!" : "This message is ready for staff follow-up from the Home Page feed."}</p>
+                            {thread.source !== "direct" && <p>Best regards,<br />{thread.sender}</p>}
                             <div className="manager-home-reply">
                               <input
                                 aria-label="Write a reply"
@@ -5114,7 +5428,7 @@ function ManagerHomePage() {
 }
 
 function ManagerLauncherPage() {
-  const { accountRole, logout, managerAccountAccess, session, showToast, students } = useAppState();
+  const { accountRole, currentManagedAccount, logout, managerAccountAccess, session, showToast, students } = useAppState();
   const location = useLocation();
   const navigate = useNavigate();
   const [profileOpen, setProfileOpen] = useState(false);
@@ -5130,7 +5444,7 @@ function ManagerLauncherPage() {
     : launcherItems.find((item) => item.icon === new URLSearchParams(location.search).get("tool")) ?? launcherItems[0] ?? managerLauncherItems[0];
   const launcherName = isStudentPanel ? "student" : "manager";
   const sidebarToggleLabel = isSidebarCollapsed ? `Expand ${launcherName} app launcher` : `Collapse ${launcherName} app launcher`;
-  const studentRecord = students[0];
+  const studentRecord = selectSessionStudent(students, session?.email, currentManagedAccount?.studentId);
   const studentPanelProfile = isStudentPanel ? readStudentProfile(session?.email, studentRecord) : undefined;
   const profileActionPhoto = isStudentPanel
     ? studentPanelProfile?.photoDataUrl ?? (studentRecord?.profileImagePath ? publicAsset(studentRecord.profileImagePath) : publicAsset("assets/CheetahProfilePic/Cheetah.png"))
@@ -5509,7 +5823,8 @@ function CreateAccountsPage() {
     managedAccounts,
     managedUsernameExists,
     managerAccountAccess,
-    showToast
+    showToast,
+    updateManagedAccountStatus
   } = useAppState();
   const [mode, setMode] = useState<"staff" | "student">("staff");
   const [staffForm, setStaffForm] = useState(makeBlankStaffAccountForm);
@@ -5633,7 +5948,8 @@ function CreateAccountsPage() {
       phone: student.phone,
       title: `${student.beltRank} Belt Student`,
       notes: studentForm.notes,
-      studentId: student.id
+      studentId: student.id,
+      linkedStudent: student
     });
 
     if (!account) {
@@ -5643,6 +5959,16 @@ function CreateAccountsPage() {
 
     setStudentForm(makeBlankStudentAccountForm());
     showToast(`${account.displayName} student login created.`);
+  };
+
+  const setManagedAccountLifecycleStatus = (account: ManagedAccount, status: ManagedAccount["status"]) => {
+    const updatedAccount = updateManagedAccountStatus(account.id, status);
+    if (!updatedAccount) {
+      showToast("Unable to update account status.");
+      return;
+    }
+
+    showToast(`${account.displayName} account ${status === "active" ? "reactivated" : "deactivated"}.`);
   };
 
   const renderAccountCard = (account: ManagedAccount) => (
@@ -5665,6 +5991,19 @@ function CreateAccountsPage() {
           {account.access.length ? account.access.map((key) => <span key={key}>{managerAccessLabelMap[key]}</span>) : <span>No manager tools</span>}
         </div>
       )}
+      <div className="create-account-card-actions">
+        {account.status === "inactive" ? (
+          <button type="button" onClick={() => setManagedAccountLifecycleStatus(account, "active")} aria-label={`Reactivate ${account.displayName} account`}>
+            <CheckCircle2 size={15} aria-hidden="true" />
+            <span>Reactivate</span>
+          </button>
+        ) : (
+          <button type="button" className="is-warning" onClick={() => setManagedAccountLifecycleStatus(account, "inactive")} aria-label={`Deactivate ${account.displayName} account`}>
+            <X size={15} aria-hidden="true" />
+            <span>Deactivate</span>
+          </button>
+        )}
+      </div>
     </article>
   );
 
@@ -5862,20 +6201,690 @@ function DashboardPage() {
   );
 }
 
-function ReportsPage() {
+function ReportsMetricCard({ label, value, icon }: { label: string; value: string | number; icon: ReactNode }) {
   return (
-    <section className="manager-future-page" aria-label="Manager reports">
-      <div className="manager-future-panel">
-        <BarChart3 size={72} strokeWidth={1.6} aria-hidden="true" />
-        <p>Coming soon</p>
-        <h1>Reports</h1>
+    <article className="operation-stat-card reports-metric-card" aria-label={`${label} report metric`}>
+      <span>{icon}</span>
+      <div>
+        <strong>{value}</strong>
+        <small>{label}</small>
       </div>
-    </section>
+    </article>
+  );
+}
+
+function ReportsPriorityActionContent({ action }: { action: ReportsPriorityAction }) {
+  return (
+    <>
+      <span className="reports-action-count">{action.count}</span>
+      <span className="reports-action-copy">
+        <strong>{action.title}</strong>
+        <small>{action.detail}</small>
+      </span>
+      <ChevronRight size={18} aria-hidden="true" />
+    </>
+  );
+}
+
+const reportsDirectActionIds = new Set([
+  "queued-texts",
+  "class-reminders",
+  "missed-class-follow-ups",
+  "attendance-gap-check-ins",
+  "trial-conversions",
+  "new-student-check-ins",
+  "celebration-outreach",
+  "profile-updates",
+  "lead-follow-ups",
+  "milestone-encouragement",
+  "belt-test-invites",
+  "paused-students",
+  "low-stock",
+  "stale-queued-text-cleanup",
+  "stale-schedule-cleanup"
+]);
+
+function isReportsDirectAction(action: ReportsPriorityAction) {
+  return reportsDirectActionIds.has(action.id);
+}
+
+function celebrationCandidateLabel(candidate: ReportsCelebrationCandidate) {
+  const reasonLabel = candidate.reason === "birthday" ? "Birthday" : "Training anniversary";
+  const dateLabel = candidate.daysAway === 0 ? "Today" : `${candidate.daysAway} day${candidate.daysAway === 1 ? "" : "s"}`;
+  const yearsLabel = candidate.reason === "anniversary" && candidate.years ? ` · ${candidate.years} year${candidate.years === 1 ? "" : "s"}` : "";
+  return `${reasonLabel} · ${dateLabel}${yearsLabel}`;
+}
+
+function profileUpdateCandidateLabel(candidate: ReportsProfileUpdateCandidate) {
+  const issuePreview = candidate.issues.slice(0, 3).join(" · ");
+  const remainingIssues = candidate.issueCount - 3;
+  return remainingIssues > 0 ? `${issuePreview} · ${remainingIssues} more` : issuePreview;
+}
+
+function classReminderCandidateLabel(candidate: ReportsClassReminderCandidate) {
+  const dateLabel = candidate.daysAway === 0 ? "Today" : `${candidate.daysAway} day${candidate.daysAway === 1 ? "" : "s"}`;
+  return `${candidate.title} · ${dateLabel} at ${candidate.time}`;
+}
+
+function newStudentCheckInCandidateLabel(candidate: ReportsNewStudentCheckInCandidate) {
+  const programLabel = candidate.program ? ` · ${candidate.program}` : "";
+  return `${candidate.daysSinceJoin} days since joining${programLabel}`;
+}
+
+function attendanceGapCandidateLabel(candidate: ReportsAttendanceGapCandidate) {
+  return `${candidate.daysSinceAttendance} days since attendance · ${candidate.lastAttendanceDate}`;
+}
+
+function directMessageReplyCandidateLabel(candidate: ReportsDirectMessageReplyCandidate) {
+  return candidate.senderName;
+}
+
+function directMessageReplyCandidateContext(candidate: ReportsDirectMessageReplyCandidate) {
+  return candidate.senderName === candidate.studentName ? "Student app message" : `${candidate.studentName} family message`;
+}
+
+function ReportsPriorityActionCard({ action, onRunAction }: { action: ReportsPriorityAction; onRunAction: (action: ReportsPriorityAction) => void }) {
+  if (isReportsDirectAction(action)) {
+    return (
+      <button className={`reports-action-card reports-action-card--${action.tone}`} type="button" aria-label={action.title} onClick={() => onRunAction(action)}>
+        <ReportsPriorityActionContent action={action} />
+      </button>
+    );
+  }
+
+  return (
+    <Link className={`reports-action-card reports-action-card--${action.tone}`} to={action.path} aria-label={action.title}>
+      <ReportsPriorityActionContent action={action} />
+    </Link>
+  );
+}
+
+function ReportsPage() {
+  const {
+    accounts,
+    accountRoles,
+    bookings,
+    checkIns,
+    clearStaleQueuedTexts,
+    childAccounts,
+    contacts,
+    deletePastOneTimeScheduledClasses,
+    directMessages,
+    leadReviews,
+    managedAccounts,
+    merchandiseItems,
+    messageCampaigns,
+    messageLogs,
+    orders,
+    restockLowInventory,
+    reviewLeadFollowUps,
+    restoreOperationsBackup,
+    scheduledClasses,
+    sendBeltTestInvites,
+    sendAttendanceGapCheckIns,
+    sendClassReminders,
+    sendCelebrationOutreach,
+    sendMissedClassFollowUps,
+    sendMilestoneEncouragements,
+    sendNewStudentCheckIns,
+    sendPausedStudentReactivationFollowUps,
+    sendProfileUpdateRequests,
+    sendQueuedTexts,
+    sendTrialConversionFollowUps,
+    showToast,
+    studioClasses,
+    studioEvents,
+    students,
+    studyGuideFolders,
+    studyGuideMaterials,
+    trainingVideoFolders,
+    trainingVideos
+  } = useAppState();
+  const backupRestoreInputRef = useRef<HTMLInputElement>(null);
+  const today = toDateKey(useLiveCalendarDate());
+  const backupInput = {
+    accounts,
+    accountRoles,
+    managedAccounts,
+    childAccounts,
+    students,
+    studioClasses,
+    scheduledClasses,
+    messageCampaigns,
+    messageLogs,
+    directMessages,
+    studioEvents,
+    merchandiseItems,
+    checkIns,
+    trainingVideoFolders,
+    trainingVideos,
+    studyGuideFolders,
+    studyGuideMaterials,
+    orders,
+    bookings,
+    contacts,
+    leadReviews
+  };
+  const report = useMemo(
+    () =>
+      buildReportsCommandCenter({
+        today,
+        students,
+        checkIns,
+        scheduledClasses,
+        studioClasses,
+        studioEvents,
+        messageLogs,
+        directMessages,
+        merchandiseItems,
+        bookings,
+        contacts,
+        leadReviews
+      }),
+    [bookings, checkIns, contacts, directMessages, leadReviews, merchandiseItems, messageLogs, scheduledClasses, studioClasses, studioEvents, students, today]
+  );
+  const backupSnapshot = useMemo(
+    () => buildOperationsBackupSnapshot(backupInput),
+    [
+      accounts,
+      accountRoles,
+      bookings,
+      checkIns,
+      childAccounts,
+      contacts,
+      directMessages,
+      leadReviews,
+      managedAccounts,
+      merchandiseItems,
+      messageCampaigns,
+      messageLogs,
+      orders,
+      scheduledClasses,
+      studioClasses,
+      studioEvents,
+      students,
+      studyGuideFolders,
+      studyGuideMaterials,
+      trainingVideoFolders,
+      trainingVideos
+    ]
+  );
+  const visibleBackupSections = backupSnapshot.sections.filter((section) => section.count > 0);
+  const topAttendanceRisks = report.attendanceRisks.slice(0, 4);
+  const topAttendanceGapCandidates = report.attendanceGapCandidates.slice(0, 4);
+  const topLeadCandidates = report.leadCandidates.slice(0, 4);
+  const topDirectMessageReplyCandidates = report.directMessageReplyCandidates.slice(0, 4);
+  const topNewStudentCheckInCandidates = report.newStudentCheckInCandidates.slice(0, 4);
+  const topCelebrationCandidates = report.celebrationCandidates.slice(0, 4);
+  const topProfileUpdateCandidates = report.profileUpdateCandidates.slice(0, 4);
+  const topClassReminderCandidates = report.classReminderCandidates.slice(0, 4);
+  const topMilestoneCandidates = report.milestoneCandidates.slice(0, 4);
+  const topTestCandidates = report.testReadinessCandidates.slice(0, 4);
+  const topCalendarItems = report.upcomingCalendarItems.slice(0, 4);
+  const exportOperationsBackup = () => {
+    const snapshot = buildOperationsBackupSnapshot(backupInput);
+    downloadTextFile(makeOperationsBackupFilename(snapshot.exportedAt), JSON.stringify(snapshot, null, 2), "application/json");
+    showToast("Operations backup JSON exported.");
+  };
+  const importOperationsBackup = (event: ReactChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const result = restoreOperationsBackup(String(reader.result ?? ""));
+        if (!result) {
+          showToast("Backup restore failed.");
+          return;
+        }
+        showToast(`Operations backup restored: ${result.restoredRecords} record${result.restoredRecords === 1 ? "" : "s"} across ${result.restoredSections} section${result.restoredSections === 1 ? "" : "s"}.`);
+      } catch (error) {
+        showToast(error instanceof Error ? `Backup restore failed: ${error.message}` : "Backup restore failed.");
+      } finally {
+        if (backupRestoreInputRef.current) {
+          backupRestoreInputRef.current.value = "";
+        }
+      }
+    };
+    reader.onerror = () => {
+      showToast("Backup restore failed: the selected file could not be read.");
+      if (backupRestoreInputRef.current) {
+        backupRestoreInputRef.current.value = "";
+      }
+    };
+    reader.readAsText(file);
+  };
+  const runReportsAction = (action: ReportsPriorityAction) => {
+    if (action.id === "belt-test-invites") {
+      const count = sendBeltTestInvites();
+      showToast(count ? `${count} belt testing invitation text${count === 1 ? "" : "s"} queued.` : "No belt testing invitations needed.");
+      return;
+    }
+    if (action.id === "trial-conversions") {
+      const count = sendTrialConversionFollowUps();
+      showToast(count ? `${count} trial conversion text${count === 1 ? "" : "s"} queued.` : "No trial conversion follow-ups needed.");
+      return;
+    }
+    if (action.id === "new-student-check-ins") {
+      const count = sendNewStudentCheckIns();
+      showToast(count ? `${count} new-student check-in text${count === 1 ? "" : "s"} queued.` : "No new-student check-ins needed.");
+      return;
+    }
+    if (action.id === "attendance-gap-check-ins") {
+      const count = sendAttendanceGapCheckIns();
+      showToast(count ? `${count} attendance gap check-in text${count === 1 ? "" : "s"} queued.` : "No attendance-gap check-ins needed.");
+      return;
+    }
+    if (action.id === "celebration-outreach") {
+      const count = sendCelebrationOutreach();
+      showToast(count ? `${count} celebration text${count === 1 ? "" : "s"} queued.` : "No celebration outreach needed.");
+      return;
+    }
+    if (action.id === "profile-updates") {
+      const count = sendProfileUpdateRequests();
+      showToast(count ? `${count} profile update text${count === 1 ? "" : "s"} queued.` : "No profile update requests needed.");
+      return;
+    }
+    if (action.id === "lead-follow-ups") {
+      const count = reviewLeadFollowUps();
+      showToast(count ? `${count} lead follow-up${count === 1 ? "" : "s"} marked reviewed.` : "No public leads need review.");
+      return;
+    }
+    if (action.id === "class-reminders") {
+      const count = sendClassReminders();
+      showToast(count ? `${count} class reminder text${count === 1 ? "" : "s"} queued.` : "No class reminders needed.");
+      return;
+    }
+    if (action.id === "milestone-encouragement") {
+      const count = sendMilestoneEncouragements();
+      showToast(count ? `${count} milestone encouragement text${count === 1 ? "" : "s"} queued.` : "No milestone encouragements needed.");
+      return;
+    }
+    if (action.id === "paused-students") {
+      const count = sendPausedStudentReactivationFollowUps();
+      showToast(count ? `${count} paused-student reactivation text${count === 1 ? "" : "s"} queued.` : "No paused-student reactivation follow-ups needed.");
+      return;
+    }
+    if (action.id === "low-stock") {
+      const count = restockLowInventory();
+      showToast(count ? `${count} low-stock item${count === 1 ? "" : "s"} restocked to par.` : "No low-stock inventory needs restocking.");
+      return;
+    }
+    if (action.id === "stale-queued-text-cleanup") {
+      const count = clearStaleQueuedTexts();
+      showToast(count ? `${count} stale queued text${count === 1 ? "" : "s"} removed.` : "No stale queued texts need cleanup.");
+      return;
+    }
+    if (action.id === "stale-schedule-cleanup") {
+      const removed = deletePastOneTimeScheduledClasses(today);
+      showToast(removed.length ? `${removed.length} stale one-time schedule item${removed.length === 1 ? "" : "s"} removed.` : "No stale one-time schedule items need cleanup.");
+      return;
+    }
+    if (action.id === "queued-texts") {
+      const count = sendQueuedTexts();
+      showToast(count ? `${count} queued text${count === 1 ? "" : "s"} sent.` : "No queued texts are waiting.");
+      return;
+    }
+    const count = sendMissedClassFollowUps();
+    showToast(count ? `${count} missed-class follow-up text${count === 1 ? "" : "s"} queued.` : "No missed-class follow-ups needed.");
+  };
+
+  return (
+    <OperationsPage className="operations-page--workflow reports-command-page" title="Reports" text="See the work that needs attention first: attendance recovery, trial conversions, testing readiness, queued outreach, inventory, and the next studio dates.">
+      <div className="operations-stats reports-stats">
+        <ReportsMetricCard label="Current students" value={report.summary.currentStudents} icon={<Users />} />
+        <ReportsMetricCard label="Missed-class follow-ups" value={report.summary.attendanceFollowUps} icon={<MessageCircle />} />
+        <ReportsMetricCard label="Attendance gaps" value={report.summary.attendanceGapFollowUps} icon={<MessageCircle />} />
+        <ReportsMetricCard label="Trial follow-ups" value={report.summary.trialFollowUps} icon={<UserPlus />} />
+        <ReportsMetricCard label="Lead follow-ups" value={report.summary.leadFollowUps} icon={<UserPlus />} />
+        <ReportsMetricCard label="App replies" value={report.summary.directMessageReplies} icon={<MessagesSquare />} />
+        <ReportsMetricCard label="New student check-ins" value={report.summary.newStudentCheckIns} icon={<MessageCircle />} />
+        <ReportsMetricCard label="Celebrations" value={report.summary.celebrationOutreach} icon={<CalendarDays />} />
+        <ReportsMetricCard label="Profile updates" value={report.summary.profileUpdateRequests} icon={<ShieldCheck />} />
+        <ReportsMetricCard label="Class reminders" value={report.summary.classReminders} icon={<Mail />} />
+        <ReportsMetricCard label="Milestone nudges" value={report.summary.milestoneEncouragements} icon={<Target />} />
+        <ReportsMetricCard label="Test invites" value={report.summary.testReadinessFollowUps} icon={<Award />} />
+        <ReportsMetricCard label="Check-ins this week" value={report.summary.checkInsThisWeek} icon={<CheckCircle2 />} />
+      </div>
+
+      <section className="operations-panel reports-command-panel" aria-labelledby="reports-command-title">
+        <div className="student-roster-head">
+          <div>
+            <h2 id="reports-command-title">Workload Command Center</h2>
+            <p>Jump directly to the tasks most likely to reduce staff follow-up time this week.</p>
+          </div>
+        </div>
+        <div className="reports-action-grid" aria-label="Priority report actions">
+          {report.priorityActions.map((action) => (
+            <ReportsPriorityActionCard key={action.id} action={action} onRunAction={runReportsAction} />
+          ))}
+        </div>
+      </section>
+
+      <div className="reports-command-grid">
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-label="Public lead follow-up candidates">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-leads-title">Public Lead Follow-Up</h2>
+              <p>{report.summary.leadFollowUps} public contact or starter booking lead{report.summary.leadFollowUps === 1 ? " needs" : "s need"} staff follow-up.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="Public lead follow-up list">
+            {topLeadCandidates.length ? topLeadCandidates.map((candidate) => (
+              <article className="reports-compact-row" key={`${candidate.kind}-${candidate.id}`}>
+                <span className="workflow-directory-icon workflow-directory-icon--student" aria-hidden="true" />
+                <span>
+                  <strong>{candidate.name}</strong>
+                  <small>{candidate.detail}</small>
+                  <small>{candidate.note}</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No public starter bookings or contact inquiries need follow-up.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-label="Unanswered app message reply candidates">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-direct-messages-title">App Message Replies</h2>
+              <p>{report.summary.directMessageReplies} inbound student or parent app message{report.summary.directMessageReplies === 1 ? "" : "s"} {report.summary.directMessageReplies === 1 ? "needs" : "need"} staff replies.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="App message reply list">
+            {topDirectMessageReplyCandidates.length ? topDirectMessageReplyCandidates.map((candidate) => (
+              <article className="reports-compact-row" key={candidate.id}>
+                <span className="workflow-directory-icon workflow-directory-icon--message" aria-hidden="true" />
+                <span>
+                  <strong>{directMessageReplyCandidateLabel(candidate)}</strong>
+                  <small>{directMessageReplyCandidateContext(candidate)}</small>
+                  <small>{candidate.body}</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No inbound student or parent app messages need staff replies.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-label="New student check-in candidates">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-new-students-title">New Student Check-Ins</h2>
+              <p>{report.summary.newStudentCheckIns} new student{report.summary.newStudentCheckIns === 1 ? "" : "s"} need a first-week retention check-in.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="New student check-in list">
+            {topNewStudentCheckInCandidates.length ? topNewStudentCheckInCandidates.map((student) => (
+              <article className="reports-compact-row" key={student.id}>
+                <span className="workflow-directory-icon workflow-directory-icon--student" aria-hidden="true" />
+                <span>
+                  <strong>{student.name}</strong>
+                  <small>{newStudentCheckInCandidateLabel(student)}</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No first-week student check-ins are waiting.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-labelledby="reports-attendance-title">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-attendance-title">Attendance Recovery</h2>
+              <p>{report.summary.attendanceFollowUps} current student{report.summary.attendanceFollowUps === 1 ? "" : "s"} need follow-up before they drift further.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="Attendance risk students">
+            {topAttendanceRisks.length ? topAttendanceRisks.map((student) => (
+              <article className="reports-compact-row" key={student.id}>
+                <span className="workflow-directory-icon workflow-directory-icon--schedule" aria-hidden="true" />
+                <span>
+                  <strong>{student.name}</strong>
+                  <small>{student.status} · {student.missedClassCount} missed classes{student.lastContactedAt ? ` · Last contact ${student.lastContactedAt}` : ""}</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No current students are above the missed-class follow-up threshold.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-label="Attendance gap check-in candidates">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-attendance-gap-title">Attendance Gap Check-Ins</h2>
+              <p>{report.summary.attendanceGapFollowUps} active student{report.summary.attendanceGapFollowUps === 1 ? "" : "s"} have not checked in for three weeks or more.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="Attendance gap check-in list">
+            {topAttendanceGapCandidates.length ? topAttendanceGapCandidates.map((student) => (
+              <article className="reports-compact-row" key={student.id}>
+                <span className="workflow-directory-icon workflow-directory-icon--schedule" aria-hidden="true" />
+                <span>
+                  <strong>{student.name}</strong>
+                  <small>{attendanceGapCandidateLabel(student)}</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No attendance-gap check-ins are waiting.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-labelledby="reports-celebration-title">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-celebration-title">Celebration Outreach</h2>
+              <p>{report.summary.celebrationOutreach} current student birthday or training anniversar{report.summary.celebrationOutreach === 1 ? "y is" : "ies are"} due this week.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="Celebration outreach candidates">
+            {topCelebrationCandidates.length ? topCelebrationCandidates.map((student) => (
+              <article className="reports-compact-row" key={`${student.id}-${student.reason}`}>
+                <span className="workflow-directory-icon workflow-directory-icon--event" aria-hidden="true" />
+                <span>
+                  <strong>{student.name}</strong>
+                  <small>{celebrationCandidateLabel(student)}</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No current student birthdays or training anniversaries are due this week.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-labelledby="reports-profile-update-title">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-profile-update-title">Student Data Cleanup</h2>
+              <p>{report.summary.profileUpdateRequests} current student record{report.summary.profileUpdateRequests === 1 ? " needs" : "s need"} profile-update outreach for safer contact and emergency data.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="Student profile update candidates">
+            {topProfileUpdateCandidates.length ? topProfileUpdateCandidates.map((student) => (
+              <article className="reports-compact-row" key={student.id}>
+                <span className="workflow-directory-icon workflow-directory-icon--schedule" aria-hidden="true" />
+                <span>
+                  <strong>{student.name}</strong>
+                  <small>{profileUpdateCandidateLabel(student)}</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No current student records need profile-update outreach.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-labelledby="reports-class-reminders-title">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-class-reminders-title">Upcoming Class Reminders</h2>
+              <p>{report.summary.classReminders} student-specific class reminder{report.summary.classReminders === 1 ? " is" : "s are"} due in the next two days.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="Upcoming class reminder candidates">
+            {topClassReminderCandidates.length ? topClassReminderCandidates.map((item) => (
+              <article className="reports-compact-row" key={item.id}>
+                <span className="workflow-directory-icon workflow-directory-icon--schedule" aria-hidden="true" />
+                <span>
+                  <strong>{item.studentName}</strong>
+                  <small>{classReminderCandidateLabel(item)}</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No student-specific classes need reminder outreach in the next two days.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-labelledby="reports-milestone-title">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-milestone-title">Milestone Encouragement</h2>
+              <p>{report.summary.milestoneEncouragements} current student{report.summary.milestoneEncouragements === 1 ? "" : "s"} are close enough to their next belt milestone for proactive encouragement.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="Near-testing milestone candidates">
+            {topMilestoneCandidates.length ? topMilestoneCandidates.map((student) => (
+              <article className="reports-compact-row" key={student.id}>
+                <span className="workflow-directory-icon workflow-directory-icon--event" aria-hidden="true" />
+                <span>
+                  <strong>{student.name}</strong>
+                  <small>{student.beltRank} · {student.progressPercent}% · {student.classesRemaining} class{student.classesRemaining === 1 ? "" : "es"} to {student.nextRankName ?? "next rank"}</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No current students are close enough for milestone encouragement today.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-labelledby="reports-testing-title">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-testing-title">Testing Readiness</h2>
+              <p>{report.summary.testReadinessFollowUps} current student{report.summary.testReadinessFollowUps === 1 ? "" : "s"} meet class-count and consistency criteria for testing outreach.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="Belt testing candidates">
+            {topTestCandidates.length ? topTestCandidates.map((student) => (
+              <article className="reports-compact-row" key={student.id}>
+                <span className="workflow-directory-icon workflow-directory-icon--event" aria-hidden="true" />
+                <span>
+                  <strong>{student.name}</strong>
+                  <small>{student.beltRank} · {student.classesAttended}/{student.classesRequired} classes</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No current students are ready for belt testing outreach.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="operations-panel workflow-directory-panel reports-detail-panel" aria-labelledby="reports-calendar-title">
+          <div className="student-roster-head">
+            <div>
+              <h2 id="reports-calendar-title">Next Seven Days</h2>
+              <p>{report.summary.upcomingCalendarItems} dated schedule item{report.summary.upcomingCalendarItems === 1 ? " needs" : "s need"} staffing, promotion, or prep.</p>
+            </div>
+          </div>
+          <div className="reports-compact-list" aria-label="Upcoming report schedule">
+            {topCalendarItems.length ? topCalendarItems.map((item) => (
+              <article className="reports-compact-row" key={`${item.kind}-${item.id}`}>
+                <span className="workflow-directory-icon workflow-directory-icon--event" aria-hidden="true" />
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{item.date} at {item.time}</small>
+                </span>
+              </article>
+            )) : (
+              <p className="operations-note">No dated schedule items are coming up in the next seven days.</p>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="operations-stats reports-stats reports-stats--secondary">
+        <ReportsMetricCard label="Queued messages" value={report.summary.queuedMessages} icon={<Mail />} />
+        <ReportsMetricCard label="Stale queued texts" value={report.summary.staleQueuedMessages} icon={<Trash2 />} />
+        <ReportsMetricCard label="Upcoming dates" value={report.summary.upcomingCalendarItems} icon={<CalendarDays />} />
+        <ReportsMetricCard label="Paused follow-ups" value={report.summary.pausedFollowUps} icon={<Target />} />
+        <ReportsMetricCard label="Low stock items" value={report.summary.lowStockItems} icon={<Package />} />
+        <ReportsMetricCard label="Stale schedule items" value={report.summary.staleScheduleItems} icon={<CalendarDays />} />
+      </div>
+
+      <section className="operations-panel workflow-directory-panel reports-detail-panel reports-maintenance-panel" aria-label="Operations data backup">
+        <div className="student-roster-head reports-maintenance-head">
+          <div>
+            <h2>Data Health &amp; Backup</h2>
+            <p>Export one timestamped JSON copy of the current local operations data before major edits, device moves, or cleanup work.</p>
+          </div>
+          <button className="reports-backup-button" type="button" onClick={exportOperationsBackup}>
+            <FileText size={17} /> Export operations backup
+          </button>
+          <button className="reports-backup-button reports-restore-button" type="button" onClick={() => backupRestoreInputRef.current?.click()}>
+            <Upload size={17} /> Import operations backup
+          </button>
+          <input
+            ref={backupRestoreInputRef}
+            className="sr-only"
+            type="file"
+            accept="application/json,.json"
+            aria-label="Import operations backup"
+            onChange={importOperationsBackup}
+          />
+        </div>
+        <div className="operations-stats reports-backup-stats">
+          <ReportsMetricCard label="Tracked records" value={backupSnapshot.summary.totalRecords} icon={<ShieldCheck />} />
+          <ReportsMetricCard label="Data sections" value={backupSnapshot.summary.sections} icon={<FileText />} />
+          <ReportsMetricCard label="Empty sections" value={backupSnapshot.summary.emptySections} icon={<Target />} />
+        </div>
+        <div className="reports-backup-section-list" aria-label="Backup data sections">
+          {visibleBackupSections.map((section) => (
+            <span key={section.id}>{section.count} {section.shortLabel}</span>
+          ))}
+        </div>
+        <p className="operations-note">Saved account passwords are not included in the export.</p>
+        <p className="operations-note">Includes student records, account access, classes, schedules, messages, check-ins, merchandise, content libraries, orders, bookings, contacts, and lead reviews.</p>
+      </section>
+    </OperationsPage>
   );
 }
 
 const genderOptions = ["Not specified", "Female", "Male", "Nonbinary", "Prefer not to say"];
 const statusOptions = ["Active", "Trial", "Paused", "Inactive"];
+const studentDirectoryStatusFilters = ["All", ...statusOptions] as const;
+type StudentDirectoryStatusFilter = typeof studentDirectoryStatusFilters[number];
+
+function normalizeStudentDirectoryStatus(student: StudentRecord) {
+  const status = student.status?.trim().toLowerCase();
+  return statusOptions.find((option) => option.toLowerCase() === status) ?? "Active";
+}
+
+function studentDirectorySearchText(student: StudentRecord) {
+  return [
+    fullName(student),
+    student.email,
+    student.phone,
+    student.guardianName,
+    student.guardianPhone,
+    student.guardianEmail,
+    student.emergencyContactName,
+    student.emergencyContactRelationship,
+    student.emergencyContactPhone,
+    student.emergencyContactEmail,
+    student.program,
+    normalizeStudentDirectoryStatus(student),
+    student.beltRank,
+    student.notes
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
 
 function makeBlankStudentForm() {
   return {
@@ -5953,16 +6962,59 @@ function studentDirectoryAge(student: StudentRecord) {
 }
 
 function StudentsPage() {
-  const { students, messageLogs, addOperationsStudent, updateOperationsStudent, deleteOperationsStudent, showToast } = useAppState();
+  const {
+    students,
+    messageLogs,
+    addOperationsStudent,
+    updateOperationsStudent,
+    deleteOperationsStudent,
+    queueStudentMilestoneEncouragement,
+    queueStudentProfileUpdateRequest,
+    showToast
+  } = useAppState();
   const [selectedStudentId, setSelectedStudentId] = useState("");
   const selectedStudent = students.find((student) => student.id === selectedStudentId);
   const [form, setForm] = useState(makeBlankStudentForm);
   const [studentModalMode, setStudentModalMode] = useState<"create" | "edit" | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StudentDirectoryStatusFilter>("All");
+  const [studentSearchQuery, setStudentSearchQuery] = useState("");
   const welcomeLogs = messageLogs.filter((message) => message.kind === "welcome");
+  const normalizedStudentSearchQuery = studentSearchQuery.trim().toLowerCase();
+  const statusCounts = useMemo(() => {
+    const counts = studentDirectoryStatusFilters.reduce(
+      (current, option) => ({ ...current, [option]: option === "All" ? students.length : 0 }),
+      {} as Record<StudentDirectoryStatusFilter, number>
+    );
+    students.forEach((student) => {
+      counts[normalizeStudentDirectoryStatus(student)] += 1;
+    });
+    return counts;
+  }, [students]);
+  const statusFilteredStudents = useMemo(
+    () => (statusFilter === "All" ? students : students.filter((student) => normalizeStudentDirectoryStatus(student) === statusFilter)),
+    [statusFilter, students]
+  );
+  const visibleStudents = useMemo(
+    () =>
+      normalizedStudentSearchQuery
+        ? statusFilteredStudents.filter((student) => studentDirectorySearchText(student).includes(normalizedStudentSearchQuery))
+        : statusFilteredStudents,
+    [normalizedStudentSearchQuery, statusFilteredStudents]
+  );
+  const directorySummary =
+    normalizedStudentSearchQuery
+      ? statusFilter === "All"
+        ? `${visibleStudents.length} student${visibleStudents.length === 1 ? "" : "s"} matches search. Clear search to show everyone.`
+        : visibleStudents.length
+          ? `${visibleStudents.length} ${statusFilter.toLowerCase()} student${visibleStudents.length === 1 ? "" : "s"} matches search. Clear search to show everyone.`
+          : `No ${statusFilter.toLowerCase()} students match this search.`
+      : statusFilter === "All"
+      ? `${students.length} student${students.length === 1 ? "" : "s"} listed by belt. Select a name to open student info.`
+      : `${visibleStudents.length} ${statusFilter.toLowerCase()} student${visibleStudents.length === 1 ? "" : "s"} listed by belt. Clear filter to show everyone.`;
 
   const studentsByBelt = useMemo(() => {
     const knownBelts = beltOptions.map((belt) => belt.toLowerCase());
-    const studentsByName = [...students].sort((left, right) => fullName(left).localeCompare(fullName(right), undefined, { sensitivity: "base" }));
+    const studentsByName = [...visibleStudents].sort((left, right) => fullName(left).localeCompare(fullName(right), undefined, { sensitivity: "base" }));
     const configuredGroups = beltOptions
       .map((belt) => ({
         belt,
@@ -5977,7 +7029,7 @@ function StudentsPage() {
       }));
 
     return [...configuredGroups, ...customGroups];
-  }, [students]);
+  }, [visibleStudents]);
 
   const selectStudent = (student: StudentRecord) => {
     setSelectedStudentId(student.id);
@@ -6017,7 +7069,7 @@ function StudentsPage() {
       return;
     }
     closeStudentModal();
-    showToast(`${fullName(created)} added with welcome text queued.`);
+    showToast(isCurrentOperationsStudent(created) ? `${fullName(created)} added with welcome text queued.` : `${fullName(created)} added.`);
   };
 
   const deleteSelectedStudent = () => {
@@ -6029,6 +7081,26 @@ function StudentsPage() {
     }
     closeStudentModal();
     showToast(`${fullName(deleted)} deleted from the student list.`);
+  };
+
+  const queueSelectedStudentMilestoneEncouragement = () => {
+    if (!selectedStudent) return;
+    if (!isCurrentOperationsStudent(selectedStudent)) {
+      showToast("Only current students can receive quick outreach.");
+      return;
+    }
+    const queuedMessage = queueStudentMilestoneEncouragement(selectedStudent.id);
+    showToast(queuedMessage ? `Progress encouragement queued for ${fullName(selectedStudent)}.` : "Add a phone number before queuing outreach.");
+  };
+
+  const queueSelectedStudentProfileUpdateRequest = () => {
+    if (!selectedStudent) return;
+    if (!isCurrentOperationsStudent(selectedStudent)) {
+      showToast("Only current students can receive quick outreach.");
+      return;
+    }
+    const queuedMessage = queueStudentProfileUpdateRequest(selectedStudent.id);
+    showToast(queuedMessage ? `Profile update request queued for ${fullName(selectedStudent)}.` : "Add a phone number before queuing outreach.");
   };
 
   const renderStudentNameButton = (student: StudentRecord) => {
@@ -6051,6 +7123,7 @@ function StudentsPage() {
     </button>
   );
   const modalTitle = selectedStudent ? `${fullName(selectedStudent)} Student Info` : "Create New Student";
+  const selectedStudentName = selectedStudent ? fullName(selectedStudent) : "";
 
   return (
     <OperationsPage className="operations-page--students" title="Students" text="Review each belt group as a compact student list, then select a student name to open their full info." action={headerAction}>
@@ -6059,11 +7132,44 @@ function StudentsPage() {
           <div className="student-roster-head">
             <div>
               <h2>Student Directory</h2>
-              <p>{students.length} student{students.length === 1 ? "" : "s"} listed by belt. Select a name to open student info.</p>
+              <p>{directorySummary}</p>
+            </div>
+            <div className="student-directory-tools">
+              <label className="student-directory-search">
+                <span className="sr-only">Search students</span>
+                <Search size={14} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={studentSearchQuery}
+                  aria-label="Search students"
+                  placeholder="Search students"
+                  onChange={(event) => setStudentSearchQuery(event.target.value)}
+                />
+                {studentSearchQuery && (
+                  <button type="button" aria-label="Clear student search" onClick={() => setStudentSearchQuery("")}>
+                    <X size={13} />
+                  </button>
+                )}
+              </label>
+              <div className="student-directory-status-filters" aria-label="Student status filters">
+                {studentDirectoryStatusFilters.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className="student-directory-status-filter"
+                    aria-label={option === "All" ? `Show all students (${statusCounts[option]})` : `Show ${option} students (${statusCounts[option]})`}
+                    aria-pressed={statusFilter === option}
+                    onClick={() => setStatusFilter(option)}
+                  >
+                    <span>{option}</span>
+                    <strong>{statusCounts[option]}</strong>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
           <div className="student-directory-scroll student-belt-directory-grid" aria-label="Student directory by belt">
-            {studentsByBelt.map(({ belt, students: beltStudents }) => (
+            {studentsByBelt.length ? studentsByBelt.map(({ belt, students: beltStudents }) => (
               <section key={belt} className={`student-belt-group student-belt-group--card student-belt-group--${beltClassName(belt)}`} role="group" aria-label={`${belt} belt students`}>
                 <div className="student-belt-group-head">
                   <div>
@@ -6082,7 +7188,11 @@ function StudentsPage() {
                   {beltStudents.map(renderStudentNameButton)}
                 </div>
               </section>
-            ))}
+            )) : (
+              <p className="operations-note student-directory-empty">
+                {normalizedStudentSearchQuery ? "No matching students in this view." : `No ${statusFilter.toLowerCase()} students match this filter.`}
+              </p>
+            )}
           </div>
         </section>
 
@@ -6111,6 +7221,23 @@ function StudentsPage() {
                 <X size={18} />
               </button>
             </div>
+
+            {selectedStudent && (
+              <section className="student-quick-outreach" aria-label="Student quick outreach">
+                <div>
+                  <h3>Quick Outreach</h3>
+                  <p>Queue a personal text from this record without leaving the student profile.</p>
+                </div>
+                <div className="student-quick-outreach-actions">
+                  <button type="button" aria-label={`Queue progress encouragement for ${selectedStudentName}`} onClick={queueSelectedStudentMilestoneEncouragement}>
+                    <Award size={16} /> Progress Encouragement
+                  </button>
+                  <button type="button" aria-label={`Request profile update from ${selectedStudentName}`} onClick={queueSelectedStudentProfileUpdateRequest}>
+                    <ShieldCheck size={16} /> Request Profile Update
+                  </button>
+                </div>
+              </section>
+            )}
 
             <section className="student-form-section">
               <h3>Student Information</h3>
@@ -6452,27 +7579,40 @@ function ClassesPage() {
   );
 }
 
-function ScheduleCard({ item, students }: { item: ScheduledClass; students: StudentRecord[] }) {
+function ScheduleCard({ item, onRemove, students, todayKey }: { item: ScheduledClass; onRemove: (item: ScheduledClass) => void; students: StudentRecord[]; todayKey: string }) {
   const student = item.studentId ? students.find((entry) => entry.id === item.studentId) : undefined;
+  const nextOccurrenceDate = nextWeeklyScheduleOccurrenceDate(item, todayKey);
+  const oneTimeStatusLabel = oneTimeScheduleStatusLabel(item, todayKey);
   return (
     <article className="workflow-directory-row workflow-directory-row--schedule">
       <span className="workflow-directory-icon workflow-directory-icon--schedule" style={item.titleColor ? { "--workflow-accent": item.titleColor } as CSSProperties : undefined} aria-hidden="true" />
       <span className="workflow-directory-name" style={item.titleColor ? { color: item.titleColor } : undefined}>
         {item.title}
         <small>{student ? `Student: ${fullName(student)}` : item.notes || scheduleTypeLabel(item.type)}</small>
+        <button type="button" className="workflow-row-remove-action" aria-label={`Remove ${item.title} schedule item`} onClick={() => onRemove(item)}>
+          <Trash2 size={13} /> Remove
+        </button>
       </span>
       <span className="workflow-directory-cell">{item.date}</span>
       <span className="workflow-directory-cell">{item.time}</span>
       <span className="workflow-directory-cell">
         <span>{item.date} at {item.time}</span>
-        {item.recurring && <small>Repeats weekly</small>}
+        {item.recurring && (
+          <>
+            <small>Repeats weekly</small>
+            <small>Next occurrence: {nextOccurrenceDate} at {item.time}</small>
+          </>
+        )}
+        {oneTimeStatusLabel && <small>{oneTimeStatusLabel}</small>}
       </span>
     </article>
   );
 }
 
 function SchedulePage() {
-  const { students, scheduledClasses, addScheduledClass, showToast } = useAppState();
+  const { students, scheduledClasses, addScheduledClass, deleteScheduledClass, deletePastOneTimeScheduledClasses, showToast } = useAppState();
+  const todayKey = toDateKey(useLiveCalendarDate());
+  const scheduleStudents = useMemo(() => students.filter(isCurrentOperationsStudent), [students]);
   const [form, setForm] = useState({ title: "", date: "2026-05-22", time: "5:30 PM", type: "class", titleColor: "#b8f5e2", recurring: false, studentId: "", notes: "" });
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [customScheduleTypes, setCustomScheduleTypes] = useState<string[]>([]);
@@ -6502,6 +7642,10 @@ function SchedulePage() {
       }))
       .filter((group) => group.items.length > 0),
     [scheduleTypeOptions, scheduledClasses]
+  );
+  const pastOneTimeScheduledClasses = useMemo(
+    () => scheduledClasses.filter((item) => !item.recurring && item.date < todayKey),
+    [scheduledClasses, todayKey]
   );
 
   const closeCustomTypeDialog = () => {
@@ -6560,9 +7704,24 @@ function SchedulePage() {
     showToast(`${created.title} added to schedule.`);
   };
 
+  const removeScheduledClass = (item: ScheduledClass) => {
+    const removed = deleteScheduledClass(item.id);
+    if (!removed) return;
+    showToast(`${removed.title} removed from schedule.`);
+  };
+
+  const clearPastOneTimeScheduledClasses = () => {
+    const removed = deletePastOneTimeScheduledClasses(todayKey);
+    if (!removed.length) {
+      showToast("No past one-time schedule items to clear.");
+      return;
+    }
+    showToast(`${removed.length} past schedule item${removed.length === 1 ? "" : "s"} cleared.`);
+  };
+
   return (
     <OperationsPage
-      className="operations-page--workflow"
+      className="operations-page--workflow operations-page--schedule"
       title="Schedule"
       text="Create class, private lesson, and testing-prep schedule items."
       action={
@@ -6574,9 +7733,19 @@ function SchedulePage() {
       <section className="operations-panel workflow-directory-panel">
         <div className="student-roster-head">
           <div>
-            <h2>Upcoming Schedule</h2>
-            <p>{scheduledClasses.length} schedule item{scheduledClasses.length === 1 ? "" : "s"} grouped by type for quick scanning.</p>
+            <h2>Schedule Directory</h2>
+            <p>{scheduledClasses.length} schedule item{scheduledClasses.length === 1 ? "" : "s"} grouped by type, with one-time entries marked as upcoming or past.</p>
           </div>
+          {pastOneTimeScheduledClasses.length > 0 && (
+            <button
+              type="button"
+              className="workflow-maintenance-action"
+              aria-label={`Clear ${pastOneTimeScheduledClasses.length} past one-time schedule item${pastOneTimeScheduledClasses.length === 1 ? "" : "s"}`}
+              onClick={clearPastOneTimeScheduledClasses}
+            >
+              <Trash2 size={14} /> Clear Past
+            </button>
+          )}
         </div>
         <div className="workflow-directory-grid" aria-label="Schedule directory">
           {scheduleGroups.map((group) => (
@@ -6596,7 +7765,7 @@ function SchedulePage() {
                   <span className="workflow-directory-column-label">Time</span>
                   <span className="workflow-directory-column-label">Status</span>
                 </div>
-                {group.items.map((item) => <ScheduleCard key={item.id} item={item} students={students} />)}
+                {group.items.map((item) => <ScheduleCard key={item.id} item={item} onRemove={removeScheduledClass} students={students} todayKey={todayKey} />)}
               </div>
             </section>
           ))}
@@ -6668,7 +7837,7 @@ function SchedulePage() {
             Student
             <select value={form.studentId} onChange={(event) => setForm({ ...form, studentId: event.target.value })}>
               <option value="">No specific student</option>
-              {students.map((student) => (
+              {scheduleStudents.map((student) => (
                 <option key={student.id} value={student.id}>{fullName(student)}</option>
               ))}
             </select>
@@ -6713,12 +7882,19 @@ function SchedulePage() {
   );
 }
 
-function MessagePreview({ message }: { message: MessageLog }) {
+function MessagePreview({ message, onSendQueuedText }: { message: MessageLog; onSendQueuedText?: (message: MessageLog) => void }) {
+  const isQueued = message.status === "queued";
+
   return (
-    <article className="message-preview">
-      <div>
+    <article className="message-preview" aria-label={`${isQueued ? "Queued" : "Sent"} text to ${message.recipientName}`}>
+      <div className="message-preview-head">
         <strong>{messageKindLabel(message.kind)}</strong>
         <span>{message.status}</span>
+        {isQueued && onSendQueuedText && (
+          <button type="button" className="message-preview-send" aria-label={`Send text to ${message.recipientName}`} onClick={() => onSendQueuedText(message)}>
+            <Send size={14} /> Send
+          </button>
+        )}
       </div>
       <p>{message.recipientName} · {message.recipientPhone}</p>
       <p>{message.body}</p>
@@ -6727,9 +7903,12 @@ function MessagePreview({ message }: { message: MessageLog }) {
 }
 
 function MessagesPage() {
-  const { students, messageCampaigns, messageLogs, sendMarketingBlast, sendMissedClassFollowUps, showToast } = useAppState();
+  const { students, messageCampaigns, messageLogs, clearStaleQueuedTexts, sendMarketingBlast, sendMissedClassFollowUps, sendQueuedTexts, sendQueuedText, showToast } = useAppState();
   const [marketingMessage, setMarketingMessage] = useState("Monthly special: 10% off gloves and uniforms this week.");
-  const missedCount = students.filter((student) => student.missedClassCount >= 3).length;
+  const today = toDateKey(useLiveCalendarDate());
+  const missedCount = students.filter((student) => isMissedClassFollowUpDue(student, today)).length;
+  const queuedCount = messageLogs.filter((message) => message.status === "queued" && isQueuedMessageDeliverable(message, students)).length;
+  const staleQueuedCount = messageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, students)).length;
 
   const sendFollowUps = () => {
     const count = sendMissedClassFollowUps();
@@ -6738,8 +7917,27 @@ function MessagesPage() {
 
   const sendMarketing = (event: FormEvent) => {
     event.preventDefault();
+    if (!marketingMessage.trim()) {
+      showToast("Enter a marketing message.");
+      return;
+    }
     const count = sendMarketingBlast(marketingMessage);
-    showToast(count ? `Marketing blast queued for ${count} student${count === 1 ? "" : "s"}.` : "Enter a marketing message.");
+    showToast(count ? `Marketing blast queued for ${count} student${count === 1 ? "" : "s"}.` : "No current student phone numbers are available.");
+  };
+
+  const sendQueue = () => {
+    const count = sendQueuedTexts();
+    showToast(count ? `${count} queued text${count === 1 ? "" : "s"} sent.` : "No queued texts are waiting.");
+  };
+
+  const sendSingleQueuedText = (message: MessageLog) => {
+    const sentMessage = sendQueuedText(message.id);
+    showToast(sentMessage ? `Queued text to ${sentMessage.recipientName} sent.` : "That queued text is no longer waiting.");
+  };
+
+  const clearStaleTexts = () => {
+    const count = clearStaleQueuedTexts();
+    showToast(count ? `${count} stale queued text${count === 1 ? "" : "s"} removed.` : "No stale queued texts need cleanup.");
   };
 
   return (
@@ -6759,6 +7957,18 @@ function MessagesPage() {
             <Mail size={18} /> Send Missed-Class Follow-Ups
           </button>
         </section>
+        <section className="operations-panel">
+          <h2>Delivery Queue</h2>
+          <p>{queuedCount} text{queuedCount === 1 ? "" : "s"} waiting to be sent.</p>
+          <button type="button" className="operations-action" onClick={sendQueue} disabled={!queuedCount}>
+            <Send size={18} /> Send Queued Texts
+          </button>
+          {staleQueuedCount > 0 && (
+            <button type="button" className="operations-action secondary" onClick={clearStaleTexts}>
+              <Trash2 size={18} /> Clear Stale Texts
+            </button>
+          )}
+        </section>
         <form className="operations-form-panel" onSubmit={sendMarketing}>
           <h2>Marketing Tool</h2>
           <label>
@@ -6774,7 +7984,7 @@ function MessagesPage() {
       <section className="operations-panel">
         <h2>Text Log</h2>
         <div className="message-log-grid">
-          {messageLogs.map((message) => <MessagePreview key={message.id} message={message} />)}
+          {messageLogs.map((message) => <MessagePreview key={message.id} message={message} onSendQueuedText={sendSingleQueuedText} />)}
         </div>
       </section>
     </OperationsPage>
@@ -6782,19 +7992,37 @@ function MessagesPage() {
 }
 
 function CheckInsPage() {
-  const { accountRole, students, checkIns, recordStudentCheckIn, showToast } = useAppState();
-  const firstStudentId = students[0]?.id ?? "";
-  const [selectedStudentId, setSelectedStudentId] = useState(firstStudentId);
-  const selectedStudent = students.find((student) => student.id === selectedStudentId) ?? students[0];
+  const { accountRole, currentManagedAccount, session, students, checkIns, recordStudentCheckIn, showToast } = useAppState();
+  const today = toDateKey(useLiveCalendarDate());
   const isStudentMode = accountRole === "student";
-  const latestStudentCheckIn = selectedStudent ? checkIns.find((checkIn) => checkIn.studentId === selectedStudent.id) : undefined;
+  const sessionStudent = isStudentMode ? selectSessionStudent(students, session?.email, currentManagedAccount?.studentId) : undefined;
+  const checkInStudents = useMemo(() => students.filter(isCurrentOperationsStudent), [students]);
+  const firstStudentId = checkInStudents[0]?.id ?? "";
+  const [selectedStudentId, setSelectedStudentId] = useState(firstStudentId);
+  const selectedStudent = sessionStudent ?? checkInStudents.find((student) => student.id === selectedStudentId) ?? checkInStudents[0];
+  const selectedStudentCheckIns = selectedStudent ? checkIns.filter((checkIn) => checkIn.studentId === selectedStudent.id) : [];
+  const todayStudentCheckIn = selectedStudentCheckIns.find((checkIn) => checkIn.date === today);
+  const knownCheckInDates = [
+    selectedStudentCheckIns[0]?.date,
+    selectedStudent?.lastCheckIn
+  ].filter((date): date is string => Boolean(date));
+  const latestCheckInDate = knownCheckInDates.sort((left, right) => right.localeCompare(left))[0];
   const studentAfterCheckIn = selectedStudent ? students.find((student) => student.id === selectedStudent.id) : undefined;
+  const displayedStudent = studentAfterCheckIn ?? selectedStudent;
+  const checkInProgress = displayedStudent ? buildStudentBeltProgress(displayedStudent) : undefined;
+  const checkInProgressStatus = checkInProgress?.isBlackBelt
+    ? "Ongoing black belt training"
+    : checkInProgress?.readyForReview
+      ? "Ready for instructor review"
+      : `${checkInProgress?.classesRemaining ?? 0} class${checkInProgress?.classesRemaining === 1 ? "" : "es"} to testing review`;
 
   const checkIn = () => {
     if (!selectedStudent) return;
     const created = recordStudentCheckIn(selectedStudent.id);
     if (created) {
-      showToast(`${created.studentName} checked in.`);
+      showToast(created.queuedMessage ? `${created.studentName} checked in. Progress outreach queued.` : `${created.studentName} checked in.`);
+    } else {
+      showToast(`${fullName(selectedStudent)} is already checked in today.`);
     }
   };
 
@@ -6802,31 +8030,48 @@ function CheckInsPage() {
     <OperationsPage title={isStudentMode ? "Student Check-In" : "Check-Ins"} text="Students can sign in, track belt progress, and reset missed-class follow-up status.">
       <div className="operations-two-column">
         <section className="operations-panel checkin-panel">
-          {!isStudentMode && (
+          {!isStudentMode && checkInStudents.length > 0 && (
             <label>
               Student
               <select value={selectedStudent?.id ?? ""} onChange={(event) => setSelectedStudentId(event.target.value)}>
-                {students.map((student) => (
+                {checkInStudents.map((student) => (
                   <option key={student.id} value={student.id}>{fullName(student)}</option>
                 ))}
               </select>
             </label>
           )}
+          {!selectedStudent && <p className="operations-note">No current students are available for check-in.</p>}
           {selectedStudent && (
             <>
               <div className="student-rank-card">
                 <Award size={32} />
                 <div>
                   <p>Current rank</p>
-                  <h2>{selectedStudent.beltRank} Belt</h2>
+                  <h2>{displayedStudent?.beltRank ?? selectedStudent.beltRank} Belt</h2>
                 </div>
               </div>
-              <p>Classes attended: {studentAfterCheckIn?.classesAttended ?? selectedStudent.classesAttended}</p>
-              <p>Missed classes: {studentAfterCheckIn?.missedClassCount ?? selectedStudent.missedClassCount}</p>
-              <button type="button" className="operations-action" onClick={checkIn}>
-                <CheckCircle2 size={18} /> Check In Today
+              <p>Classes attended: {displayedStudent?.classesAttended ?? selectedStudent.classesAttended}</p>
+              <p>Missed classes: {displayedStudent?.missedClassCount ?? selectedStudent.missedClassCount}</p>
+              {checkInProgress && (
+                <section className="checkin-progress-card" aria-label="Check-in belt progress">
+                  <div className="checkin-progress-copy">
+                    <span>{checkInProgress.classesAttended} of {checkInProgress.classesRequired} classes complete</span>
+                    <strong>{checkInProgressStatus}</strong>
+                    {checkInProgress.nextRankName && <p>Next rank target: {checkInProgress.nextRankName} Belt</p>}
+                  </div>
+                  <div className="checkin-progress-meter" aria-label={`${checkInProgress.progressPercent}% of ${checkInProgress.classesRequired} classes complete`}>
+                    <span style={{ width: `${checkInProgress.progressPercent}%` }} />
+                  </div>
+                </section>
+              )}
+              <button type="button" className="operations-action" onClick={checkIn} disabled={Boolean(todayStudentCheckIn)}>
+                <CheckCircle2 size={18} /> {todayStudentCheckIn ? "Already checked in today" : "Check In Today"}
               </button>
-              {latestStudentCheckIn && <p className="operations-success">Checked in today: {latestStudentCheckIn.date}</p>}
+              {todayStudentCheckIn ? (
+                <p className="operations-success">Checked in today: {todayStudentCheckIn.date}</p>
+              ) : latestCheckInDate ? (
+                <p className="operations-note">Last check-in: {latestCheckInDate}</p>
+              ) : null}
             </>
           )}
         </section>
@@ -6990,6 +8235,8 @@ const emptyMerchandiseForm = {
   category: "Gloves",
   price: "39",
   stock: "6",
+  reorderPoint: "3",
+  targetStock: "8",
   description: "",
   imageDataUrl: ""
 };
@@ -7000,6 +8247,8 @@ function merchandiseItemToForm(item: MerchandiseItem) {
     category: item.category,
     price: String(item.price),
     stock: String(item.stock),
+    reorderPoint: String(getMerchandiseReorderPoint(item)),
+    targetStock: String(getMerchandiseTargetStock(item)),
     description: item.description,
     imageDataUrl: item.imageDataUrl ?? ""
   };
@@ -7073,6 +8322,8 @@ function MerchandisePage() {
       category: form.category,
       price: Number(form.price),
       stock: Number(form.stock),
+      reorderPoint: Number(form.reorderPoint),
+      targetStock: Number(form.targetStock),
       description: form.description,
       imageDataUrl: form.imageDataUrl || undefined
     };
@@ -7178,6 +8429,14 @@ function MerchandisePage() {
                 <label>
                   Stock
                   <input type="number" min="0" step="1" value={form.stock} onChange={(event) => setForm({ ...form, stock: event.target.value })} />
+                </label>
+                <label>
+                  Reorder point
+                  <input type="number" min="0" step="1" value={form.reorderPoint} onChange={(event) => setForm({ ...form, reorderPoint: event.target.value })} />
+                </label>
+                <label>
+                  Target stock
+                  <input type="number" min="1" step="1" value={form.targetStock} onChange={(event) => setForm({ ...form, targetStock: event.target.value })} />
                 </label>
                 <label className="student-form-wide">
                   Description

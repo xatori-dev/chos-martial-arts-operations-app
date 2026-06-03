@@ -1,9 +1,11 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { AppStateProvider } from "./state";
+import { buildOperationsBackupSnapshot, type OperationsBackupInput } from "./operationsBackup";
+import { AppStateProvider, useAppState } from "./state";
 
 function stubMatchMedia(matches = false) {
   Object.defineProperty(window, "matchMedia", {
@@ -82,6 +84,21 @@ function renderManagedStaffApp(path: string, account: Record<string, unknown>) {
   );
 }
 
+function renderManagedStudentApp(path: string, account: Record<string, unknown>, students: Record<string, unknown>[]) {
+  window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([account]));
+  window.localStorage.setItem("chos.operations.students.v1", JSON.stringify(students));
+  window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: account.username, remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+  window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: account.username, role: "student" }]));
+
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <AppStateProvider>
+        <App />
+      </AppStateProvider>
+    </MemoryRouter>
+  );
+}
+
 function scopedProfileKey(scope: "manager" | "student", email: string) {
   const keyEmail = email
     .trim()
@@ -140,6 +157,2047 @@ function renderLoggedOutApp(path = "/") {
         <App />
       </AppStateProvider>
     </MemoryRouter>
+  );
+}
+
+const completeStudentSafetyFields = {
+  dateOfBirth: "2012-09-01",
+  guardianName: "Family Contact",
+  guardianPhone: "(262) 555-0100",
+  guardianEmail: "family@example.com",
+  emergencyContactName: "Emergency Contact",
+  emergencyContactRelationship: "Parent",
+  emergencyContactPhone: "(262) 555-0200"
+};
+
+function dateKeyOffset(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function makeOperationsBackupInput(overrides: Partial<OperationsBackupInput> = {}): OperationsBackupInput {
+  return {
+    accounts: [],
+    accountRoles: [],
+    managedAccounts: [],
+    childAccounts: [],
+    students: [],
+    studioClasses: [],
+    scheduledClasses: [],
+    messageCampaigns: [],
+    messageLogs: [],
+    directMessages: [],
+    studioEvents: [],
+    merchandiseItems: [],
+    checkIns: [],
+    trainingVideoFolders: [],
+    trainingVideos: [],
+    studyGuideFolders: [],
+    studyGuideMaterials: [],
+    orders: [],
+    bookings: [],
+    contacts: [],
+    leadReviews: [],
+    ...overrides
+  };
+}
+
+function CheckInDoubleCallHarness({ studentId, todayKey }: { studentId: string; todayKey: string }) {
+  const { checkIns, recordStudentCheckIn, students } = useAppState();
+  const student = students.find((item) => item.id === studentId);
+  const todayCheckIns = checkIns.filter((checkIn) => checkIn.studentId === studentId && checkIn.date === todayKey);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          recordStudentCheckIn(studentId);
+          recordStudentCheckIn(studentId);
+        }}
+      >
+        Double check in
+      </button>
+      <p>Harness classes: {student?.classesAttended ?? "missing"}</p>
+      <p>Harness today logs: {todayCheckIns.length}</p>
+    </div>
+  );
+}
+
+function AddAndCheckInStudentHarness({ todayKey }: { todayKey: string }) {
+  const { addOperationsStudent, checkIns, recordStudentCheckIn, students } = useAppState();
+  const student = students.find((item) => item.email === "same-day@example.com");
+  const todayCheckIns = student ? checkIns.filter((checkIn) => checkIn.studentId === student.id && checkIn.date === todayKey) : [];
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const createdStudent = addOperationsStudent({
+            fullName: "Same Day Student",
+            studentEmail: "same-day@example.com",
+            guardianName: "Sam Parent",
+            guardianPhone: "(262) 555-0140",
+            status: "Active",
+            beltRank: "White"
+          });
+          if (createdStudent) {
+            recordStudentCheckIn(createdStudent.id);
+          }
+        }}
+      >
+        Add and check in student
+      </button>
+      <p>Harness same-day classes: {student?.classesAttended ?? "missing"}</p>
+      <p>Harness same-day check-ins: {todayCheckIns.length}</p>
+    </div>
+  );
+}
+
+function DeactivateAndCheckInStudentHarness({ studentId, todayKey }: { studentId: string; todayKey: string }) {
+  const { checkIns, recordStudentCheckIn, students, updateOperationsStudent } = useAppState();
+  const student = students.find((item) => item.id === studentId);
+  const todayCheckIns = checkIns.filter((checkIn) => checkIn.studentId === studentId && checkIn.date === todayKey);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0100",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          recordStudentCheckIn(studentId);
+        }}
+      >
+        Deactivate and check in student
+      </button>
+      <p>Harness inactive status: {student?.status ?? "missing"}</p>
+      <p>Harness inactive classes: {student?.classesAttended ?? "missing"}</p>
+      <p>Harness inactive check-ins: {todayCheckIns.length}</p>
+    </div>
+  );
+}
+
+function DeleteAndCheckInStudentHarness({ studentId, todayKey }: { studentId: string; todayKey: string }) {
+  const { checkIns, deleteOperationsStudent, recordStudentCheckIn, students } = useAppState();
+  const student = students.find((item) => item.id === studentId);
+  const todayCheckIns = checkIns.filter((checkIn) => checkIn.studentId === studentId && checkIn.date === todayKey);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          deleteOperationsStudent(studentId);
+          recordStudentCheckIn(studentId);
+        }}
+      >
+        Delete and check in student
+      </button>
+      <p>Harness deleted student: {student ? `${student.status}:${student.classesAttended}` : "missing"}</p>
+      <p>Harness deleted check-ins: {todayCheckIns.length}</p>
+    </div>
+  );
+}
+
+function ScheduleStudentAssignmentHarness({ studentId }: { studentId: string }) {
+  const { addScheduledClass, scheduledClasses } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          addScheduledClass({
+            title: "Inactive Private Lesson",
+            date: dateKeyOffset(1),
+            time: "4:30 PM",
+            type: "private-lesson",
+            studentId
+          });
+        }}
+      >
+        Add inactive schedule
+      </button>
+      <p>Harness scheduled items: {scheduledClasses.length}</p>
+    </div>
+  );
+}
+
+function AddAndScheduleStudentHarness() {
+  const { addOperationsStudent, addScheduledClass, scheduledClasses, students } = useAppState();
+  const student = students.find((item) => item.email === "schedule-same-day@example.com");
+  const scheduledLessons = student ? scheduledClasses.filter((item) => item.studentId === student.id) : [];
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const createdStudent = addOperationsStudent({
+            fullName: "Schedule Same Day",
+            studentEmail: "schedule-same-day@example.com",
+            guardianName: "Sam Parent",
+            guardianPhone: "(262) 555-0142",
+            status: "Active",
+            beltRank: "White"
+          });
+          if (createdStudent) {
+            addScheduledClass({
+              title: "Same Day Intro Lesson",
+              date: "2026-06-15",
+              time: "4:30 PM",
+              type: "private-lesson",
+              studentId: createdStudent.id,
+              notes: "First-day assessment."
+            });
+          }
+        }}
+      >
+        Add and schedule student
+      </button>
+      <p>Harness same-day schedule student: {student?.email ?? "missing"}</p>
+      <p>Harness same-day schedule items: {scheduledLessons.length}</p>
+    </div>
+  );
+}
+
+function ScheduleDoubleAddHarness() {
+  const { addScheduledClass, scheduledClasses } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstSchedule = addScheduledClass({
+            title: "Youth Testing Prep",
+            date: "2026-06-12",
+            time: "4:30 PM",
+            type: "class",
+            recurring: true,
+            titleColor: "#c51625",
+            notes: "Forms review."
+          });
+          const secondSchedule = addScheduledClass({
+            title: " Youth Testing Prep ",
+            date: "2026-06-12",
+            time: " 4:30 PM ",
+            type: " class ",
+            recurring: true,
+            titleColor: "#c51625",
+            notes: " Forms review. "
+          });
+          setReturnMatch(firstSchedule && secondSchedule && firstSchedule.id === secondSchedule.id ? "same" : "different");
+        }}
+      >
+        Add schedule twice
+      </button>
+      <p>Harness duplicate schedule returns: {returnMatch}</p>
+      <p>Harness duplicate scheduled items: {scheduledClasses.length}</p>
+    </div>
+  );
+}
+
+function StudioEventDoubleAddHarness() {
+  const { addStudioEvent, studioEvents } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstEvent = addStudioEvent({
+            title: "Family Board Breaking Night",
+            date: "2026-06-20",
+            time: "6:00 PM",
+            details: "Students can invite family for board breaking demos.",
+            audience: "families"
+          });
+          const secondEvent = addStudioEvent({
+            title: " Family Board Breaking Night ",
+            date: "2026-06-20",
+            time: " 6:00 PM ",
+            details: " Students can invite family for board breaking demos. ",
+            audience: "families"
+          });
+          setReturnMatch(firstEvent && secondEvent && firstEvent.id === secondEvent.id ? "same" : "different");
+        }}
+      >
+        Add event twice
+      </button>
+      <p>Harness duplicate event returns: {returnMatch}</p>
+      <p>Harness duplicate events: {studioEvents.length}</p>
+    </div>
+  );
+}
+
+function MerchandiseDoubleAddHarness() {
+  const { addMerchandiseItem, merchandiseItems } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstItem = addMerchandiseItem({
+            name: "Red Sparring Gloves",
+            category: "Gloves",
+            price: 49,
+            stock: 8,
+            reorderPoint: 3,
+            targetStock: 14,
+            description: "Competition gloves for sparring days.",
+            imageDataUrl: "data:image/png;base64,gloves"
+          });
+          const secondItem = addMerchandiseItem({
+            name: " Red Sparring Gloves ",
+            category: " Gloves ",
+            price: 49,
+            stock: 8,
+            reorderPoint: 3,
+            targetStock: 14,
+            description: " Competition gloves for sparring days. ",
+            imageDataUrl: "data:image/png;base64,gloves"
+          });
+          setReturnMatch(firstItem && secondItem && firstItem.id === secondItem.id ? "same" : "different");
+        }}
+      >
+        Add merchandise twice
+      </button>
+      <p>Harness duplicate merchandise returns: {returnMatch}</p>
+      <p>Harness duplicate merchandise items: {merchandiseItems.length}</p>
+    </div>
+  );
+}
+
+function StudioClassDoubleAddHarness() {
+  const { addStudioClass, studioClasses } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstClass = addStudioClass({
+            name: "Youth Sparring",
+            daysOfWeek: [3, 1],
+            startTime: "17:15",
+            endTime: "18:00",
+            recurring: true,
+            titleColor: "#c51625",
+            notes: "Pads, footwork, and controlled sparring."
+          });
+          const secondClass = addStudioClass({
+            name: " Youth Sparring ",
+            daysOfWeek: [1, 3, 1],
+            startTime: " 17:15 ",
+            endTime: " 18:00 ",
+            recurring: true,
+            titleColor: "#c51625",
+            notes: " Pads, footwork, and controlled sparring. "
+          });
+          setReturnMatch(firstClass && secondClass && firstClass.id === secondClass.id ? "same" : "different");
+        }}
+      >
+        Add class twice
+      </button>
+      <p>Harness duplicate class returns: {returnMatch}</p>
+      <p>Harness duplicate classes: {studioClasses.length}</p>
+    </div>
+  );
+}
+
+function TrainingVideoFolderDoubleAddHarness() {
+  const { addTrainingVideoFolder, trainingVideoFolders } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstFolder = addTrainingVideoFolder({
+            name: "Forms",
+            subject: "Beginner Forms",
+            description: "White belt form review videos."
+          });
+          const secondFolder = addTrainingVideoFolder({
+            name: " Forms ",
+            subject: " Beginner Forms ",
+            description: " White belt form review videos. "
+          });
+          setReturnMatch(firstFolder && secondFolder && firstFolder.id === secondFolder.id ? "same" : "different");
+        }}
+      >
+        Add video folder twice
+      </button>
+      <p>Harness duplicate video folder returns: {returnMatch}</p>
+      <p>Harness duplicate video folders: {trainingVideoFolders.length}</p>
+    </div>
+  );
+}
+
+function StudyGuideFolderDoubleAddHarness() {
+  const { addStudyGuideFolder, studyGuideFolders } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstFolder = addStudyGuideFolder({
+            name: "White Belt Basics",
+            subject: "Foundations",
+            description: "Start here for first-rank review."
+          });
+          const secondFolder = addStudyGuideFolder({
+            name: " White Belt Basics ",
+            subject: " Foundations ",
+            description: " Start here for first-rank review. "
+          });
+          setReturnMatch(firstFolder && secondFolder && firstFolder.id === secondFolder.id ? "same" : "different");
+        }}
+      >
+        Add study folder twice
+      </button>
+      <p>Harness duplicate study folder returns: {returnMatch}</p>
+      <p>Harness duplicate study folders: {studyGuideFolders.length}</p>
+    </div>
+  );
+}
+
+function TrainingVideoDoubleAddHarness() {
+  const { addTrainingVideoFolder, addTrainingVideo, trainingVideos } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const folder = addTrainingVideoFolder({
+            name: "Forms",
+            subject: "Beginner Forms",
+            description: "White belt form review videos."
+          });
+          const firstVideo = folder
+            ? addTrainingVideo({
+                title: "Roundhouse Basics",
+                folderId: folder.id,
+                description: "Practice chamber, pivot, and clean retraction.",
+                fileName: "roundhouse-demo.mp4",
+                mimeType: "video/mp4",
+                size: 2048,
+                videoDataUrl: "data:video/mp4;base64,cm91bmRob3VzZQ=="
+              })
+            : undefined;
+          const secondVideo = folder
+            ? addTrainingVideo({
+                title: " Roundhouse Basics ",
+                folderId: folder.id,
+                description: " Practice chamber, pivot, and clean retraction. ",
+                fileName: " roundhouse-demo.mp4 ",
+                mimeType: " video/mp4 ",
+                size: 2048,
+                videoDataUrl: "data:video/mp4;base64,cm91bmRob3VzZQ=="
+              })
+            : undefined;
+          setReturnMatch(firstVideo && secondVideo && firstVideo.id === secondVideo.id ? "same" : "different");
+        }}
+      >
+        Add video twice
+      </button>
+      <p>Harness duplicate video returns: {returnMatch}</p>
+      <p>Harness duplicate videos: {trainingVideos.length}</p>
+    </div>
+  );
+}
+
+function StudyGuideMaterialDoubleAddHarness() {
+  const { addStudyGuideFolder, addStudyGuideMaterial, studyGuideMaterials } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const folder = addStudyGuideFolder({
+            name: "White Belt Basics",
+            subject: "Foundations",
+            description: "Start here for first-rank review."
+          });
+          const firstMaterial = folder
+            ? addStudyGuideMaterial({
+                title: "Front Kick Checklist",
+                folderId: folder.id,
+                description: "Read before practicing front kicks at home.",
+                fileName: "front-kick-notes.pdf",
+                mimeType: "application/pdf",
+                size: 1024,
+                fileDataUrl: "data:application/pdf;base64,Zm9vdHdvcms="
+              })
+            : undefined;
+          const secondMaterial = folder
+            ? addStudyGuideMaterial({
+                title: " Front Kick Checklist ",
+                folderId: folder.id,
+                description: " Read before practicing front kicks at home. ",
+                fileName: " front-kick-notes.pdf ",
+                mimeType: " application/pdf ",
+                size: 1024,
+                fileDataUrl: "data:application/pdf;base64,Zm9vdHdvcms="
+              })
+            : undefined;
+          setReturnMatch(firstMaterial && secondMaterial && firstMaterial.id === secondMaterial.id ? "same" : "different");
+        }}
+      >
+        Add study material twice
+      </button>
+      <p>Harness duplicate study material returns: {returnMatch}</p>
+      <p>Harness duplicate study materials: {studyGuideMaterials.length}</p>
+    </div>
+  );
+}
+
+function StudentQuickOutreachHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, queueStudentMilestoneEncouragement, queueStudentProfileUpdateRequest, students } = useAppState();
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          queueStudentMilestoneEncouragement(studentId);
+          queueStudentProfileUpdateRequest(studentId);
+        }}
+      >
+        Queue inactive outreach
+      </button>
+      <p>Harness messages: {messageLogs.length}</p>
+      <p>Harness last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function StudentProfileUpdateDoubleCallHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, queueStudentProfileUpdateRequest, students } = useAppState();
+  const [returnNames, setReturnNames] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstMessage = queueStudentProfileUpdateRequest(studentId);
+          const secondMessage = queueStudentProfileUpdateRequest(studentId);
+          setReturnNames(`${firstMessage?.recipientName ?? "none"},${secondMessage?.recipientName ?? "none"}`);
+        }}
+      >
+        Request profile update twice
+      </button>
+      <p>Harness quick return names: {returnNames}</p>
+      <p>Harness quick messages: {messageLogs.length}</p>
+      <p>Harness quick last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndQueueMilestoneHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, queueStudentMilestoneEncouragement, students, updateOperationsStudent } = useAppState();
+  const [returnName, setReturnName] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          const queuedMessage = queueStudentMilestoneEncouragement(studentId);
+          setReturnName(queuedMessage?.recipientName ?? "none");
+        }}
+      >
+        Deactivate and queue milestone
+      </button>
+      <p>Harness milestone student status: {student?.status ?? "missing"}</p>
+      <p>Harness milestone return name: {returnName}</p>
+      <p>Harness milestone messages: {messageLogs.length}</p>
+      <p>Harness milestone last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendMilestonesHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendMilestoneEncouragements, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendMilestoneEncouragements()));
+        }}
+      >
+        Deactivate and send milestones
+      </button>
+      <p>Harness bulk milestone status: {student?.status ?? "missing"}</p>
+      <p>Harness bulk milestone return count: {returnCount}</p>
+      <p>Harness bulk milestone messages: {messageLogs.length}</p>
+      <p>Harness bulk milestone last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndQueueProfileUpdateHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, queueStudentProfileUpdateRequest, students, updateOperationsStudent } = useAppState();
+  const [returnName, setReturnName] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          const queuedMessage = queueStudentProfileUpdateRequest(studentId);
+          setReturnName(queuedMessage?.recipientName ?? "none");
+        }}
+      >
+        Deactivate and request profile update
+      </button>
+      <p>Harness profile student status: {student?.status ?? "missing"}</p>
+      <p>Harness profile return name: {returnName}</p>
+      <p>Harness profile messages: {messageLogs.length}</p>
+      <p>Harness profile last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendProfileUpdatesHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendProfileUpdateRequests, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendProfileUpdateRequests()));
+        }}
+      >
+        Deactivate and send profile updates
+      </button>
+      <p>Harness bulk profile status: {student?.status ?? "missing"}</p>
+      <p>Harness bulk profile return count: {returnCount}</p>
+      <p>Harness bulk profile messages: {messageLogs.length}</p>
+      <p>Harness bulk profile last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendClassRemindersHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendClassReminders, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendClassReminders()));
+        }}
+      >
+        Deactivate and send class reminders
+      </button>
+      <p>Harness class reminder status: {student?.status ?? "missing"}</p>
+      <p>Harness class reminder return count: {returnCount}</p>
+      <p>Harness class reminder messages: {messageLogs.length}</p>
+      <p>Harness class reminder last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendCelebrationsHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendCelebrationOutreach, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendCelebrationOutreach()));
+        }}
+      >
+        Deactivate and send celebrations
+      </button>
+      <p>Harness celebration status: {student?.status ?? "missing"}</p>
+      <p>Harness celebration return count: {returnCount}</p>
+      <p>Harness celebration messages: {messageLogs.length}</p>
+      <p>Harness celebration last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendPausedReviewHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendPausedStudentReactivationFollowUps, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendPausedStudentReactivationFollowUps()));
+        }}
+      >
+        Deactivate and review paused students
+      </button>
+      <p>Harness paused status: {student?.status ?? "missing"}</p>
+      <p>Harness paused return count: {returnCount}</p>
+      <p>Harness paused messages: {messageLogs.length}</p>
+      <p>Harness paused last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendNewStudentCheckInsHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendNewStudentCheckIns, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendNewStudentCheckIns()));
+        }}
+      >
+        Deactivate and send new student check-ins
+      </button>
+      <p>Harness new student status: {student?.status ?? "missing"}</p>
+      <p>Harness new student return count: {returnCount}</p>
+      <p>Harness new student messages: {messageLogs.length}</p>
+      <p>Harness new student last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendMissedClassHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendMissedClassFollowUps, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendMissedClassFollowUps()));
+        }}
+      >
+        Deactivate and send missed-class follow-ups
+      </button>
+      <p>Harness missed-class status: {student?.status ?? "missing"}</p>
+      <p>Harness missed-class return count: {returnCount}</p>
+      <p>Harness missed-class messages: {messageLogs.length}</p>
+      <p>Harness missed-class last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndCheckAttendanceGapsHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendAttendanceGapCheckIns, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendAttendanceGapCheckIns()));
+        }}
+      >
+        Deactivate and check attendance gaps
+      </button>
+      <p>Harness attendance-gap status: {student?.status ?? "missing"}</p>
+      <p>Harness attendance-gap return count: {returnCount}</p>
+      <p>Harness attendance-gap messages: {messageLogs.length}</p>
+      <p>Harness attendance-gap last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndConvertTrialHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendTrialConversionFollowUps, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendTrialConversionFollowUps()));
+        }}
+      >
+        Deactivate and convert trial students
+      </button>
+      <p>Harness trial status: {student?.status ?? "missing"}</p>
+      <p>Harness trial return count: {returnCount}</p>
+      <p>Harness trial messages: {messageLogs.length}</p>
+      <p>Harness trial last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendBeltInvitesHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendBeltTestInvites, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendBeltTestInvites()));
+        }}
+      >
+        Deactivate and invite belt candidates
+      </button>
+      <p>Harness belt status: {student?.status ?? "missing"}</p>
+      <p>Harness belt return count: {returnCount}</p>
+      <p>Harness belt messages: {messageLogs.length}</p>
+      <p>Harness belt last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function BulkOutreachDoubleCallHarness() {
+  const { messageLogs, sendCelebrationOutreach, students } = useAppState();
+  const [returnCounts, setReturnCounts] = useState("none");
+  const student = students.find((item) => item.id === "student-ari");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstCount = sendCelebrationOutreach();
+          const secondCount = sendCelebrationOutreach();
+          setReturnCounts(`${firstCount},${secondCount}`);
+        }}
+      >
+        Send celebration outreach twice
+      </button>
+      <p>Harness return counts: {returnCounts}</p>
+      <p>Harness messages: {messageLogs.length}</p>
+      <p>Harness last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function MarketingBlastDoubleCallHarness() {
+  const { messageCampaigns, messageLogs, sendMarketingBlast } = useAppState();
+  const [returnCounts, setReturnCounts] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstCount = sendMarketingBlast("June family night is open for registration.");
+          const secondCount = sendMarketingBlast("June family night is open for registration.");
+          setReturnCounts(`${firstCount},${secondCount}`);
+        }}
+      >
+        Send marketing blast twice
+      </button>
+      <p>Harness marketing return counts: {returnCounts}</p>
+      <p>Harness campaigns: {messageCampaigns.length}</p>
+      <p>Harness marketing messages: {messageLogs.length}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendMarketingBlastHarness({ studentId }: { studentId: string }) {
+  const { messageCampaigns, messageLogs, sendMarketingBlast, students, updateOperationsStudent } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0101",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          setReturnCount(String(sendMarketingBlast("June family night is open for registration.")));
+        }}
+      >
+        Deactivate and send marketing blast
+      </button>
+      <p>Harness marketing student status: {student?.status ?? "missing"}</p>
+      <p>Harness marketing return count: {returnCount}</p>
+      <p>Harness marketing campaign count: {messageCampaigns.length}</p>
+      <p>Harness marketing message count: {messageLogs.length}</p>
+    </div>
+  );
+}
+
+function QueuedTextsDoubleSendHarness() {
+  const { messageLogs, sendQueuedTexts } = useAppState();
+  const [returnCounts, setReturnCounts] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstCount = sendQueuedTexts();
+          const secondCount = sendQueuedTexts();
+          setReturnCounts(`${firstCount},${secondCount}`);
+        }}
+      >
+        Send queued texts twice
+      </button>
+      <p>Harness send return counts: {returnCounts}</p>
+      <p>Harness queued statuses: {messageLogs.map((message) => message.status).join(",")}</p>
+    </div>
+  );
+}
+
+function SingleQueuedTextDoubleSendHarness() {
+  const { messageLogs, sendQueuedText } = useAppState();
+  const [returnNames, setReturnNames] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstMessage = sendQueuedText("message-ari");
+          const secondMessage = sendQueuedText("message-ari");
+          setReturnNames(`${firstMessage?.recipientName ?? "none"},${secondMessage?.recipientName ?? "none"}`);
+        }}
+      >
+        Send Ari queued text twice
+      </button>
+      <p>Harness single send returns: {returnNames}</p>
+      <p>Harness single statuses: {messageLogs.map((message) => message.status).join(",")}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendQueuedTextHarness({ studentId }: { studentId: string }) {
+  const { messageLogs, sendQueuedText, students, updateOperationsStudent } = useAppState();
+  const [returnName, setReturnName] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0100",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          const sentMessage = sendQueuedText("message-ari");
+          setReturnName(sentMessage?.recipientName ?? "none");
+        }}
+      >
+        Deactivate and send queued text
+      </button>
+      <p>Harness queued student status: {student?.status ?? "missing"}</p>
+      <p>Harness queued send return: {returnName}</p>
+      <p>Harness queued message statuses: {messageLogs.map((message) => message.status).join(",") || "none"}</p>
+    </div>
+  );
+}
+
+function StaleQueuedTextsDoubleClearHarness() {
+  const { clearStaleQueuedTexts, messageLogs } = useAppState();
+  const [returnCounts, setReturnCounts] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstCount = clearStaleQueuedTexts();
+          const secondCount = clearStaleQueuedTexts();
+          setReturnCounts(`${firstCount},${secondCount}`);
+        }}
+      >
+        Clear stale queued texts twice
+      </button>
+      <p>Harness stale clear returns: {returnCounts}</p>
+      <p>Harness stale messages: {messageLogs.length}</p>
+    </div>
+  );
+}
+
+function LeadReviewDoubleCallHarness() {
+  const { leadReviews, reviewLeadFollowUps } = useAppState();
+  const [returnCounts, setReturnCounts] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstCount = reviewLeadFollowUps();
+          const secondCount = reviewLeadFollowUps();
+          setReturnCounts(`${firstCount},${secondCount}`);
+        }}
+      >
+        Review leads twice
+      </button>
+      <p>Harness lead review returns: {returnCounts}</p>
+      <p>Harness lead reviews: {leadReviews.length}</p>
+    </div>
+  );
+}
+
+function SaveContactAndReviewLeadsHarness() {
+  const { contacts, leadReviews, reviewLeadFollowUps, saveContact } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          saveContact({
+            id: "contact-ari",
+            name: "Ari Nguyen",
+            email: "ari@example.com",
+            phone: "(262) 555-0101",
+            message: "We want to try the starter program.",
+            createdAt: `${dateKeyOffset(0)}T10:00:00.000Z`
+          });
+          setReturnCount(String(reviewLeadFollowUps()));
+        }}
+      >
+        Save contact and review leads
+      </button>
+      <p>Harness saved contacts: {contacts.length}</p>
+      <p>Harness same-action lead return: {returnCount}</p>
+      <p>Harness same-action lead reviews: {leadReviews.length}</p>
+    </div>
+  );
+}
+
+function LowInventoryRestockDoubleCallHarness() {
+  const { merchandiseItems, restockLowInventory } = useAppState();
+  const [returnCounts, setReturnCounts] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstCount = restockLowInventory();
+          const secondCount = restockLowInventory();
+          setReturnCounts(`${firstCount},${secondCount}`);
+        }}
+      >
+        Restock inventory twice
+      </button>
+      <p>Harness restock returns: {returnCounts}</p>
+      <p>Harness inventory stocks: {merchandiseItems.map((item) => `${item.id}:${item.stock}`).join(",")}</p>
+    </div>
+  );
+}
+
+function StudentCreationHarness() {
+  const { addOperationsStudent, messageLogs, students } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          addOperationsStudent({
+            fullName: "Cora Miles",
+            studentEmail: "cora@example.com",
+            guardianName: "Mina Miles",
+            guardianPhone: "(262) 555-0102",
+            status: "Inactive",
+            beltRank: "Blue"
+          });
+        }}
+      >
+        Create inactive student
+      </button>
+      <p>Harness students: {students.length}</p>
+      <p>Harness messages: {messageLogs.length}</p>
+    </div>
+  );
+}
+
+function StudentCreationDoubleCallHarness() {
+  const { addOperationsStudent, messageLogs, students } = useAppState();
+  const [returnNames, setReturnNames] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstStudent = addOperationsStudent({
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Minh Nguyen",
+            guardianPhone: "(262) 555-0101",
+            status: "Active",
+            beltRank: "White"
+          });
+          const secondStudent = addOperationsStudent({
+            fullName: " Ari Nguyen ",
+            studentEmail: " ARI@example.com ",
+            guardianName: "Minh Nguyen",
+            guardianPhone: "(262) 555-0101",
+            status: "Active",
+            beltRank: "White"
+          });
+          setReturnNames(`${firstStudent ? `${firstStudent.firstName} ${firstStudent.lastName}` : "none"},${secondStudent ? `${secondStudent.firstName} ${secondStudent.lastName}` : "none"}`);
+        }}
+      >
+        Create student twice
+      </button>
+      <p>Harness duplicate student returns: {returnNames}</p>
+      <p>Harness duplicate students: {students.length}</p>
+      <p>Harness duplicate messages: {messageLogs.length}</p>
+    </div>
+  );
+}
+
+function ManagedStudentAccountCreationHarness({ studentId }: { studentId: string }) {
+  const { createManagedAccount, managedAccounts } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          createManagedAccount({
+            displayName: "Inactive Student",
+            username: "inactive.student",
+            password: "StudentPass123",
+            role: "student",
+            status: "active",
+            email: "inactive@example.com",
+            phone: "(262) 555-0102",
+            title: "Student",
+            studentId
+          });
+        }}
+      >
+        Create inactive student login
+      </button>
+      <p>Harness managed accounts: {managedAccounts.length}</p>
+    </div>
+  );
+}
+
+function ManagedAccountDoubleCreateHarness() {
+  const { accountRoles, createManagedAccount, managedAccounts } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstAccount = createManagedAccount({
+            displayName: "Taylor Staff",
+            username: "taylor staff",
+            password: "StaffPass123",
+            role: "staff",
+            status: "active",
+            email: "taylor@example.com",
+            phone: "(262) 555-0190",
+            title: "Front Desk",
+            access: ["dashboard", "students"]
+          });
+          const secondAccount = createManagedAccount({
+            displayName: " Taylor Staff ",
+            username: " Taylor Staff ",
+            password: " StaffPass123 ",
+            role: "staff",
+            status: "active",
+            email: " taylor@example.com ",
+            phone: " (262) 555-0190 ",
+            title: " Front Desk ",
+            access: ["students", "dashboard"]
+          });
+          setReturnMatch(firstAccount && secondAccount && firstAccount.id === secondAccount.id ? "same" : "different");
+        }}
+      >
+        Create managed account twice
+      </button>
+      <p>Harness duplicate managed returns: {returnMatch}</p>
+      <p>Harness duplicate managed accounts: {managedAccounts.length}</p>
+      <p>Harness duplicate managed roles: {accountRoles.length}</p>
+    </div>
+  );
+}
+
+function ImmediateManagedAccountLoginHarness() {
+  const { createManagedAccount, loginManagedAccount, session } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const account = createManagedAccount({
+            displayName: "Taylor Staff",
+            username: "taylor staff",
+            password: "StaffPass123",
+            role: "staff",
+            status: "active",
+            email: "taylor@example.com",
+            phone: "(262) 555-0190",
+            title: "Front Desk",
+            access: ["dashboard", "students"]
+          });
+          if (account) {
+            loginManagedAccount({
+              username: "Taylor Staff",
+              password: "StaffPass123"
+            });
+          }
+        }}
+      >
+        Create and sign in managed account
+      </button>
+      <p>Harness session email: {session?.email ?? "none"}</p>
+    </div>
+  );
+}
+
+function ChildAccountDoubleCreateHarness() {
+  const { accountRoles, addChildAccount, childAccounts } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstChild = addChildAccount({
+            name: "Kai Cho",
+            age: "7",
+            beltSlug: "yellow",
+            username: "kai cho",
+            password: "Dragon123"
+          });
+          const secondChild = addChildAccount({
+            name: " Kai Cho ",
+            age: " 7 ",
+            beltSlug: "yellow",
+            username: " Kai Cho ",
+            password: " Dragon123 "
+          });
+          setReturnMatch(firstChild && secondChild && firstChild.id === secondChild.id ? "same" : "different");
+        }}
+      >
+        Create child account twice
+      </button>
+      <p>Harness duplicate child returns: {returnMatch}</p>
+      <p>Harness duplicate child accounts: {childAccounts.length}</p>
+      <p>Harness duplicate child roles: {accountRoles.length}</p>
+    </div>
+  );
+}
+
+function EmptyCheckoutHarness() {
+  const { orders, placeOrder } = useAppState();
+  const customer = {
+    firstName: "Ari",
+    lastName: "Nguyen",
+    email: "ari@example.com",
+    phone: "(262) 555-0101",
+    address: "N89W16863 Appleton Ave",
+    city: "Menomonee Falls",
+    state: "WI",
+    zip: "53051"
+  };
+
+  return (
+    <div>
+      <button type="button" onClick={() => placeOrder(customer, "Empty cart attempt")}>
+        Place empty order
+      </button>
+      <p>Harness orders: {orders.length}</p>
+    </div>
+  );
+}
+
+function CheckoutDoubleSubmitHarness() {
+  const { cart, orders, placeOrder } = useAppState();
+  const [returnOrders, setReturnOrders] = useState("none");
+  const customer = {
+    firstName: "Ari",
+    lastName: "Nguyen",
+    email: "ari@example.com",
+    phone: "(262) 555-0101",
+    address: "N89W16863 Appleton Ave",
+    city: "Menomonee Falls",
+    state: "WI",
+    zip: "53051"
+  };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstOrder = placeOrder(customer, "Pickup after class");
+          const secondOrder = placeOrder(customer, "Pickup after class");
+          setReturnOrders(`${firstOrder?.orderNumber ?? "none"},${secondOrder?.orderNumber ?? "none"}`);
+        }}
+      >
+        Place order twice
+      </button>
+      <p>Harness checkout returns: {returnOrders}</p>
+      <p>Harness checkout orders: {orders.length}</p>
+      <p>Harness checkout cart items: {cart.length}</p>
+    </div>
+  );
+}
+
+function CartQuantityHarness() {
+  const { addProductToCart, cart, totals } = useAppState();
+  const gloveQuantity = cart.find((item) => item.productSlug === "youth-6oz-boxing-gloves")?.quantity ?? 0;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          addProductToCart("youth-6oz-boxing-gloves", 1);
+          addProductToCart("youth-6oz-boxing-gloves", -3);
+          addProductToCart("white-basic-uniform-w-patches-and-logo", 0);
+        }}
+      >
+        Add invalid cart quantities
+      </button>
+      <p>Harness cart items: {cart.length}</p>
+      <p>Harness glove quantity: {gloveQuantity}</p>
+      <p>Harness subtotal: {totals.subtotal}</p>
+    </div>
+  );
+}
+
+function CartQuantityUpdateHarness() {
+  const { addProductToCart, cart, totals, updateCartQuantity } = useAppState();
+  const gloveItem = cart.find((item) => item.productSlug === "youth-6oz-boxing-gloves");
+
+  return (
+    <div>
+      <button type="button" onClick={() => addProductToCart("youth-6oz-boxing-gloves", 2)}>
+        Add valid cart item
+      </button>
+      <button type="button" onClick={() => updateCartQuantity(gloveItem?.id ?? "missing-cart-item", Number.NaN)}>
+        Apply invalid cart update
+      </button>
+      <p>Harness update items: {cart.length}</p>
+      <p>Harness update quantity: {gloveItem?.quantity ?? 0}</p>
+      <p>Harness update subtotal: {totals.subtotal}</p>
+    </div>
+  );
+}
+
+function BookingPartySizeHarness() {
+  const { addBookingToCart, bookings, cart, totals } = useAppState();
+  const booking = { date: "2026-06-12", time: "4:30 PM", timezone: "America/Chicago" as const };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          addBookingToCart({ ...booking, persons: 0 });
+          addBookingToCart({ ...booking, persons: -2 });
+          addBookingToCart({ ...booking, persons: Number.NaN });
+          addBookingToCart({ ...booking, persons: 1.5 });
+          addBookingToCart({ ...booking, persons: 2 });
+        }}
+      >
+        Add invalid starter bookings
+      </button>
+      <p>Harness booking cart items: {cart.length}</p>
+      <p>Harness saved bookings: {bookings.length}</p>
+      <p>Harness booking subtotal: {totals.subtotal}</p>
+    </div>
+  );
+}
+
+function DirectBookingSaveHarness() {
+  const { bookings, saveBooking } = useAppState();
+  const booking = { date: "2026-06-12", time: "4:30 PM", timezone: "America/Chicago" as const };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          saveBooking({ ...booking, persons: 0 });
+          saveBooking({ ...booking, persons: Number.NaN });
+          saveBooking({ ...booking, persons: 1.5 });
+          saveBooking({ ...booking, persons: 2, date: "" });
+          saveBooking({ ...booking, persons: 2, time: "" });
+          saveBooking({ ...booking, persons: 2 });
+        }}
+      >
+        Save invalid direct bookings
+      </button>
+      <p>Harness direct bookings: {bookings.length}</p>
+    </div>
+  );
+}
+
+function DirectBookingDoubleSaveHarness() {
+  const { bookings, saveBooking } = useAppState();
+  const booking = { persons: 2, date: "2026-06-12", time: "4:30 PM", timezone: "America/Chicago" as const };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          saveBooking(booking);
+          saveBooking({ ...booking, date: " 2026-06-12 ", time: " 4:30 PM " });
+        }}
+      >
+        Save booking twice
+      </button>
+      <p>Harness direct duplicate bookings: {bookings.length}</p>
+    </div>
+  );
+}
+
+function BookingDoubleAddHarness() {
+  const { addBookingToCart, bookings, cart, totals } = useAppState();
+  const booking = { persons: 2, date: "2026-06-12", time: "4:30 PM", timezone: "America/Chicago" as const };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          addBookingToCart(booking);
+          addBookingToCart({ ...booking, date: " 2026-06-12 ", time: " 4:30 PM " });
+        }}
+      >
+        Add starter booking twice
+      </button>
+      <p>Harness duplicate booking cart items: {cart.length}</p>
+      <p>Harness duplicate saved bookings: {bookings.length}</p>
+      <p>Harness duplicate booking subtotal: {totals.subtotal}</p>
+    </div>
+  );
+}
+
+function ProductThenBookingAddHarness() {
+  const { addBookingToCart, addProductToCart, bookings, cart, totals } = useAppState();
+  const booking = { persons: 2, date: "2026-06-12", time: "4:30 PM", timezone: "America/Chicago" as const };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          addProductToCart("youth-6oz-boxing-gloves", 1);
+          addBookingToCart(booking);
+        }}
+      >
+        Add product then starter booking
+      </button>
+      <p>Harness mixed cart items: {cart.length}</p>
+      <p>Harness mixed saved bookings: {bookings.length}</p>
+      <p>Harness mixed cart subtotal: {totals.subtotal}</p>
+    </div>
+  );
+}
+
+function RestoreBackupSessionHarness({ backup }: { backup: ReturnType<typeof buildOperationsBackupSnapshot> }) {
+  const { restoreOperationsBackup, session } = useAppState();
+
+  return (
+    <div>
+      <button type="button" onClick={() => restoreOperationsBackup(JSON.stringify(backup))}>
+        Restore backup harness
+      </button>
+      <p>Harness session email: {session?.email ?? "none"}</p>
+    </div>
+  );
+}
+
+function RestoreAndSendMissedClassHarness({ backup, studentId }: { backup: ReturnType<typeof buildOperationsBackupSnapshot>; studentId: string }) {
+  const { messageLogs, restoreOperationsBackup, sendMissedClassFollowUps, students } = useAppState();
+  const [returnCount, setReturnCount] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          restoreOperationsBackup(JSON.stringify(backup));
+          setReturnCount(String(sendMissedClassFollowUps()));
+        }}
+      >
+        Restore and send missed follow-ups
+      </button>
+      <p>Harness restored missed status: {student?.status ?? "missing"}</p>
+      <p>Harness restored missed return count: {returnCount}</p>
+      <p>Harness restored missed messages: {messageLogs.length}</p>
+      <p>Harness restored missed last contacted: {student?.lastContactedAt ?? "none"}</p>
+    </div>
+  );
+}
+
+function DirectContactSaveHarness() {
+  const { contacts, saveContact } = useAppState();
+  const contact = {
+    id: "contact-valid",
+    name: "Ari Nguyen",
+    email: "",
+    phone: "(262) 555-0101",
+    message: "Interested in the starter program.",
+    createdAt: "2026-06-02T10:00:00.000Z"
+  };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          saveContact({ ...contact, id: "contact-missing-name", name: "" });
+          saveContact({ ...contact, id: "contact-missing-method", email: "", phone: "" });
+          saveContact({ ...contact, id: "contact-missing-message", message: "" });
+          saveContact(contact);
+        }}
+      >
+        Save invalid direct contacts
+      </button>
+      <p>Harness direct contacts: {contacts.length}</p>
+    </div>
+  );
+}
+
+function DirectContactDoubleSaveHarness() {
+  const { contacts, saveContact } = useAppState();
+  const contact = {
+    id: "contact-first",
+    name: "Ari Nguyen",
+    email: "ari@example.com",
+    phone: "(262) 555-0101",
+    message: "Interested in the starter program.",
+    createdAt: "2026-06-02T10:00:00.000Z"
+  };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          saveContact(contact);
+          saveContact({
+            ...contact,
+            id: "contact-second",
+            name: " Ari Nguyen ",
+            email: " ARI@example.com ",
+            phone: "2625550101",
+            message: " Interested in the starter program. ",
+            createdAt: "2026-06-02T10:00:01.000Z"
+          });
+        }}
+      >
+        Save contact twice
+      </button>
+      <p>Harness duplicate contacts: {contacts.length}</p>
+    </div>
+  );
+}
+
+function DirectMessageRecipientHarness() {
+  const { directMessages, sendDirectMessage } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          sendDirectMessage({
+            senderId: "direct-staff-seed",
+            senderName: "Cho's Manager",
+            recipientId: "student-inactive",
+            recipientName: "Cora Miles",
+            body: "Inactive student should not receive this."
+          });
+          sendDirectMessage({
+            senderId: "direct-staff-seed",
+            senderName: "Cho's Manager",
+            recipientId: "parent-student-inactive",
+            recipientName: "Inactive Parent",
+            body: "Inactive parent should not receive this."
+          });
+          sendDirectMessage({
+            senderId: "direct-staff-seed",
+            senderName: "Cho's Manager",
+            recipientId: "student-active",
+            recipientName: "Ari Nguyen",
+            body: "Active student should receive this."
+          });
+        }}
+      >
+        Send inactive direct messages
+      </button>
+      <p>Harness direct messages: {directMessages.length}</p>
+    </div>
+  );
+}
+
+function DirectMessageSenderHarness() {
+  const { directMessages, sendDirectMessage } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          sendDirectMessage({
+            senderId: "student-inactive",
+            senderName: "Cora Miles",
+            recipientId: "direct-staff-seed",
+            recipientName: "Cho's Manager",
+            body: "Inactive student should not send this."
+          });
+          sendDirectMessage({
+            senderId: "student-missing",
+            senderName: "Missing Student",
+            recipientId: "direct-staff-seed",
+            recipientName: "Cho's Manager",
+            body: "Unknown student should not send this."
+          });
+          sendDirectMessage({
+            senderId: "student-active",
+            senderName: "Ari Nguyen",
+            recipientId: "direct-staff-seed",
+            recipientName: "Cho's Manager",
+            body: "Active student should send this."
+          });
+        }}
+      >
+        Send invalid sender direct messages
+      </button>
+      <p>Harness sender direct messages: {directMessages.length}</p>
+    </div>
+  );
+}
+
+function DirectMessageDoubleSendHarness() {
+  const { directMessages, sendDirectMessage } = useAppState();
+  const [returnNames, setReturnNames] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstMessage = sendDirectMessage({
+            senderId: "direct-staff-seed",
+            senderName: "Cho's Manager",
+            recipientId: "student-active",
+            recipientName: "Ari Nguyen",
+            body: "See you at class tonight."
+          });
+          const secondMessage = sendDirectMessage({
+            senderId: "direct-staff-seed",
+            senderName: "Cho's Manager",
+            recipientId: "student-active",
+            recipientName: "Ari Nguyen",
+            body: "See you at class tonight."
+          });
+          setReturnNames(`${firstMessage?.recipientName ?? "none"},${secondMessage?.recipientName ?? "none"}`);
+        }}
+      >
+        Send direct message twice
+      </button>
+      <p>Harness direct return names: {returnNames}</p>
+      <p>Harness direct sent messages: {directMessages.length}</p>
+    </div>
+  );
+}
+
+function DeactivateAndSendDirectMessageHarness({ studentId }: { studentId: string }) {
+  const { directMessages, sendDirectMessage, students, updateOperationsStudent } = useAppState();
+  const [returnName, setReturnName] = useState("none");
+  const student = students.find((item) => item.id === studentId);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          updateOperationsStudent(studentId, {
+            fullName: "Ari Nguyen",
+            studentEmail: "ari@example.com",
+            guardianName: "Family Contact",
+            guardianPhone: "(262) 555-0100",
+            status: "Inactive",
+            beltRank: "Yellow"
+          });
+          const sentMessage = sendDirectMessage({
+            senderId: "direct-staff-seed",
+            senderName: "Cho's Manager",
+            recipientId: studentId,
+            recipientName: "Ari Nguyen",
+            body: "Ari should not receive this after deactivation."
+          });
+          setReturnName(sentMessage?.recipientName ?? "none");
+        }}
+      >
+        Deactivate and send direct message
+      </button>
+      <p>Harness direct student status: {student?.status ?? "missing"}</p>
+      <p>Harness direct send return: {returnName}</p>
+      <p>Harness direct sent count: {directMessages.length}</p>
+    </div>
+  );
+}
+
+function DirectStudyMaterialSafetyHarness() {
+  const { addStudyGuideMaterial, studyGuideMaterials } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          addStudyGuideMaterial({
+            title: "Unsafe HTML",
+            folderId: "study-folder-existing",
+            fileName: "unsafe.html",
+            mimeType: "text/html",
+            size: 128,
+            fileDataUrl: "data:text/html,<script>alert(1)</script>"
+          });
+          addStudyGuideMaterial({
+            title: "Unsafe SVG",
+            folderId: "study-folder-existing",
+            fileName: "unsafe.svg",
+            mimeType: "image/svg+xml",
+            size: 128,
+            fileDataUrl: "data:image/svg+xml,<svg><script>alert(1)</script></svg>"
+          });
+          addStudyGuideMaterial({
+            title: "Front Kick Checklist",
+            folderId: "study-folder-existing",
+            fileName: "front-kick-checklist.pdf",
+            mimeType: "application/pdf",
+            size: 1024,
+            fileDataUrl: "data:application/pdf;base64,Zm9vdHdvcms="
+          });
+        }}
+      >
+        Publish unsafe study materials
+      </button>
+      <p>Harness study materials: {studyGuideMaterials.length}</p>
+    </div>
+  );
+}
+
+function DirectTrainingVideoSafetyHarness() {
+  const { addTrainingVideo, trainingVideos } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          addTrainingVideo({
+            title: "Mismatched HTML Video",
+            folderId: "video-folder-existing",
+            fileName: "unsafe.html",
+            mimeType: "text/html",
+            size: 128,
+            videoDataUrl: "data:video/mp4;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="
+          });
+          addTrainingVideo({
+            title: "Unsupported SVG Video",
+            folderId: "video-folder-existing",
+            fileName: "unsafe.svg",
+            mimeType: "video/svg+xml",
+            size: 128,
+            videoDataUrl: "data:video/svg+xml,<svg><script>alert(1)</script></svg>"
+          });
+          addTrainingVideo({
+            title: "Roundhouse Basics",
+            folderId: "video-folder-existing",
+            fileName: "roundhouse-demo.mp4",
+            mimeType: "video/mp4",
+            size: 2048,
+            videoDataUrl: "data:video/mp4;base64,cm91bmRob3VzZQ=="
+          });
+        }}
+      >
+        Publish unsafe training videos
+      </button>
+      <p>Harness training videos: {trainingVideos.length}</p>
+    </div>
+  );
+}
+
+function ChildUsernameCollisionHarness() {
+  const { addChildAccount, childAccounts } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          addChildAccount({ name: "Prototype Manager Collision", age: "9", beltSlug: "white", username: "manager123", password: "Dragon123" });
+          addChildAccount({ name: "Managed Staff Collision", age: "9", beltSlug: "white", username: "jordan.staff", password: "Dragon123" });
+          addChildAccount({ name: "Kai Cho", age: "7", beltSlug: "yellow", username: "kai-cho.child", password: "Dragon123" });
+        }}
+      >
+        Save child username collisions
+      </button>
+      <p>Harness child accounts: {childAccounts.length}</p>
+    </div>
+  );
+}
+
+function ChildLoginOwnershipHarness({ childId }: { childId: string }) {
+  const { loginChildAccount, session } = useAppState();
+
+  return (
+    <div>
+      <button type="button" onClick={() => loginChildAccount(childId)}>
+        Open child side by id
+      </button>
+      <p>Harness session email: {session?.email ?? "none"}</p>
+    </div>
+  );
+}
+
+function ImmediateChildLoginHandoffHarness() {
+  const { addChildAccount, loginChildAccount, session } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const child = addChildAccount({
+            name: "Kai Cho",
+            age: "7",
+            beltSlug: "yellow",
+            username: "kai cho",
+            password: "Dragon123"
+          });
+          if (child) loginChildAccount(child.id);
+        }}
+      >
+        Create and open child side
+      </button>
+      <p>Harness session email: {session?.email ?? "none"}</p>
+    </div>
+  );
+}
+
+function ImmediateChildCredentialLoginHarness() {
+  const { addChildAccount, loginChildCredentials, session } = useAppState();
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const child = addChildAccount({
+            name: "Kai Cho",
+            age: "7",
+            beltSlug: "yellow",
+            username: "kai cho",
+            password: "Dragon123"
+          });
+          if (child) {
+            loginChildCredentials({
+              username: "Kai Cho",
+              password: "Dragon123"
+            });
+          }
+        }}
+      >
+        Create and sign in child credentials
+      </button>
+      <p>Harness session email: {session?.email ?? "none"}</p>
+    </div>
+  );
+}
+
+function RegisteredAccountDoubleCreateHarness() {
+  const { accounts, register } = useAppState();
+  const [returnMatch, setReturnMatch] = useState("none");
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const firstAccount = register({
+            email: "new.family@example.com",
+            password: "FamilyPass123"
+          });
+          const secondAccount = register({
+            email: " NEW.FAMILY@example.com ",
+            password: " FamilyPass123 "
+          });
+          setReturnMatch(firstAccount && secondAccount && firstAccount === secondAccount ? "same" : "different");
+        }}
+      >
+        Register account twice
+      </button>
+      <p>Harness duplicate registered returns: {returnMatch}</p>
+      <p>Harness duplicate registered accounts: {accounts.length}</p>
+    </div>
   );
 }
 
@@ -216,6 +2274,246 @@ describe("login landing", () => {
     expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "parent123@chos.prototype", role: "guardian" });
   });
 
+  it("creates self-service accounts as guardian accounts instead of staff accounts", async () => {
+    renderLoggedOutApp("/");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
+    const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
+
+    fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "new.family@example.com" } });
+    fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "FamilyPass123" } });
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Account" }));
+
+    expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parent Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toContainEqual(expect.objectContaining({ email: "new.family@example.com" }));
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "new.family@example.com", remembered: true });
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "new.family@example.com", role: "guardian" });
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).not.toContainEqual({ email: "new.family@example.com", role: "staff" });
+  });
+
+  it("keeps registered account creation idempotent when the same signup fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.accounts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppStateProvider>
+          <RegisteredAccountDoubleCreateHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Register account twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate registered returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate registered accounts: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          email: "new.family@example.com",
+          password: "FamilyPass123"
+        })
+      ]);
+    });
+  });
+
+  it("does not let self-service accounts reuse built-in prototype identities", async () => {
+    renderLoggedOutApp("/");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
+    const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
+
+    fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "manager123@chos.prototype" } });
+    fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "FamilyPass123" } });
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Account" }));
+
+    expect(await screen.findByText("That account is already registered. Sign in with the saved password.")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toEqual([]);
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([]);
+  });
+
+  it("does not let self-service accounts reuse managed login identities", async () => {
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-email-shaped-staff",
+        displayName: "Jordan Lee",
+        username: "jordan.staff@example.com",
+        password: "StaffPass123",
+        role: "staff",
+        status: "active",
+        access: ["reports"],
+        createdAt: "2026-06-01T09:00:00.000Z"
+      }
+    ]));
+    renderLoggedOutApp("/");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
+    const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
+
+    fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "jordan.staff@example.com" } });
+    fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "FamilyPass123" } });
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Account" }));
+
+    expect(await screen.findByText("That account is already registered. Sign in with the saved password.")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Reports" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toEqual([]);
+  });
+
+  it("does not let self-service accounts reuse child login identities", async () => {
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([
+      {
+        id: "child-email-shaped-login",
+        parentEmail: "parent123@chos.prototype",
+        name: "Kai Cho",
+        age: "9",
+        beltSlug: "white",
+        username: "kai.child@example.com",
+        password: "Dragon123",
+        createdAt: "2026-06-01T09:00:00.000Z"
+      }
+    ]));
+    renderLoggedOutApp("/");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
+    const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
+
+    fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "kai.child@example.com" } });
+    fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "FamilyPass123" } });
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Account" }));
+
+    expect(await screen.findByText("That account is already registered. Sign in with the saved password.")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Parent Profile" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toEqual([]);
+  });
+
+  it("does not sign in stored self-service records that collide with built-in prototype identities", async () => {
+    window.localStorage.setItem("chos.accounts.v1", JSON.stringify([
+      {
+        email: "manager123@chos.prototype",
+        password: "FamilyPass123",
+        createdAt: "2026-06-01T09:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "manager123@chos.prototype", role: "guardian" }]));
+
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "manager123@chos.prototype" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "FamilyPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByText("Check the username and password.")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+  });
+
+  it("does not sign in stored self-service records that collide with managed login identities", async () => {
+    window.localStorage.setItem("chos.accounts.v1", JSON.stringify([
+      {
+        email: "jordan.staff@example.com",
+        password: "FamilyPass123",
+        createdAt: "2026-06-01T09:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "jordan.staff@example.com", role: "guardian" }]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-email-shaped-staff",
+        displayName: "Jordan Lee",
+        username: "jordan.staff@example.com",
+        password: "StaffPass123",
+        role: "staff",
+        status: "active",
+        access: ["reports"],
+        createdAt: "2026-06-01T09:00:00.000Z"
+      }
+    ]));
+
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "jordan.staff@example.com" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "FamilyPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByText("Check the username and password.")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+  });
+
+  it("clears refreshed self-service sessions that collide with managed login identities", () => {
+    window.localStorage.setItem("chos.accounts.v1", JSON.stringify([
+      {
+        email: "jordan.staff@example.com",
+        password: "FamilyPass123",
+        createdAt: "2026-06-01T09:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "jordan.staff@example.com", role: "guardian" }]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-email-shaped-staff",
+        displayName: "Jordan Lee",
+        username: "jordan.staff@example.com",
+        password: "StaffPass123",
+        role: "staff",
+        status: "active",
+        access: ["reports"],
+        createdAt: "2026-06-01T09:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "jordan.staff@example.com", remembered: true, createdAt: "2026-06-01T09:05:00.000Z" }));
+
+    renderLoggedOutApp("/");
+
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+  });
+
+  it("lets self-service guardian accounts sign back in with their saved password", async () => {
+    const firstRender = renderLoggedOutApp("/");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
+    const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
+
+    fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "returning.family@example.com" } });
+    fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "FamilyPass123" } });
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Account" }));
+
+    expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
+
+    window.localStorage.removeItem("chos.session.v1");
+    firstRender.unmount();
+
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "returning.family@example.com" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "FamilyPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parent Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "returning.family@example.com", remembered: true });
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "returning.family@example.com", role: "guardian" });
+  });
+
   it("signs in a parent-created child account with the saved username and password", async () => {
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([
       {
@@ -268,6 +2566,20 @@ describe("login landing", () => {
     expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
   });
 
+  it("keeps unknown credentials on the login screen instead of creating a staff session", async () => {
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "unknown.staff" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "not-a-real-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(await screen.findByText("Check the username and password.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).not.toContainEqual({ email: "unknown.staff", role: "staff" });
+  });
+
   it("returns refreshed guest sessions to the opening login animation", () => {
     window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "guest@chos.prototype", remembered: false, createdAt: "2026-05-16T00:00:00.000Z" }));
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "guest@chos.prototype", role: "staff" }]));
@@ -279,6 +2591,54 @@ describe("login landing", () => {
     expect(screen.getByPlaceholderText("Username")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
     expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+  });
+
+  it("returns refreshed orphan child sessions to the login screen", () => {
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "ghost.child", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" }));
+
+    renderLoggedOutApp("/");
+
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+  });
+
+  it("keeps child account sessions authoritative over stale stored staff roles", () => {
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([
+      {
+        id: "child-kai",
+        parentEmail: "parent123@chos.prototype",
+        name: "Kai Cho",
+        age: "9",
+        beltSlug: "white",
+        username: "kai-cho.child",
+        password: "Dragon123",
+        createdAt: "2026-06-01T09:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "kai-cho.child", role: "staff" }]));
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "kai-cho.child", remembered: true, createdAt: "2026-06-01T09:05:00.000Z" }));
+
+    renderLoggedOutApp("/reports");
+
+    expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Student profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Reports" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+  });
+
+  it("keeps built-in prototype roles authoritative over stale stored role records", () => {
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "student123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" }));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "student123@chos.prototype", role: "staff" }]));
+
+    renderLoggedOutApp("/");
+
+    expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Student profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
   });
 
   it("keeps a refreshed Manager123 session on the Profile page", () => {
@@ -311,6 +2671,46 @@ describe("login landing", () => {
     expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Parent profile page")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Parent Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a refreshed self-service guardian session on the Parent Profile page", () => {
+    window.localStorage.setItem("chos.accounts.v1", JSON.stringify([
+      {
+        email: "returning.family@example.com",
+        password: "FamilyPass123",
+        createdAt: "2026-06-01T09:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "returning.family@example.com", role: "guardian" }]));
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "returning.family@example.com", remembered: true, createdAt: "2026-06-01T09:05:00.000Z" }));
+
+    renderLoggedOutApp("/");
+
+    expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parent Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "returning.family@example.com", remembered: true });
+  });
+
+  it("keeps self-service guardian sessions authoritative over stale stored staff roles", () => {
+    window.localStorage.setItem("chos.accounts.v1", JSON.stringify([
+      {
+        email: "returning.family@example.com",
+        password: "FamilyPass123",
+        createdAt: "2026-06-01T09:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "returning.family@example.com", role: "staff" }]));
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "returning.family@example.com", remembered: true, createdAt: "2026-06-01T09:05:00.000Z" }));
+
+    renderLoggedOutApp("/reports");
+
+    expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Parent Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Reports" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
   });
 
@@ -408,6 +2808,714 @@ describe("post-login operations app", () => {
     vi.useRealTimers();
   });
 
+  it("does not create an order when checkout is submitted with an empty cart", async () => {
+    render(
+      <MemoryRouter initialEntries={["/checkout"]}>
+        <AppStateProvider>
+          <EmptyCheckoutHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Place empty order" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness orders: 0")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.orders.v1") ?? "[]")).toEqual([]);
+      expect(window.localStorage.getItem("chos.cart.v1")).toBeNull();
+    });
+  });
+
+  it("keeps checkout order placement idempotent when submit fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.orders.v1", JSON.stringify([]));
+    window.localStorage.setItem(
+      "chos.cart.v1",
+      JSON.stringify([
+        {
+          id: "cart-gloves",
+          productSlug: "youth-6oz-boxing-gloves",
+          name: "Youth 6oz boxing gloves",
+          unitPrice: 39,
+          displayPrice: "$39.00",
+          quantity: 1
+        }
+      ])
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/checkout"]}>
+        <AppStateProvider>
+          <CheckoutDoubleSubmitHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Place order twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness checkout returns: CHOS-2026-0001,none")).toBeInTheDocument();
+      expect(screen.getByText("Harness checkout orders: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness checkout cart items: 0")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.orders.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          orderNumber: "CHOS-2026-0001",
+          subtotal: 39,
+          items: [expect.objectContaining({ productSlug: "youth-6oz-boxing-gloves", quantity: 1 })]
+        })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.cart.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("ignores zero and negative product quantities when adding to cart", async () => {
+    render(
+      <MemoryRouter initialEntries={["/cart"]}>
+        <AppStateProvider>
+          <CartQuantityHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add invalid cart quantities" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness cart items: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness glove quantity: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness subtotal: 39")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.cart.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ productSlug: "youth-6oz-boxing-gloves", quantity: 1 })
+      ]);
+    });
+  });
+
+  it("ignores non-finite cart quantity updates", async () => {
+    render(
+      <MemoryRouter initialEntries={["/cart"]}>
+        <AppStateProvider>
+          <CartQuantityUpdateHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add valid cart item" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness update items: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness update quantity: 2")).toBeInTheDocument();
+      expect(screen.getByText("Harness update subtotal: 78")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply invalid cart update" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness update items: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness update quantity: 2")).toBeInTheDocument();
+      expect(screen.getByText("Harness update subtotal: 78")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.cart.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ productSlug: "youth-6oz-boxing-gloves", quantity: 2 })
+      ]);
+    });
+  });
+
+  it("ignores invalid starter booking party sizes", async () => {
+    render(
+      <MemoryRouter initialEntries={["/cart"]}>
+        <AppStateProvider>
+          <BookingPartySizeHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add invalid starter bookings" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness booking cart items: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness saved bookings: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness booking subtotal: 59.9")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.bookings.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ persons: 2, date: "2026-06-12", time: "4:30 PM" })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.cart.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          productSlug: "starter-program",
+          quantity: 1,
+          unitPrice: 59.9,
+          booking: expect.objectContaining({ persons: 2 })
+        })
+      ]);
+    });
+  });
+
+  it("ignores invalid direct booking saves", async () => {
+    render(
+      <MemoryRouter initialEntries={["/cart"]}>
+        <AppStateProvider>
+          <DirectBookingSaveHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save invalid direct bookings" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness direct bookings: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.bookings.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ persons: 2, date: "2026-06-12", time: "4:30 PM", timezone: "America/Chicago" })
+      ]);
+    });
+  });
+
+  it("keeps direct starter booking saves idempotent when the same booking fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.bookings.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/cart"]}>
+        <AppStateProvider>
+          <DirectBookingDoubleSaveHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save booking twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness direct duplicate bookings: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.bookings.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ persons: 2, date: "2026-06-12", time: "4:30 PM", timezone: "America/Chicago" })
+      ]);
+    });
+  });
+
+  it("keeps starter booking cart adds idempotent when the same booking fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.bookings.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.cart.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/cart"]}>
+        <AppStateProvider>
+          <BookingDoubleAddHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add starter booking twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate booking cart items: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate saved bookings: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate booking subtotal: 59.9")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.bookings.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ persons: 2, date: "2026-06-12", time: "4:30 PM", timezone: "America/Chicago" })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.cart.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          productSlug: "starter-program",
+          quantity: 1,
+          unitPrice: 59.9,
+          booking: expect.objectContaining({ persons: 2, date: "2026-06-12", time: "4:30 PM" })
+        })
+      ]);
+    });
+  });
+
+  it("keeps product and starter booking cart adds together when they fire before rerender", async () => {
+    window.localStorage.setItem("chos.bookings.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.cart.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/cart"]}>
+        <AppStateProvider>
+          <ProductThenBookingAddHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add product then starter booking" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness mixed cart items: 2")).toBeInTheDocument();
+      expect(screen.getByText("Harness mixed saved bookings: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness mixed cart subtotal: 98.9")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.cart.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ productSlug: "youth-6oz-boxing-gloves", quantity: 1, unitPrice: 39 }),
+        expect.objectContaining({
+          productSlug: "starter-program",
+          quantity: 1,
+          unitPrice: 59.9,
+          booking: expect.objectContaining({ persons: 2, date: "2026-06-12", time: "4:30 PM" })
+        })
+      ]);
+    });
+  });
+
+  it("ignores invalid direct contact saves", async () => {
+    render(
+      <MemoryRouter initialEntries={["/contact-us"]}>
+        <AppStateProvider>
+          <DirectContactSaveHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save invalid direct contacts" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness direct contacts: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.contacts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          id: "contact-valid",
+          name: "Ari Nguyen",
+          phone: "(262) 555-0101",
+          message: "Interested in the starter program."
+        })
+      ]);
+    });
+  });
+
+  it("keeps public contact saves idempotent when the same inquiry fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.contacts.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/contact-us"]}>
+        <AppStateProvider>
+          <DirectContactDoubleSaveHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save contact twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate contacts: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.contacts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          id: "contact-first",
+          name: "Ari Nguyen",
+          email: "ari@example.com",
+          phone: "(262) 555-0101",
+          message: "Interested in the starter program."
+        })
+      ]);
+    });
+  });
+
+  it("does not send direct messages to inactive student recipients from direct state calls", async () => {
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-active",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-inactive",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        guardianName: "Inactive Parent",
+        guardianPhone: "(262) 555-0112",
+        status: "Inactive",
+        beltRank: "Blue",
+        classesAttended: 24,
+        missedClassCount: 2,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    render(
+      <MemoryRouter initialEntries={["/messages"]}>
+        <AppStateProvider>
+          <DirectMessageRecipientHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Send inactive direct messages" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness direct messages: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ recipientId: "student-active", recipientName: "Ari Nguyen", body: "Active student should receive this." })
+      ]);
+    });
+  });
+
+  it("does not send direct messages from inactive or missing student senders", async () => {
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-active",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-inactive",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Blue",
+        classesAttended: 24,
+        missedClassCount: 2,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    render(
+      <MemoryRouter initialEntries={["/messages"]}>
+        <AppStateProvider>
+          <DirectMessageSenderHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Send invalid sender direct messages" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness sender direct messages: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ senderId: "student-active", senderName: "Ari Nguyen", body: "Active student should send this." })
+      ]);
+    });
+  });
+
+  it("does not send direct messages to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/messages"]}>
+        <AppStateProvider>
+          <DeactivateAndSendDirectMessageHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and send direct message" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness direct student status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness direct send return: none")).toBeInTheDocument();
+      expect(screen.getByText("Harness direct sent count: 0")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ id: "student-ari", status: "Inactive" })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("keeps direct app messages idempotent when the same send fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-active",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/messages"]}>
+        <AppStateProvider>
+          <DirectMessageDoubleSendHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Send direct message twice" }));
+
+    expect(await screen.findByText("Harness direct return names: Ari Nguyen,Ari Nguyen")).toBeInTheDocument();
+    expect(screen.getByText("Harness direct sent messages: 1")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        senderId: "direct-staff-seed",
+        recipientId: "student-active",
+        recipientName: "Ari Nguyen",
+        body: "See you at class tonight.",
+        status: "sent"
+      })
+    ]);
+  });
+
+  it("does not publish unsafe study material files from direct state calls", async () => {
+    window.localStorage.setItem("chos.operations.studyGuideFolders.v1", JSON.stringify([
+      {
+        id: "study-folder-existing",
+        name: "White Belt Basics",
+        subject: "Foundations",
+        createdAt: "2026-06-02T10:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.studyGuideMaterials.v1", JSON.stringify([]));
+    render(
+      <MemoryRouter initialEntries={["/study-guide"]}>
+        <AppStateProvider>
+          <DirectStudyMaterialSafetyHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Publish unsafe study materials" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness study materials: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.studyGuideMaterials.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          title: "Front Kick Checklist",
+          fileName: "front-kick-checklist.pdf",
+          mimeType: "application/pdf",
+          fileDataUrl: expect.stringContaining("data:application/pdf")
+        })
+      ]);
+    });
+  });
+
+  it("does not publish unsafe training video files from direct state calls", async () => {
+    window.localStorage.setItem("chos.operations.videoFolders.v1", JSON.stringify([
+      {
+        id: "video-folder-existing",
+        name: "Forms",
+        subject: "Beginner Forms",
+        createdAt: "2026-06-02T10:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.videos.v1", JSON.stringify([]));
+    render(
+      <MemoryRouter initialEntries={["/videos"]}>
+        <AppStateProvider>
+          <DirectTrainingVideoSafetyHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Publish unsafe training videos" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness training videos: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.videos.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          title: "Roundhouse Basics",
+          fileName: "roundhouse-demo.mp4",
+          mimeType: "video/mp4",
+          videoDataUrl: expect.stringContaining("data:video/mp4")
+        })
+      ]);
+    });
+  });
+
+  it("rejects child usernames that collide with prototype or managed logins", async () => {
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "parent123@chos.prototype", role: "guardian" }]));
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-jordan",
+        displayName: "Jordan Lee",
+        username: "jordan.staff",
+        password: "StaffPass123",
+        role: "staff",
+        status: "active",
+        access: ["dashboard", "students"],
+        createdAt: "2026-05-20T10:00:00.000Z"
+      }
+    ]));
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppStateProvider>
+          <ChildUsernameCollisionHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save child username collisions" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness child accounts: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ name: "Kai Cho", username: "kai-cho.child", password: "Dragon123" })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([
+        { email: "parent123@chos.prototype", role: "guardian" },
+        { email: "kai-cho.child", role: "student" }
+      ]);
+    });
+  });
+
+  it("keeps child account creation idempotent when the same child fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "parent123@chos.prototype", role: "guardian" }]));
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppStateProvider>
+          <ChildAccountDoubleCreateHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create child account twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate child returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate child accounts: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate child roles: 2")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          parentEmail: "parent123@chos.prototype",
+          name: "Kai Cho",
+          username: "kai-cho",
+          password: "Dragon123",
+          age: "7",
+          beltSlug: "yellow"
+        })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([
+        { email: "parent123@chos.prototype", role: "guardian" },
+        { email: "kai-cho", role: "student" }
+      ]);
+    });
+  });
+
+  it("opens a newly created child account in the same handoff action", async () => {
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "parent123@chos.prototype", role: "guardian" }]));
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppStateProvider>
+          <ImmediateChildLoginHandoffHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create and open child side" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness session email: kai-cho")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "kai-cho", remembered: true });
+      expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          parentEmail: "parent123@chos.prototype",
+          name: "Kai Cho",
+          username: "kai-cho"
+        })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([
+        { email: "parent123@chos.prototype", role: "guardian" },
+        { email: "kai-cho", role: "student" }
+      ]);
+    });
+  });
+
+  it("logs into a newly created child account by credentials in the same action", async () => {
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "parent123@chos.prototype", role: "guardian" }]));
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppStateProvider>
+          <ImmediateChildCredentialLoginHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create and sign in child credentials" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness session email: kai-cho")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "kai-cho", remembered: true });
+      expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          parentEmail: "parent123@chos.prototype",
+          name: "Kai Cho",
+          username: "kai-cho"
+        })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([
+        { email: "parent123@chos.prototype", role: "guardian" },
+        { email: "kai-cho", role: "student" }
+      ]);
+    });
+  });
+
+  it("does not switch to a child account owned by another parent", async () => {
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "parent123@chos.prototype", role: "guardian" }]));
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([
+      {
+        id: "child-other-parent",
+        parentEmail: "other.parent@chos.prototype",
+        name: "Other Child",
+        username: "other-child.child",
+        password: "Dragon123",
+        age: "8",
+        beltSlug: "yellow",
+        createdAt: "2026-05-20T10:00:00.000Z"
+      }
+    ]));
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppStateProvider>
+          <ChildLoginOwnershipHarness childId="child-other-parent" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open child side by id" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness session email: parent123@chos.prototype")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "parent123@chos.prototype", remembered: true });
+      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([{ email: "parent123@chos.prototype", role: "guardian" }]);
+    });
+  });
+
   it("opens the manager home page first after login", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-17T12:00:00-05:00"));
@@ -454,7 +3562,7 @@ describe("post-login operations app", () => {
     expect(feedPanel).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Messages & Event Notifications" })).not.toBeInTheDocument();
     expect(screen.queryByText("One clean Home Page feed for every message and event notification.")).not.toBeInTheDocument();
-    expect(screen.getByText("4 Messages")).toBeInTheDocument();
+    expect(screen.getByText("5 Messages")).toBeInTheDocument();
     expect(screen.getByText("2 Event Notifications")).toBeInTheDocument();
     expect(screen.queryByRole("searchbox", { name: "Search messages and event notifications" })).not.toBeInTheDocument();
     const searchTrigger = screen.getByRole("button", { name: "Open search messages and event notifications" });
@@ -468,12 +3576,13 @@ describe("post-login operations app", () => {
     expect(screen.getByRole("separator", { name: "Messages and event notifications from May 13, 2026" })).toBeInTheDocument();
     expect(screen.getByText("10:30 AM")).toBeInTheDocument();
     expect(screen.queryByText("Sent May 15, 2026 at 10:30 AM")).not.toBeInTheDocument();
-    ["System Admin", "Head Coach", "John Doe", "Merch Store", "Event Team"].forEach((sender) => {
+    ["System Admin", "Head Coach", "John Doe", "Merch Store", "Event Team", "Talia Brooks"].forEach((sender) => {
       expect(screen.getAllByText(sender).length).toBeGreaterThan(0);
     });
     const summerEventRow = screen.getByRole("button", { name: /System Admin.*Event Update: Summer Championship/i });
     expect(summerEventRow.closest(".manager-home-feed-item")).toHaveClass("manager-home-feed-item--event");
     expect(screen.getByRole("button", { name: /Head Coach.*Practice Session Reminder/i }).closest(".manager-home-feed-item")).toHaveClass("manager-home-feed-item--message");
+    expect(screen.getByRole("button", { name: /Talia Brooks.*Thank you, I will be there for training/i }).closest(".manager-home-feed-item")).toHaveClass("manager-home-feed-item--message");
     expect(screen.getByRole("button", { name: /Event Team.*Upcoming Event: Parent Meeting/i }).closest(".manager-home-feed-item")).toHaveClass("manager-home-feed-item--event");
     expect(screen.queryByLabelText("Selected feed item detail")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Event Update: Summer Championship details")).not.toBeInTheDocument();
@@ -555,6 +3664,66 @@ describe("post-login operations app", () => {
     expect(screen.getByRole("link", { name: "Create" })).toBeInTheDocument();
   });
 
+  it("lets managers deactivate and reactivate custom logins", async () => {
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-jordan",
+        displayName: "Jordan Lee",
+        username: "jordan.staff",
+        password: "StaffPass123",
+        role: "staff",
+        status: "active",
+        email: "jordan@chos.prototype",
+        phone: "(262) 555-0111",
+        title: "Instructor",
+        access: ["dashboard", "students", "reports"],
+        createdAt: "2026-05-20T10:00:00.000Z"
+      }
+    ]));
+
+    const managerView = renderLoggedInApp("/manager?tool=create");
+    const accountCard = screen.getByRole("article", { name: "Jordan Lee staff account" });
+
+    expect(accountCard).toHaveTextContent("Active");
+    fireEvent.click(within(accountCard).getByRole("button", { name: "Deactivate Jordan Lee account" }));
+
+    expect(await screen.findByText("Jordan Lee account deactivated.")).toBeInTheDocument();
+    expect(accountCard).toHaveTextContent("Inactive");
+    expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ username: "jordan.staff", status: "inactive" })
+    ]));
+
+    managerView.unmount();
+    window.localStorage.removeItem("chos.session.v1");
+    const inactiveLoginView = renderLoggedOutApp("/");
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "jordan.staff" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByText("Check the username and password.")).toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+
+    inactiveLoginView.unmount();
+    const reactivationView = renderLoggedInApp("/manager?tool=create");
+    const inactiveAccountCard = screen.getByRole("article", { name: "Jordan Lee staff account" });
+    fireEvent.click(within(inactiveAccountCard).getByRole("button", { name: "Reactivate Jordan Lee account" }));
+
+    expect(await screen.findByText("Jordan Lee account reactivated.")).toBeInTheDocument();
+    expect(inactiveAccountCard).toHaveTextContent("Active");
+    expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ username: "jordan.staff", status: "active" })
+    ]));
+
+    reactivationView.unmount();
+    window.localStorage.removeItem("chos.session.v1");
+    renderLoggedOutApp("/");
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "jordan.staff" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByRole("heading", { name: "Profile" })).toBeInTheDocument();
+  });
+
   it("lets the manager create a student account that can log in", async () => {
     const managerView = renderLoggedInApp("/manager?tool=create");
 
@@ -591,6 +3760,245 @@ describe("post-login operations app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     expect(await screen.findByLabelText("Student profile page")).toBeInTheDocument();
+  });
+
+  it("keeps managed student roles authoritative over stale stored staff roles", () => {
+    const student = {
+      id: "student-stale-role",
+      firstName: "Avery",
+      lastName: "Kim",
+      ...completeStudentSafetyFields,
+      phone: "(262) 555-0122",
+      email: "avery@chos.prototype",
+      status: "Active",
+      beltRank: "Yellow",
+      classesAttended: 12,
+      missedClassCount: 0,
+      joinedAt: "2026-01-01"
+    };
+    const account = {
+      id: "managed-stale-role",
+      displayName: "Avery Kim",
+      username: "avery.student",
+      password: "StudentPass123",
+      role: "student",
+      status: "active",
+      access: [],
+      studentId: student.id,
+      createdAt: "2026-06-01T10:00:00.000Z"
+    };
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([account]));
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([student]));
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: account.username, remembered: true, createdAt: "2026-06-02T10:00:00.000Z" }));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: account.username, role: "staff" }]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <App />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByLabelText("Student profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Reports" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+  });
+
+  it("rejects active managed student logins that are not linked to a student record", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-talia",
+        firstName: "Talia",
+        lastName: "Brooks",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "talia@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-04-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-orphan",
+        displayName: "Orphan Student",
+        username: "orphan.student",
+        password: "StudentPass123",
+        role: "student",
+        status: "active",
+        email: "orphan@example.com",
+        phone: "(262) 555-0102",
+        title: "Student",
+        access: [],
+        createdAt: "2026-05-20T10:00:00.000Z"
+      }
+    ]));
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "orphan.student" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StudentPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByText("Check the username and password.")).toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(screen.queryByLabelText("Student profile page")).not.toBeInTheDocument();
+  });
+
+  it("rejects active managed student logins linked to inactive student records", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Inactive",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-04-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-ari",
+        displayName: "Ari Nguyen",
+        username: "ari.student",
+        password: "StudentPass123",
+        role: "student",
+        status: "active",
+        email: "ari@example.com",
+        phone: "(262) 555-0101",
+        title: "Student",
+        access: [],
+        studentId: "student-ari",
+        createdAt: "2026-05-20T10:00:00.000Z"
+      }
+    ]));
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "ari.student" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StudentPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByText("Check the username and password.")).toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(screen.queryByLabelText("Student profile page")).not.toBeInTheDocument();
+  });
+
+  it("rejects active managed student login creation for inactive student records", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Blue",
+        classesAttended: 24,
+        missedClassCount: 2,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/manager"]}>
+        <AppStateProvider>
+          <ManagedStudentAccountCreationHarness studentId="student-cora" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create inactive student login" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness managed accounts: 0")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual([]);
+      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("keeps managed account creation idempotent when the same account fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/manager"]}>
+        <AppStateProvider>
+          <ManagedAccountDoubleCreateHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create managed account twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate managed returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate managed accounts: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate managed roles: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          displayName: "Taylor Staff",
+          username: "taylor.staff",
+          password: "StaffPass123",
+          role: "staff",
+          status: "active",
+          email: "taylor@example.com",
+          phone: "(262) 555-0190",
+          title: "Front Desk",
+          access: ["dashboard", "students"]
+        })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([
+        { email: "taylor.staff", role: "staff" }
+      ]);
+    });
+  });
+
+  it("logs into a newly created managed account by credentials in the same action", async () => {
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/manager"]}>
+        <AppStateProvider>
+          <ImmediateManagedAccountLoginHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create and sign in managed account" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness session email: taylor.staff")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "taylor.staff", remembered: true });
+      expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          displayName: "Taylor Staff",
+          username: "taylor.staff",
+          password: "StaffPass123",
+          role: "staff",
+          status: "active",
+          email: "taylor@example.com",
+          phone: "(262) 555-0190",
+          title: "Front Desk",
+          access: ["dashboard", "students"]
+        })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([
+        { email: "taylor.staff", role: "staff" }
+      ]);
+    });
   });
 
   it("hides Create from staff accounts unless the manager granted Create access", () => {
@@ -635,7 +4043,7 @@ describe("post-login operations app", () => {
     expect(within(studentSchedule).getByRole("heading", { name: "May 17 - 23, 2026" })).toBeInTheDocument();
     expect(within(studentSchedule).getByRole("button", { name: "Select Monday, May 18, 2026" })).toHaveAttribute("aria-pressed", "true");
 
-    expect(screen.getByText("4 Messages")).toBeInTheDocument();
+    expect(screen.getByText("5 Messages")).toBeInTheDocument();
     expect(screen.getByText("2 Event Notifications")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open search messages and event notifications" }));
@@ -653,6 +4061,43 @@ describe("post-login operations app", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Save Profile Settings" }));
     expect(JSON.parse(window.localStorage.getItem(scopedProfileKey("student", "student123@chos.prototype")) ?? "{}")).toMatchObject({ name: "Kai Student" });
     expect(window.localStorage.getItem("chos.profile.v1")).toBeNull();
+  });
+
+  it("lets students reply to staff direct messages from their Profile feed", async () => {
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-staff-to-talia",
+        threadId: "direct-staff-seed__student-talia-brooks-seed",
+        senderId: "direct-staff-seed",
+        senderName: "Cho's Manager",
+        recipientId: "student-talia-brooks-seed",
+        recipientName: "Talia Brooks",
+        body: "Hi Talia, your next class notes are ready when you arrive.",
+        createdAt: "2026-06-01T18:00:00.000Z",
+        status: "sent"
+      }
+    ]));
+    renderLoggedInApp("/", "student");
+
+    const feedPanel = screen.getByLabelText("Messages and event notifications");
+    const directRow = within(feedPanel).getByRole("button", { name: /Cho's Manager.*Hi Talia, your next class notes are ready when you arrive/i });
+    fireEvent.click(directRow);
+
+    expect(directRow).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("heading", { name: "App message from Cho's Manager" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Write a reply"), { target: { value: "I will review them before class." } });
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+
+    expect(await screen.findByText("Reply sent to Cho's Manager.")).toBeInTheDocument();
+    const savedDirectMessages = JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]") as Array<{ senderId: string; recipientId: string; recipientName: string; body: string }>;
+    expect(savedDirectMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        senderId: "student-talia-brooks-seed",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "I will review them before class."
+      })
+    ]));
   });
 
   it("keeps student profile defaults isolated from saved manager profile settings", () => {
@@ -732,6 +4177,68 @@ describe("post-login operations app", () => {
     expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).toEqual(expect.arrayContaining([
       expect.objectContaining({ parentEmail: "parent123@chos.prototype", name: "Kai Bennett", username: "kai-cho.child", password: "Dragon123", age: "7", beltSlug: "yellow" })
     ]));
+  });
+
+  it("warns parents when a child username collides with a managed login", async () => {
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-jordan",
+        displayName: "Jordan Lee",
+        username: "jordan.staff",
+        password: "StaffPass123",
+        role: "staff",
+        status: "active",
+        access: ["dashboard", "students"],
+        createdAt: "2026-05-20T10:00:00.000Z"
+      }
+    ]));
+    renderLoggedInApp("/", "guardian");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Child Profile" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Child Profile" });
+    fireEvent.change(within(dialog).getByLabelText("Child name"), { target: { value: "Kai Cho" } });
+    fireEvent.change(within(dialog).getByLabelText("Child username"), { target: { value: "jordan.staff" } });
+    fireEvent.change(within(dialog).getByLabelText("Child password"), { target: { value: "Dragon123" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Child Profile" }));
+
+    expect(await screen.findByText("That child username is already used.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ username: "jordan.staff" })
+    ]));
+  });
+
+  it("shows the next upcoming studio event on the parent dashboard", () => {
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([
+      { id: "event-past", title: "Past Belt Testing", date: dateKeyOffset(-1), time: "10:00 AM", details: "Past event.", audience: "students" },
+      { id: "event-later", title: "Later Family Night", date: dateKeyOffset(4), time: "6:30 PM", details: "Later event.", audience: "families" },
+      { id: "event-next", title: "Future Belt Testing", date: dateKeyOffset(2), time: "10:00 AM", details: "Upcoming event.", audience: "students" }
+    ]));
+
+    renderLoggedInApp("/", "guardian");
+
+    const parentDashboard = screen.getByLabelText("Parent dashboard view");
+    const nextNotificationCard = within(parentDashboard).getByText("Next Notification").closest("article") as HTMLElement;
+    expect(within(nextNotificationCard).getByText("Future Belt Testing")).toBeInTheDocument();
+    expect(within(nextNotificationCard).getByText(`${dateKeyOffset(2)} at 10:00 AM`)).toBeInTheDocument();
+    expect(within(nextNotificationCard).queryByText("Past Belt Testing")).not.toBeInTheDocument();
+    expect(within(nextNotificationCard).queryByText("Later Family Night")).not.toBeInTheDocument();
+  });
+
+  it("shows the next upcoming open class on the parent dashboard", () => {
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-past", title: "Past Youth Class", date: dateKeyOffset(-1), time: "5:00 PM", type: "class" },
+      { id: "schedule-later", title: "Later Youth Class", date: dateKeyOffset(4), time: "5:00 PM", type: "class" },
+      { id: "schedule-next", title: "Future Youth Class", date: dateKeyOffset(2), time: "4:30 PM", type: "class" }
+    ]));
+
+    renderLoggedInApp("/", "guardian");
+
+    const parentDashboard = screen.getByLabelText("Parent dashboard view");
+    const nextClassCard = within(parentDashboard).getByText("Next Class").closest("article") as HTMLElement;
+    expect(within(nextClassCard).getByText("Future Youth Class")).toBeInTheDocument();
+    expect(within(nextClassCard).getByText(`${dateKeyOffset(2)} at 4:30 PM`)).toBeInTheDocument();
+    expect(within(nextClassCard).queryByText("Past Youth Class")).not.toBeInTheDocument();
+    expect(within(nextClassCard).queryByText("Later Youth Class")).not.toBeInTheDocument();
   });
 
   it("walks first-time parents through the real child profile controls", async () => {
@@ -849,7 +4356,7 @@ describe("post-login operations app", () => {
   it("filters the Home feed by message and event notification count controls", () => {
     renderLoggedInApp("/");
 
-    const messageFilter = screen.getByRole("button", { name: "4 Messages" });
+    const messageFilter = screen.getByRole("button", { name: "5 Messages" });
     const eventFilter = screen.getByRole("button", { name: "2 Event Notifications" });
 
     expect(messageFilter).toHaveAttribute("aria-pressed", "false");
@@ -863,6 +4370,7 @@ describe("post-login operations app", () => {
     expect(eventFilter).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: /Head Coach.*Practice Session Reminder/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /John Doe.*Attendance Confirmation/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Talia Brooks.*Thank you, I will be there for training/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /System Admin.*Event Update: Summer Championship/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Event Team.*Upcoming Event: Parent Meeting/i })).not.toBeInTheDocument();
 
@@ -872,6 +4380,7 @@ describe("post-login operations app", () => {
     expect(eventFilter).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: /Head Coach.*Practice Session Reminder/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /John Doe.*Attendance Confirmation/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Talia Brooks.*Thank you, I will be there for training/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /System Admin.*Event Update: Summer Championship/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Event Team.*Upcoming Event: Parent Meeting/i })).toBeInTheDocument();
 
@@ -921,9 +4430,9 @@ describe("post-login operations app", () => {
     expect(within(selectedPanel).getByText("No contacts selected yet.")).toBeInTheDocument();
     fireEvent.click(allStudentsQuickAction);
     expect(allStudentsQuickAction).toBeChecked();
-    expect(within(dialog).getByText("20 selected")).toBeInTheDocument();
+    expect(within(dialog).getByText("17 selected")).toBeInTheDocument();
     expect(within(selectedPanel).getByText("All Students")).toBeInTheDocument();
-    expect(within(selectedPanel).getByText("20 contacts")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("17 contacts")).toBeInTheDocument();
     expect(within(selectedPanel).queryByText("All Staff")).not.toBeInTheDocument();
     fireEvent.click(allStudentsQuickAction);
     expect(allStudentsQuickAction).not.toBeChecked();
@@ -932,7 +4441,7 @@ describe("post-login operations app", () => {
     fireEvent.click(allUsersQuickAction);
     expect(allUsersQuickAction).toBeChecked();
     expect(within(selectedPanel).getByText("All Users")).toBeInTheDocument();
-    expect(within(selectedPanel).getByText("41 contacts")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("35 contacts")).toBeInTheDocument();
     fireEvent.click(allUsersQuickAction);
     expect(allUsersQuickAction).not.toBeChecked();
     expect(within(dialog).getByText("0 selected")).toBeInTheDocument();
@@ -946,7 +4455,7 @@ describe("post-login operations app", () => {
 
     expect(contactsButton).toHaveAttribute("aria-expanded", "true");
     const contactsDialog = screen.getByRole("dialog", { name: "Contacts" });
-    expect(within(contactsDialog).getByText("41 visible · 0 selected")).toBeInTheDocument();
+    expect(within(contactsDialog).getByText("35 visible · 0 selected")).toBeInTheDocument();
     expect(within(contactsDialog).getByRole("heading", { name: "Staff" })).toBeInTheDocument();
     expect(within(contactsDialog).getByRole("heading", { name: "Students" })).toBeInTheDocument();
     expect(within(contactsDialog).getByRole("heading", { name: "Parents" })).toBeInTheDocument();
@@ -963,18 +4472,18 @@ describe("post-login operations app", () => {
     expect(within(studentsContacts).getByRole("button", { name: "Collapse Students" })).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(within(studentsContacts).getByRole("button", { name: "Select all Students" }));
     expect(allUsersQuickAction).not.toBeChecked();
-    expect(within(dialog).getByText("20 selected")).toBeInTheDocument();
+    expect(within(dialog).getByText("17 selected")).toBeInTheDocument();
     expect(within(selectedPanel).getByText("All Students")).toBeInTheDocument();
-    expect(within(selectedPanel).getByText("20 contacts")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("17 contacts")).toBeInTheDocument();
     expect(within(selectedPanel).queryByText("Talia Brooks")).not.toBeInTheDocument();
-    expect(within(contactsDialog).getByText("41 visible · 20 selected")).toBeInTheDocument();
+    expect(within(contactsDialog).getByText("35 visible · 17 selected")).toBeInTheDocument();
     expect(within(studentsContacts).getByRole("checkbox", { name: /Talia Brooks/i })).toBeChecked();
     expect(within(parentsContacts).getByRole("checkbox", { name: /Monica Brooks/i })).not.toBeChecked();
     fireEvent.click(within(contactsDialog).getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("dialog", { name: "Contacts" })).not.toBeInTheDocument();
     fireEvent.click(allUsersQuickAction);
     expect(within(selectedPanel).getByText("All Users")).toBeInTheDocument();
-    expect(within(selectedPanel).getByText("41 contacts")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("35 contacts")).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("radio", { name: "Event Notification" }));
     fireEvent.change(within(dialog).getByLabelText("Subject"), { target: { value: "Weather Closure" } });
@@ -987,6 +4496,86 @@ describe("post-login operations app", () => {
     expect(screen.getByText("3 Event Notifications")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Cho's Manager.*Weather Closure/i })).toBeInTheDocument();
     expect(screen.getByText("Compose sent to all users.")).toBeInTheDocument();
+  }, 15000);
+
+  it("excludes inactive students and parents from manager compose audiences", async () => {
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-active",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-0111",
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-inactive",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        guardianName: "Terry Miles",
+        guardianPhone: "(262) 555-0112",
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Blue",
+        classesAttended: 24,
+        missedClassCount: 2,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    renderLoggedInApp("/");
+
+    const feedPanel = screen.getByLabelText("Messages and event notifications");
+    fireEvent.click(within(feedPanel).getByRole("button", { name: "Compose" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Compose" });
+    const selectedPanel = within(dialog).getByLabelText("Selected compose recipients");
+    const quickActions = within(dialog).getByLabelText("Quick recipient actions");
+    const allStudentsQuickAction = within(quickActions).getByRole("checkbox", { name: "All Students" });
+    const allUsersQuickAction = within(quickActions).getByRole("checkbox", { name: "All Users" });
+    fireEvent.click(allStudentsQuickAction);
+
+    expect(within(dialog).getByText("1 selected")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("All Students")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("1 contact")).toBeInTheDocument();
+
+    fireEvent.click(allUsersQuickAction);
+
+    expect(within(selectedPanel).getByText("All Users")).toBeInTheDocument();
+    expect(within(selectedPanel).getByText("3 contacts")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Contacts" }));
+    const contactsDialog = screen.getByRole("dialog", { name: "Contacts" });
+    expect(within(contactsDialog).getByText("3 visible · 3 selected")).toBeInTheDocument();
+    expect(within(contactsDialog).getByRole("checkbox", { name: /Ari Nguyen/i })).toBeInTheDocument();
+    expect(within(contactsDialog).getByRole("checkbox", { name: /Mina Nguyen/i })).toBeInTheDocument();
+    expect(within(contactsDialog).queryByRole("checkbox", { name: /Cora Miles/i })).not.toBeInTheDocument();
+    expect(within(contactsDialog).queryByRole("checkbox", { name: /Terry Miles/i })).not.toBeInTheDocument();
+    fireEvent.click(within(contactsDialog).getByRole("button", { name: "Done" }));
+
+    fireEvent.change(within(dialog).getByLabelText("Subject"), { target: { value: "Schedule Reminder" } });
+    fireEvent.change(within(dialog).getByLabelText("Message body"), { target: { value: "Please check this week's training schedule." } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send Compose" }));
+
+    await waitFor(() => {
+      const savedDirectMessages = JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]") as Array<{ recipientId: string; recipientName: string }>;
+      expect(savedDirectMessages).toHaveLength(3);
+      expect(savedDirectMessages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ recipientId: "direct-staff-instructors", recipientName: "Instructor Team" }),
+        expect.objectContaining({ recipientId: "student-active", recipientName: "Ari Nguyen" }),
+        expect.objectContaining({ recipientId: "parent-student-active", recipientName: "Mina Nguyen" })
+      ]));
+      expect(savedDirectMessages.some((message) => message.recipientId === "student-inactive" || message.recipientId === "parent-student-inactive")).toBe(false);
+    });
   }, 15000);
 
   it("logs out from the manager home icon button", () => {
@@ -1191,7 +4780,7 @@ describe("post-login operations app", () => {
 
     expect(screen.queryByText("Attendance Confirmation")).not.toBeInTheDocument();
     expect(screen.queryByText("Event Update: Summer Championship")).not.toBeInTheDocument();
-    expect(screen.getByText("3 Messages")).toBeInTheDocument();
+    expect(screen.getByText("4 Messages")).toBeInTheDocument();
     expect(screen.getByText("1 Event Notification")).toBeInTheDocument();
     expect(screen.queryByText("2 selected")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
@@ -1396,6 +4985,114 @@ describe("post-login operations app", () => {
     expect(screen.getByTitle("Roundhouse Basics video player")).toHaveAttribute("src", expect.stringContaining("data:video/mp4"));
   });
 
+  it("keeps training video folder creation idempotent when the same folder fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.videoFolders.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/manager?tool=videos"]}>
+        <AppStateProvider>
+          <TrainingVideoFolderDoubleAddHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add video folder twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate video folder returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate video folders: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.videoFolders.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          name: "Forms",
+          subject: "Beginner Forms",
+          description: "White belt form review videos."
+        })
+      ]);
+    });
+  });
+
+  it("keeps study guide folder creation idempotent when the same folder fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.studyGuideFolders.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/manager?tool=studyGuide"]}>
+        <AppStateProvider>
+          <StudyGuideFolderDoubleAddHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add study folder twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate study folder returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate study folders: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.studyGuideFolders.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          name: "White Belt Basics",
+          subject: "Foundations",
+          description: "Start here for first-rank review."
+        })
+      ]);
+    });
+  });
+
+  it("keeps training video uploads idempotent when the same video fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.videoFolders.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.videos.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/manager?tool=videos"]}>
+        <AppStateProvider>
+          <TrainingVideoDoubleAddHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add video twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate video returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate videos: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.videos.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          title: "Roundhouse Basics",
+          fileName: "roundhouse-demo.mp4",
+          mimeType: "video/mp4",
+          folderId: expect.any(String)
+        })
+      ]);
+    });
+  });
+
+  it("keeps study guide material uploads idempotent when the same material fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.studyGuideFolders.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.studyGuideMaterials.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/manager?tool=studyGuide"]}>
+        <AppStateProvider>
+          <StudyGuideMaterialDoubleAddHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add study material twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate study material returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate study materials: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.studyGuideMaterials.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          title: "Front Kick Checklist",
+          fileName: "front-kick-notes.pdf",
+          mimeType: "application/pdf",
+          folderId: expect.any(String)
+        })
+      ]);
+    });
+  });
+
   it("collapses and expands the manager launcher sidebar from the glowing rail", () => {
     renderLoggedInApp("/manager");
 
@@ -1493,6 +5190,220 @@ describe("post-login operations app", () => {
     expect(screen.getByLabelText("Dashboard workspace")).toBeInTheDocument();
   });
 
+  it("shows a linked student's next upcoming class on the student dashboard", () => {
+    const students = [
+      {
+        id: "student-derek",
+        firstName: "Derek",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0219",
+        email: "derek@example.com",
+        status: "Active",
+        beltRank: "Red",
+        classesAttended: 83,
+        missedClassCount: 0,
+        joinedAt: "2025-06-12"
+      }
+    ];
+    const account = {
+      id: "managed-derek",
+      displayName: "Derek Miles",
+      username: "derek.student",
+      password: "Dragon123",
+      role: "student",
+      status: "active",
+      access: [],
+      studentId: "student-derek",
+      createdAt: "2026-05-10T00:00:00.000Z"
+    };
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-old-private", title: "Old Private Lesson", date: dateKeyOffset(-1), time: "4:00 PM", type: "private-lesson", studentId: "student-derek" },
+      { id: "schedule-general", title: "Youth Foundations", date: dateKeyOffset(1), time: "5:00 PM", type: "class" },
+      { id: "schedule-linked", title: "Derek Private Lesson", date: dateKeyOffset(2), time: "4:30 PM", type: "private-lesson", studentId: "student-derek" }
+    ]));
+
+    renderManagedStudentApp("/manager?tool=dashboard", account, students);
+
+    const nextClassCard = screen.getByRole("heading", { name: "Next Class" }).closest(".workflow-directory-group") as HTMLElement;
+    expect(within(nextClassCard).getByText(dateKeyOffset(2))).toBeInTheDocument();
+    expect(within(nextClassCard).getByText("Derek Private Lesson at 4:30 PM")).toBeInTheDocument();
+    expect(within(nextClassCard).queryByText("Old Private Lesson at 4:00 PM")).not.toBeInTheDocument();
+    expect(within(nextClassCard).queryByText("Youth Foundations at 5:00 PM")).not.toBeInTheDocument();
+  });
+
+  it("does not show stale schedule items as a student's next class", () => {
+    const students = [
+      {
+        id: "student-derek",
+        firstName: "Derek",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0219",
+        email: "derek@example.com",
+        status: "Active",
+        beltRank: "Red",
+        classesAttended: 83,
+        missedClassCount: 0,
+        joinedAt: "2025-06-12"
+      }
+    ];
+    const account = {
+      id: "managed-derek",
+      displayName: "Derek Miles",
+      username: "derek.student",
+      password: "Dragon123",
+      role: "student",
+      status: "active",
+      access: [],
+      studentId: "student-derek",
+      createdAt: "2026-05-10T00:00:00.000Z"
+    };
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-old-private", title: "Old Private Lesson", date: dateKeyOffset(-1), time: "4:00 PM", type: "private-lesson", studentId: "student-derek" },
+      { id: "schedule-old-general", title: "Old Youth Class", date: dateKeyOffset(-2), time: "5:00 PM", type: "class" }
+    ]));
+
+    renderManagedStudentApp("/manager?tool=dashboard", account, students);
+
+    const nextClassCard = screen.getByRole("heading", { name: "Next Class" }).closest(".workflow-directory-group") as HTMLElement;
+    expect(within(nextClassCard).getByText("No date")).toBeInTheDocument();
+    expect(within(nextClassCard).getByText("No class is scheduled yet.")).toBeInTheDocument();
+    expect(within(nextClassCard).queryByText("Old Private Lesson at 4:00 PM")).not.toBeInTheDocument();
+  });
+
+  it("shows the next upcoming studio event on the student dashboard", () => {
+    const students = [
+      {
+        id: "student-derek",
+        firstName: "Derek",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0219",
+        email: "derek@example.com",
+        status: "Active",
+        beltRank: "Red",
+        classesAttended: 83,
+        missedClassCount: 0,
+        joinedAt: "2025-06-12"
+      }
+    ];
+    const account = {
+      id: "managed-derek",
+      displayName: "Derek Miles",
+      username: "derek.student",
+      password: "Dragon123",
+      role: "student",
+      status: "active",
+      access: [],
+      studentId: "student-derek",
+      createdAt: "2026-05-10T00:00:00.000Z"
+    };
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([
+      { id: "event-past", title: "Past Belt Testing", date: dateKeyOffset(-1), time: "10:00 AM", details: "Past event.", audience: "students" },
+      { id: "event-later", title: "Later Family Night", date: dateKeyOffset(4), time: "6:30 PM", details: "Later event.", audience: "families" },
+      { id: "event-next", title: "Future Belt Testing", date: dateKeyOffset(2), time: "10:00 AM", details: "Upcoming event.", audience: "students" }
+    ]));
+
+    renderManagedStudentApp("/manager?tool=dashboard", account, students);
+
+    const nextEventCard = screen.getByRole("heading", { name: "Next Event" }).closest(".workflow-directory-group") as HTMLElement;
+    expect(within(nextEventCard).getByText(dateKeyOffset(2))).toBeInTheDocument();
+    expect(within(nextEventCard).getByText("Future Belt Testing at 10:00 AM")).toBeInTheDocument();
+    expect(within(nextEventCard).queryByText("Past Belt Testing at 10:00 AM")).not.toBeInTheDocument();
+    expect(within(nextEventCard).queryByText("Later Family Night at 6:30 PM")).not.toBeInTheDocument();
+  });
+
+  it("does not show stale studio events as a student's next event", () => {
+    const students = [
+      {
+        id: "student-derek",
+        firstName: "Derek",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0219",
+        email: "derek@example.com",
+        status: "Active",
+        beltRank: "Red",
+        classesAttended: 83,
+        missedClassCount: 0,
+        joinedAt: "2025-06-12"
+      }
+    ];
+    const account = {
+      id: "managed-derek",
+      displayName: "Derek Miles",
+      username: "derek.student",
+      password: "Dragon123",
+      role: "student",
+      status: "active",
+      access: [],
+      studentId: "student-derek",
+      createdAt: "2026-05-10T00:00:00.000Z"
+    };
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([
+      { id: "event-past", title: "Past Belt Testing", date: dateKeyOffset(-1), time: "10:00 AM", details: "Past event.", audience: "students" },
+      { id: "event-older", title: "Old Movie Night", date: dateKeyOffset(-4), time: "6:30 PM", details: "Older event.", audience: "families" }
+    ]));
+
+    renderManagedStudentApp("/manager?tool=dashboard", account, students);
+
+    const nextEventCard = screen.getByRole("heading", { name: "Next Event" }).closest(".workflow-directory-group") as HTMLElement;
+    expect(within(nextEventCard).getByText("No date")).toBeInTheDocument();
+    expect(within(nextEventCard).getByText("No event notification is available yet.")).toBeInTheDocument();
+    expect(within(nextEventCard).queryByText("Past Belt Testing at 10:00 AM")).not.toBeInTheDocument();
+  });
+
+  it("shows the linked student's real belt progress in the Test tool", () => {
+    const students = [
+      {
+        id: "student-talia",
+        firstName: "Talia",
+        lastName: "Brooks",
+        phone: "(262) 555-0201",
+        email: "talia@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-04-06"
+      },
+      {
+        id: "student-derek",
+        firstName: "Derek",
+        lastName: "Miles",
+        phone: "(262) 555-0219",
+        email: "derek@example.com",
+        status: "Active",
+        beltRank: "Red",
+        classesAttended: 83,
+        missedClassCount: 0,
+        joinedAt: "2025-06-12"
+      }
+    ];
+    const account = {
+      id: "managed-derek",
+      displayName: "Derek Miles",
+      username: "derek.student",
+      password: "Dragon123",
+      role: "student",
+      status: "active",
+      access: [],
+      studentId: "student-derek",
+      createdAt: "2026-05-10T00:00:00.000Z"
+    };
+
+    renderManagedStudentApp("/manager?tool=test", account, students);
+
+    expect(screen.getByRole("heading", { name: "Test" })).toBeInTheDocument();
+    expect(screen.getAllByText("Derek Miles").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Red Belt").length).toBeGreaterThan(0);
+    expect(screen.getByText("83 of 78 classes")).toBeInTheDocument();
+    expect(screen.getByText("Ready for instructor review")).toBeInTheDocument();
+    expect(screen.getByText("Attendance rhythm")).toBeInTheDocument();
+    expect(screen.queryByText("Talia Brooks")).not.toBeInTheDocument();
+  });
+
   it("redirects student accounts away from staff-only direct operation routes", () => {
     renderLoggedInApp("/students", "student");
 
@@ -1553,14 +5464,1392 @@ describe("post-login operations app", () => {
     expect(screen.queryByRole("heading", { name: "MANAGER PANEL" })).not.toBeInTheDocument();
   });
 
-  it("opens a polished future reports page from the manager launcher", () => {
+  it("opens an actionable reports command center from the manager launcher", () => {
     renderLoggedInApp("/reports");
 
     expect(screen.getByRole("link", { name: "Back to Manager Page" })).toHaveAttribute("href", "/manager");
     expect(screen.getByRole("img", { name: "Cho's Martial Arts" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Log Out" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Reports" })).toBeInTheDocument();
-    expect(screen.getByText("Coming soon")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Workload Command Center" })).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Current students report metric")).getByText("17")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Missed-class follow-ups report metric")).getByText("2")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Low stock items report metric")).getByText("1")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Test invites report metric")).getByText("3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send missed-class follow-ups" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invite belt test candidates" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Convert trial students" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restock low inventory" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review paused students" })).toBeInTheDocument();
+    expect(screen.getAllByText("Maya Robinson").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Serena Park").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Derek Miles").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Victor Lane").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
+  });
+
+  it("lets managers mark public leads and starter bookings reviewed from reports", async () => {
+    const starterDate = dateKeyOffset(1);
+    window.localStorage.setItem("chos.contacts.v1", JSON.stringify([
+      {
+        id: "contact-ari",
+        name: "Ari Nguyen",
+        email: "ari@example.com",
+        phone: "(262) 555-0101",
+        message: "We want to try the starter program.",
+        createdAt: `${dateKeyOffset(0)}T10:00:00.000Z`
+      }
+    ]));
+    window.localStorage.setItem("chos.bookings.v1", JSON.stringify([
+      { persons: 2, date: starterDate, time: "5:30 PM", timezone: "America/Chicago" },
+      { persons: 1, date: dateKeyOffset(3), time: "10:00 AM", timezone: "America/Chicago" }
+    ]));
+
+    renderLoggedInApp("/reports");
+
+    expect(within(screen.getByLabelText("Lead follow-ups report metric")).getByText("3")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review new leads" }));
+
+    expect(await screen.findByText("3 lead follow-ups marked reviewed.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Lead follow-ups report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Review new leads" })).not.toBeInTheDocument();
+    const leadsPanel = screen.getByLabelText("Public lead follow-up candidates");
+    expect(within(leadsPanel).getByRole("heading", { name: "Public Lead Follow-Up" })).toBeInTheDocument();
+    expect(within(leadsPanel).getByText("No public starter bookings or contact inquiries need follow-up.")).toBeInTheDocument();
+    expect(within(leadsPanel).queryByText("Ari Nguyen")).not.toBeInTheDocument();
+    expect(within(leadsPanel).queryByText(`Starter booking ${starterDate}`)).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.leadReviews.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ leadId: "contact-ari", kind: "contact", label: "Ari Nguyen" }),
+      expect.objectContaining({ leadId: expect.stringContaining("booking-"), kind: "booking", label: `Starter booking ${starterDate}` }),
+      expect.objectContaining({ leadId: expect.stringContaining("booking-"), kind: "booking" })
+    ]);
+  });
+
+  it("surfaces unanswered app messages in reports without clearing them", () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 1,
+        missedClassCount: 0,
+        joinedAt: dateKeyOffset(-30)
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 8,
+        missedClassCount: 0,
+        joinedAt: dateKeyOffset(-60)
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: dateKeyOffset(-90)
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-ari-staff",
+        threadId: "direct-staff-seed-student-ari",
+        senderId: "direct-staff-seed",
+        senderName: "Cho's Manager",
+        recipientId: "student-ari",
+        recipientName: "Ari Nguyen",
+        body: "Can you confirm tomorrow?",
+        createdAt: "2026-06-01T09:00:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-ari-inbound",
+        threadId: "direct-staff-seed-student-ari",
+        senderId: "student-ari",
+        senderName: "Ari Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Yes, I can make tomorrow's class.",
+        createdAt: "2026-06-01T09:10:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-bree-inbound",
+        threadId: "direct-staff-seed-student-bree",
+        senderId: "student-bree",
+        senderName: "Bree Santos",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Can I reschedule?",
+        createdAt: "2026-06-01T09:15:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-bree-staff",
+        threadId: "direct-staff-seed-student-bree",
+        senderId: "direct-staff-seed",
+        senderName: "Cho's Manager",
+        recipientId: "student-bree",
+        recipientName: "Bree Santos",
+        body: "Yes, we can move you.",
+        createdAt: "2026-06-01T09:20:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-parent-inbound",
+        threadId: "direct-staff-seed-parent-student-ari",
+        senderId: "parent-student-ari",
+        senderName: "Mina Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Can you send the belt test time?",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-cora-inbound",
+        threadId: "direct-staff-seed-student-cora",
+        senderId: "student-cora",
+        senderName: "Cora Miles",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Inactive students should not create staff work.",
+        createdAt: "2026-06-01T10:30:00.000Z",
+        status: "sent"
+      }
+    ]));
+
+    renderLoggedInApp("/reports");
+
+    expect(within(screen.getByLabelText("App replies report metric")).getByText("2")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Reply to app messages" })).toHaveAttribute("href", "/");
+    const repliesPanel = screen.getByLabelText("Unanswered app message reply candidates");
+    expect(within(repliesPanel).getByRole("heading", { name: "App Message Replies" })).toBeInTheDocument();
+    expect(within(repliesPanel).getByText("2 inbound student or parent app messages need staff replies.")).toBeInTheDocument();
+    expect(within(repliesPanel).getByText("Mina Nguyen")).toBeInTheDocument();
+    expect(within(repliesPanel).getByText("Ari Nguyen")).toBeInTheDocument();
+    expect(within(repliesPanel).getByText("Can you send the belt test time?")).toBeInTheDocument();
+    expect(within(repliesPanel).queryByText("Bree Santos")).not.toBeInTheDocument();
+    expect(within(repliesPanel).queryByText("Cora Miles")).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]")).toHaveLength(6);
+  });
+
+  it("uses singular app-message reply copy in reports", () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 1,
+        missedClassCount: 0,
+        joinedAt: dateKeyOffset(-30)
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-ari-inbound",
+        threadId: "direct-staff-seed-student-ari",
+        senderId: "student-ari",
+        senderName: "Ari Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Can I make up class this week?",
+        createdAt: "2026-06-01T09:10:00.000Z",
+        status: "sent"
+      }
+    ]));
+
+    renderLoggedInApp("/reports");
+
+    expect(screen.getByText("1 inbound student or parent app message needs staff replies.")).toBeInTheDocument();
+  });
+
+  it("lets managers queue first-week new student check-ins directly from reports", async () => {
+    const todayKey = dateKeyOffset(0);
+    const firstWeekJoinedAt = dateKeyOffset(-7);
+    const finalWindowJoinedAt = dateKeyOffset(-14);
+    const tooRecentJoinedAt = dateKeyOffset(-4);
+    const tooOldJoinedAt = dateKeyOffset(-15);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        ...completeStudentSafetyFields,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 1,
+        missedClassCount: 0,
+        joinedAt: firstWeekJoinedAt,
+        enrollmentDate: firstWeekJoinedAt,
+        program: "Youth Foundations"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        ...completeStudentSafetyFields,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 2,
+        missedClassCount: 0,
+        joinedAt: finalWindowJoinedAt,
+        enrollmentDate: finalWindowJoinedAt,
+        program: "Adult Basics"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        ...completeStudentSafetyFields,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 1,
+        missedClassCount: 0,
+        joinedAt: tooRecentJoinedAt,
+        enrollmentDate: tooRecentJoinedAt
+      },
+      {
+        id: "student-dane",
+        firstName: "Dane",
+        lastName: "Woods",
+        phone: "(262) 555-0104",
+        email: "dane@example.com",
+        ...completeStudentSafetyFields,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 1,
+        missedClassCount: 0,
+        joinedAt: tooOldJoinedAt,
+        enrollmentDate: tooOldJoinedAt
+      },
+      {
+        id: "student-elle",
+        firstName: "Elle",
+        lastName: "Park",
+        phone: "(262) 555-0105",
+        email: "elle@example.com",
+        ...completeStudentSafetyFields,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 1,
+        missedClassCount: 0,
+        joinedAt: firstWeekJoinedAt,
+        enrollmentDate: firstWeekJoinedAt,
+        lastContactedAt: todayKey
+      }
+    ]));
+
+    renderLoggedInApp("/reports");
+
+    expect(within(screen.getByLabelText("New student check-ins report metric")).getByText("2")).toBeInTheDocument();
+    const checkInPanel = screen.getByLabelText("New student check-in candidates");
+    expect(within(checkInPanel).getByRole("heading", { name: "New Student Check-Ins" })).toBeInTheDocument();
+    expect(within(checkInPanel).getByText("Ari Nguyen")).toBeInTheDocument();
+    expect(within(checkInPanel).getByText("Bree Santos")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Check in with new students" }));
+
+    expect(await screen.findByText("2 new-student check-in texts queued.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("New student check-ins report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(within(screen.getByLabelText("Queued messages report metric")).getByText("2")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check in with new students" })).not.toBeInTheDocument();
+    expect(within(checkInPanel).getByText("No first-week student check-ins are waiting.")).toBeInTheDocument();
+
+    const logs = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]") as Array<{ recipientName: string; body: string; status: string }>;
+    const firstWeekLogs = logs.filter((log) => log.body.includes("first week"));
+    expect(firstWeekLogs).toEqual([
+      expect.objectContaining({ recipientName: "Ari Nguyen", status: "queued", body: expect.stringContaining("first week") }),
+      expect.objectContaining({ recipientName: "Bree Santos", status: "queued", body: expect.stringContaining("first week") })
+    ]);
+    const storedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; lastContactedAt?: string }>;
+    expect(storedStudents.find((student) => student.id === "student-ari")).toMatchObject({ lastContactedAt: todayKey });
+    expect(storedStudents.find((student) => student.id === "student-bree")).toMatchObject({ lastContactedAt: todayKey });
+  });
+
+  it("lets managers queue attendance-gap check-ins directly from reports", async () => {
+    const todayKey = dateKeyOffset(0);
+    const oldCheckInKey = dateKeyOffset(-24);
+    const noCheckInJoinedAt = dateKeyOffset(-28);
+    const recentCheckInKey = dateKeyOffset(-10);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        ...completeStudentSafetyFields,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 6,
+        missedClassCount: 0,
+        joinedAt: dateKeyOffset(-60),
+        enrollmentDate: dateKeyOffset(-60),
+        lastCheckIn: oldCheckInKey
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        ...completeStudentSafetyFields,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 0,
+        missedClassCount: 0,
+        joinedAt: noCheckInJoinedAt,
+        enrollmentDate: noCheckInJoinedAt
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        ...completeStudentSafetyFields,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: dateKeyOffset(-60),
+        enrollmentDate: dateKeyOffset(-60),
+        lastCheckIn: recentCheckInKey
+      },
+      {
+        id: "student-dane",
+        firstName: "Dane",
+        lastName: "Woods",
+        phone: "(262) 555-0104",
+        email: "dane@example.com",
+        ...completeStudentSafetyFields,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 3,
+        joinedAt: dateKeyOffset(-60),
+        enrollmentDate: dateKeyOffset(-60),
+        lastCheckIn: oldCheckInKey
+      },
+      {
+        id: "student-elle",
+        firstName: "Elle",
+        lastName: "Park",
+        phone: "(262) 555-0105",
+        email: "elle@example.com",
+        ...completeStudentSafetyFields,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: dateKeyOffset(-60),
+        enrollmentDate: dateKeyOffset(-60),
+        lastCheckIn: oldCheckInKey,
+        lastContactedAt: todayKey
+      }
+    ]));
+
+    renderLoggedInApp("/reports");
+
+    expect(within(screen.getByLabelText("Attendance gaps report metric")).getByText("2")).toBeInTheDocument();
+    const attendanceGapPanel = screen.getByLabelText("Attendance gap check-in candidates");
+    expect(within(attendanceGapPanel).getByRole("heading", { name: "Attendance Gap Check-Ins" })).toBeInTheDocument();
+    expect(within(attendanceGapPanel).getByText("Ari Nguyen")).toBeInTheDocument();
+    expect(within(attendanceGapPanel).getByText("Bree Santos")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Check attendance gaps" }));
+
+    expect(await screen.findByText("2 attendance gap check-in texts queued.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Attendance gaps report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Check attendance gaps" })).not.toBeInTheDocument();
+    expect(within(attendanceGapPanel).getByText("No attendance-gap check-ins are waiting.")).toBeInTheDocument();
+
+    const logs = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]") as Array<{ recipientName: string; body: string; status: string }>;
+    const attendanceGapLogs = logs.filter((log) => log.body.includes("missed seeing you"));
+    expect(attendanceGapLogs).toEqual([
+      expect.objectContaining({ recipientName: "Ari Nguyen", status: "queued" }),
+      expect.objectContaining({ recipientName: "Bree Santos", status: "queued" })
+    ]);
+    const storedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; lastContactedAt?: string }>;
+    expect(storedStudents.find((student) => student.id === "student-ari")).toMatchObject({ lastContactedAt: todayKey });
+    expect(storedStudents.find((student) => student.id === "student-bree")).toMatchObject({ lastContactedAt: todayKey });
+    expect(storedStudents.find((student) => student.id === "student-dane")?.lastContactedAt).toBeUndefined();
+  });
+
+  it("lets managers queue missed-class follow-ups directly from reports", async () => {
+    renderLoggedInApp("/reports");
+
+    fireEvent.click(screen.getByRole("button", { name: "Send missed-class follow-ups" }));
+
+    expect(await screen.findByText("2 missed-class follow-up texts queued.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Missed-class follow-ups report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(within(screen.getByLabelText("Queued messages report metric")).getByText("2")).toBeInTheDocument();
+    expect(screen.getByText("No current students are above the missed-class follow-up threshold.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send missed-class follow-ups" })).not.toBeInTheDocument();
+  });
+
+  it("lets managers clear stale one-time schedule items directly from reports", async () => {
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-stale-private", title: "Old Private Lesson", date: dateKeyOffset(-2), time: "4:30 PM", type: "private-lesson" },
+      { id: "schedule-stale-testing", title: "Old Testing Prep", date: dateKeyOffset(-1), time: "5:30 PM", type: "testing-prep" },
+      { id: "schedule-recurring", title: "Recurring Youth Class", date: dateKeyOffset(-3), time: "5:00 PM", type: "class", recurring: true },
+      { id: "schedule-future", title: "Future Private Lesson", date: dateKeyOffset(2), time: "4:30 PM", type: "private-lesson" }
+    ]));
+    renderLoggedInApp("/reports");
+
+    expect(within(screen.getByLabelText("Stale schedule items report metric")).getByText("2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear stale schedule items" }));
+
+    expect(await screen.findByText("2 stale one-time schedule items removed.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Stale schedule items report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Clear stale schedule items" })).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.schedule.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "schedule-recurring", title: "Recurring Youth Class", recurring: true }),
+      expect.objectContaining({ id: "schedule-future", title: "Future Private Lesson" })
+    ]);
+  });
+
+  it("lets managers clear stale queued texts directly from reports", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-cora",
+        kind: "follow-up",
+        recipientName: "Cora Miles",
+        recipientPhone: "(262) 555-0103",
+        body: "Cora has stale outreach.",
+        status: "queued",
+        createdAt: "2026-06-02T10:05:00.000Z"
+      },
+      {
+        id: "message-noah",
+        kind: "profile-update",
+        recipientName: "Noah Woods",
+        recipientPhone: "(262) 555-0104",
+        body: "Noah is no longer listed.",
+        status: "queued",
+        createdAt: "2026-06-02T10:10:00.000Z"
+      },
+      {
+        id: "message-cora-sent",
+        kind: "follow-up",
+        recipientName: "Cora Miles",
+        recipientPhone: "(262) 555-0103",
+        body: "Historical Cora message.",
+        status: "sent",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        sentAt: "2026-06-01T10:05:00.000Z"
+      }
+    ]));
+
+    renderLoggedInApp("/reports");
+
+    expect(within(screen.getByLabelText("Queued messages report metric")).getByText("0")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Stale queued texts report metric")).getByText("2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear stale queued texts" }));
+
+    expect(await screen.findByText("2 stale queued texts removed.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Stale queued texts report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Clear stale queued texts" })).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "message-cora-sent", status: "sent" })
+    ]);
+  });
+
+  it("lets managers send queued texts directly from reports", async () => {
+    renderLoggedInApp("/reports");
+
+    fireEvent.click(screen.getByRole("button", { name: "Send missed-class follow-ups" }));
+    expect(await screen.findByText("2 missed-class follow-up texts queued.")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Send queued texts" }));
+
+    expect(await screen.findByText("2 queued texts sent.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Queued messages report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Send queued texts" })).not.toBeInTheDocument();
+  });
+
+  it("lets managers queue trial conversion outreach directly from reports", async () => {
+    renderLoggedInApp("/reports");
+
+    fireEvent.click(screen.getByRole("button", { name: "Convert trial students" }));
+
+    expect(await screen.findByText("4 trial conversion texts queued.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Trial follow-ups report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(within(screen.getByLabelText("Queued messages report metric")).getByText("4")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Convert trial students" })).not.toBeInTheDocument();
+  });
+
+  it("lets managers queue paused-student reactivation outreach directly from reports", async () => {
+    renderLoggedInApp("/reports");
+
+    fireEvent.click(screen.getByRole("button", { name: "Review paused students" }));
+
+    expect(await screen.findByText("4 paused-student reactivation texts queued.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Paused follow-ups report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(within(screen.getByLabelText("Queued messages report metric")).getByText("4")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review paused students" })).not.toBeInTheDocument();
+  });
+
+  it("lets managers queue belt testing invitations directly from reports", async () => {
+    renderLoggedInApp("/reports");
+
+    fireEvent.click(screen.getByRole("button", { name: "Invite belt test candidates" }));
+
+    expect(await screen.findByText("3 belt testing invitation texts queued.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Test invites report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(within(screen.getByLabelText("Queued messages report metric")).getByText("3")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Invite belt test candidates" })).not.toBeInTheDocument();
+    expect(screen.getByText("No current students are ready for belt testing outreach.")).toBeInTheDocument();
+  });
+
+  it("lets managers queue near-testing milestone encouragement directly from reports", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-mina",
+        firstName: "Mina",
+        lastName: "Cho",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0100",
+        email: "mina@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 6,
+        missedClassCount: 0,
+        lastCheckIn: dateKeyOffset(0),
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-talia",
+        firstName: "Talia",
+        lastName: "Rivera",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "talia@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 13,
+        missedClassCount: 0,
+        lastCheckIn: dateKeyOffset(0),
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-ready",
+        firstName: "Nolan",
+        lastName: "Brooks",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "nolan@example.com",
+        status: "Active",
+        beltRank: "Orange",
+        classesAttended: 20,
+        missedClassCount: 0,
+        lastCheckIn: dateKeyOffset(0),
+        joinedAt: "2026-05-01"
+      }
+    ]));
+    renderLoggedInApp("/reports");
+
+    expect(screen.getByRole("button", { name: "Send milestone encouragement" })).toBeInTheDocument();
+    expect(screen.getByText("Mina Cho")).toBeInTheDocument();
+    expect(screen.getByText("Talia Rivera")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send milestone encouragement" }));
+
+    expect(await screen.findByText("2 milestone encouragement texts queued.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Milestone nudges report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(within(screen.getByLabelText("Queued messages report metric")).getByText("2")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send milestone encouragement" })).not.toBeInTheDocument();
+    expect(screen.getByText("No current students are close enough for milestone encouragement today.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientName: "Mina Cho", status: "queued", body: expect.stringMatching(/next belt milestone/i) }),
+      expect.objectContaining({ recipientName: "Talia Rivera", status: "queued", body: expect.stringMatching(/next belt milestone/i) })
+    ]));
+  });
+
+  it("lets managers queue celebration outreach directly from reports", async () => {
+    const today = new Date();
+    const birthdayDate = `${today.getFullYear() - 12}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const anniversaryDate = new Date(today);
+    anniversaryDate.setDate(today.getDate() + 5);
+    const joinedAtDate = `${anniversaryDate.getFullYear() - 1}-${String(anniversaryDate.getMonth() + 1).padStart(2, "0")}-${String(anniversaryDate.getDate()).padStart(2, "0")}`;
+    const contactedBirthdayDate = new Date(today);
+    contactedBirthdayDate.setDate(today.getDate() + 2);
+    const contactedBirthdayKey = `${contactedBirthdayDate.getFullYear() - 16}-${String(contactedBirthdayDate.getMonth() + 1).padStart(2, "0")}-${String(contactedBirthdayDate.getDate()).padStart(2, "0")}`;
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        dateOfBirth: birthdayDate,
+        phone: "(262) 555-0100",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 2,
+        missedClassCount: 0,
+        lastCheckIn: dateKeyOffset(0),
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "cora@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 5,
+        missedClassCount: 0,
+        lastCheckIn: dateKeyOffset(0),
+        joinedAt: joinedAtDate
+      },
+      {
+        id: "student-dane",
+        firstName: "Dane",
+        lastName: "Woods",
+        ...completeStudentSafetyFields,
+        dateOfBirth: birthdayDate,
+        phone: "(262) 555-0103",
+        email: "dane@example.com",
+        status: "Active",
+        beltRank: "Green",
+        classesAttended: 12,
+        missedClassCount: 0,
+        lastCheckIn: dateKeyOffset(0),
+        joinedAt: joinedAtDate
+      },
+      {
+        id: "student-elle",
+        firstName: "Elle",
+        lastName: "Park",
+        ...completeStudentSafetyFields,
+        dateOfBirth: contactedBirthdayKey,
+        phone: "(262) 555-0102",
+        email: "elle@example.com",
+        status: "Active",
+        beltRank: "Orange",
+        classesAttended: 8,
+        missedClassCount: 0,
+        lastCheckIn: dateKeyOffset(0),
+        lastContactedAt: dateKeyOffset(0),
+        joinedAt: "2026-05-01"
+      }
+    ]));
+    renderLoggedInApp("/reports");
+
+    expect(screen.getByRole("button", { name: "Send celebration outreach" })).toBeInTheDocument();
+    expect(screen.getByText("Ari Nguyen")).toBeInTheDocument();
+    expect(screen.getByText("Cora Miles")).toBeInTheDocument();
+    expect(screen.getByText("Dane Woods")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send celebration outreach" }));
+
+    expect(await screen.findByText("3 celebration texts queued.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Celebrations report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(within(screen.getByLabelText("Queued messages report metric")).getByText("3")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send celebration outreach" })).not.toBeInTheDocument();
+    expect(screen.getByText("No current student birthdays or training anniversaries are due this week.")).toBeInTheDocument();
+    const savedCelebrationMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]") as Array<{ recipientName: string; kind: string; status: string; body: string }>;
+    expect(savedCelebrationMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientName: "Ari Nguyen", kind: "celebration", status: "queued", body: expect.stringMatching(/birthday/i) }),
+      expect.objectContaining({ recipientName: "Cora Miles", kind: "celebration", status: "queued", body: expect.stringMatching(/training anniversary/i) }),
+      expect.objectContaining({ recipientName: "Dane Woods", kind: "celebration", status: "queued", body: expect.stringMatching(/birthday/i) })
+    ]));
+    expect(savedCelebrationMessages.filter((message) => message.recipientName === "Dane Woods")).toHaveLength(1);
+  });
+
+  it("lets managers request student profile updates directly from reports", async () => {
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        phone: "(262) 555-0100",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 2,
+        missedClassCount: 0,
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-0100",
+        guardianEmail: "",
+        emergencyContactName: "",
+        emergencyContactRelationship: "Parent",
+        emergencyContactPhone: "",
+        lastCheckIn: todayKey,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        dateOfBirth: "2012-09-01",
+        phone: "(262) 555-0101",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 5,
+        missedClassCount: 0,
+        guardianName: "Paula Santos",
+        guardianPhone: "(262) 555-0101",
+        guardianEmail: "",
+        emergencyContactName: "Marco Santos",
+        emergencyContactRelationship: "Uncle",
+        emergencyContactPhone: "(262) 555-0201",
+        lastCheckIn: todayKey,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Active",
+        beltRank: "Orange",
+        classesAttended: 8,
+        missedClassCount: 0,
+        guardianName: "Terry Miles",
+        guardianPhone: "(262) 555-0102",
+        guardianEmail: "",
+        emergencyContactName: "",
+        emergencyContactRelationship: "Parent",
+        emergencyContactPhone: "",
+        lastCheckIn: todayKey,
+        lastContactedAt: todayKey,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-finn",
+        firstName: "Finn",
+        lastName: "Cole",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "finn@example.com",
+        status: "Active",
+        beltRank: "Green",
+        classesAttended: 18,
+        missedClassCount: 0,
+        lastCheckIn: todayKey,
+        profileUpdatedAt: "2025-05-01",
+        joinedAt: "2025-05-01"
+      }
+    ]));
+    renderLoggedInApp("/reports");
+
+    expect(screen.getByRole("button", { name: "Request profile updates" })).toBeInTheDocument();
+    expect(screen.getByText("Ari Nguyen")).toBeInTheDocument();
+    expect(screen.getByText("Bree Santos")).toBeInTheDocument();
+    expect(screen.getByText("Finn Cole")).toBeInTheDocument();
+    expect(screen.getByText("Annual profile verification due")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Request profile updates" }));
+
+    expect(await screen.findByText("3 profile update texts queued.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Profile updates report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(within(screen.getByLabelText("Queued messages report metric")).getByText("3")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request profile updates" })).not.toBeInTheDocument();
+    expect(screen.getByText("No current student records need profile-update outreach.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientName: "Ari Nguyen", kind: "profile-update", status: "queued", body: expect.stringMatching(/profile information/i) }),
+      expect.objectContaining({ recipientName: "Bree Santos", kind: "profile-update", status: "queued", body: expect.stringMatching(/profile information/i) }),
+      expect.objectContaining({ recipientName: "Finn Cole", kind: "profile-update", status: "queued", body: expect.stringMatching(/profile information/i) })
+    ]));
+    const storedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; lastContactedAt?: string }>;
+    expect(storedStudents.find((student) => student.id === "student-finn")).toMatchObject({ lastContactedAt: todayKey });
+  });
+
+  it("lets managers queue upcoming class reminders directly from reports", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0100",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 2,
+        missedClassCount: 0,
+        lastCheckIn: todayKey,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 5,
+        missedClassCount: 0,
+        lastCheckIn: todayKey,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Active",
+        beltRank: "Orange",
+        classesAttended: 8,
+        missedClassCount: 0,
+        lastCheckIn: todayKey,
+        lastContactedAt: todayKey,
+        joinedAt: "2026-05-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-ari", title: "Private Lesson", date: dateKeyOffset(1), time: "4:30 PM", type: "private-lesson", studentId: "student-ari" },
+      { id: "schedule-bree", title: "Testing Prep", date: dateKeyOffset(2), time: "5:30 PM", type: "testing-prep", studentId: "student-bree" },
+      { id: "schedule-cora", title: "Already Contacted", date: dateKeyOffset(1), time: "6:00 PM", type: "private-lesson", studentId: "student-cora" },
+      { id: "schedule-general", title: "Youth Beginners", date: dateKeyOffset(1), time: "5:00 PM", type: "class" }
+    ]));
+    renderLoggedInApp("/reports");
+
+    expect(screen.getByRole("button", { name: "Send class reminders" })).toBeInTheDocument();
+    expect(screen.getByText("Ari Nguyen")).toBeInTheDocument();
+    expect(screen.getByText("Bree Santos")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send class reminders" }));
+
+    expect(await screen.findByText("2 class reminder texts queued.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Class reminders report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(within(screen.getByLabelText("Queued messages report metric")).getByText("2")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send class reminders" })).not.toBeInTheDocument();
+    expect(screen.getByText("No student-specific classes need reminder outreach in the next two days.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientName: "Ari Nguyen", kind: "reminder", status: "queued", body: expect.stringMatching(/Private Lesson/i) }),
+      expect.objectContaining({ recipientName: "Bree Santos", kind: "reminder", status: "queued", body: expect.stringMatching(/Testing Prep/i) })
+    ]));
+  });
+
+  it("lets managers restock low inventory directly from reports", async () => {
+    renderLoggedInApp("/reports");
+
+    fireEvent.click(screen.getByRole("button", { name: "Restock low inventory" }));
+
+    expect(await screen.findByText("1 low-stock item restocked to par.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Low stock items report metric")).getByText("0")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Restock low inventory" })).not.toBeInTheDocument();
+  });
+
+  it("lets managers export a maintenance backup from reports", async () => {
+    const clickAnchor = vi.fn();
+    let backupBlob: Blob | undefined;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      backupBlob = blob;
+      return "blob:operations-backup";
+    });
+    const revokeObjectURL = vi.fn();
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const originalCreateElement = document.createElement.bind(document);
+    let createdAnchor: HTMLAnchorElement | undefined;
+    const createElementSpy = vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName.toLowerCase() === "a") {
+        createdAnchor = element as HTMLAnchorElement;
+        Object.defineProperty(element, "click", { configurable: true, value: clickAnchor });
+      }
+      return element;
+    });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+
+    try {
+      renderLoggedInApp("/reports");
+
+      const backupPanel = screen.getByLabelText("Operations data backup");
+      expect(within(backupPanel).getByRole("heading", { name: "Data Health & Backup" })).toBeInTheDocument();
+      expect(within(backupPanel).getByText("20 students")).toBeInTheDocument();
+      expect(within(backupPanel).getByText("2 merchandise items")).toBeInTheDocument();
+      expect(within(backupPanel).getByText("2 child accounts")).toBeInTheDocument();
+      expect(within(backupPanel).getByText("Saved account passwords are not included in the export.")).toBeInTheDocument();
+
+      fireEvent.click(within(backupPanel).getByRole("button", { name: "Export operations backup" }));
+
+      expect(await screen.findByText("Operations backup JSON exported.")).toBeInTheDocument();
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      if (!backupBlob) throw new Error("Expected operations backup export to create a Blob.");
+      const backup = JSON.parse(await backupBlob.text());
+      expect(backup).toMatchObject({
+        schemaVersion: "chos-operations-backup.v1",
+        summary: {
+          sections: expect.any(Number),
+          totalRecords: expect.any(Number)
+        },
+        data: {
+          students: expect.arrayContaining([expect.objectContaining({ firstName: "Talia", lastName: "Brooks" })]),
+          merchandiseItems: expect.arrayContaining([expect.objectContaining({ name: "Youth Boxing Gloves" })]),
+          childAccounts: expect.arrayContaining([expect.objectContaining({ username: "mina-cho.child" })])
+        }
+      });
+      expect(clickAnchor).toHaveBeenCalledTimes(1);
+      expect(createdAnchor).toHaveAttribute("download", expect.stringMatching(/^chos-operations-backup-\d{4}-\d{2}-\d{2}\.json$/));
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:operations-backup");
+    } finally {
+      createElementSpy.mockRestore();
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectURL });
+      } else {
+        delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: originalRevokeObjectURL });
+      } else {
+        delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+      }
+    }
+  });
+
+  it("lets managers restore a maintenance backup from reports", async () => {
+    const backup = buildOperationsBackupSnapshot(
+      makeOperationsBackupInput({
+        students: [
+          {
+            id: "student-restored",
+            firstName: "Ari",
+            lastName: "Nguyen",
+            ...completeStudentSafetyFields,
+            phone: "(262) 555-0101",
+            email: "ari@example.com",
+            status: "Active",
+            beltRank: "Yellow",
+            classesAttended: 12,
+            missedClassCount: 0,
+            joinedAt: "2026-01-01"
+          }
+        ],
+        scheduledClasses: [
+          { id: "schedule-restored", title: "Restored Private Lesson", date: dateKeyOffset(1), time: "4:30 PM", type: "private-lesson", studentId: "student-restored" }
+        ],
+        merchandiseItems: [
+          { id: "merch-restored", name: "Restored Gloves", category: "Gloves", price: 39, stock: 6, description: "Restored item.", imageLabel: "gloves" }
+        ],
+        checkIns: [
+          { id: "checkin-restored", studentId: "student-restored", studentName: "Ari Nguyen", date: dateKeyOffset(0), beltRank: "Yellow" }
+        ]
+      }),
+      "2026-06-02T12:00:00.000Z"
+    );
+    renderLoggedInApp("/reports");
+
+    const backupPanel = screen.getByLabelText("Operations data backup");
+    const input = within(backupPanel).getByLabelText("Import operations backup") as HTMLInputElement;
+    const file = new File([JSON.stringify(backup)], "chos-operations-backup-2026-06-02.json", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText("Operations backup restored: 4 records across 4 sections.")).toBeInTheDocument();
+    expect(within(backupPanel).getByText("1 students")).toBeInTheDocument();
+    expect(within(backupPanel).getByText("1 scheduled classes")).toBeInTheDocument();
+    expect(within(backupPanel).getByText("1 merchandise items")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "student-restored", firstName: "Ari", classesAttended: 12 })
+    ]);
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.merchandise.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "merch-restored", name: "Restored Gloves", stock: 6 })
+    ]);
+    expect(input.value).toBe("");
+  });
+
+  it("uses restored student data for same-action outreach after importing a backup", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    const backup = buildOperationsBackupSnapshot(
+      makeOperationsBackupInput({
+        students: [
+          {
+            id: "student-restored",
+            firstName: "Ari",
+            lastName: "Nguyen",
+            ...completeStudentSafetyFields,
+            phone: "(262) 555-0101",
+            email: "ari@example.com",
+            status: "Active",
+            beltRank: "Yellow",
+            classesAttended: 12,
+            missedClassCount: 3,
+            joinedAt: "2026-01-01"
+          }
+        ]
+      }),
+      "2026-06-02T12:00:00.000Z"
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <RestoreAndSendMissedClassHarness backup={backup} studentId="student-restored" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore and send missed follow-ups" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness restored missed status: Active")).toBeInTheDocument();
+      expect(screen.getByText("Harness restored missed return count: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness restored missed messages: 1")).toBeInTheDocument();
+      const savedMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]") as Array<{ recipientName: string; body: string }>;
+      expect(savedMessages).toEqual([
+        expect.objectContaining({ recipientName: "Ari Nguyen", body: expect.stringMatching(/missed you in class/i) })
+      ]);
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-restored", lastContactedAt: dateKeyOffset(0) })]);
+    });
+  });
+
+  it("clears the current custom staff session when a restored backup removes that login", async () => {
+    const staffAccount = {
+      id: "managed-restore-operator",
+      displayName: "Restore Operator",
+      username: "restore.operator",
+      password: "StaffPass123",
+      role: "staff",
+      status: "active",
+      access: ["reports"],
+      createdAt: "2026-06-01T10:00:00.000Z"
+    };
+    const backup = buildOperationsBackupSnapshot(makeOperationsBackupInput(), "2026-06-02T12:00:00.000Z");
+    renderManagedStaffApp("/reports", staffAccount);
+
+    const backupPanel = screen.getByLabelText("Operations data backup");
+    const input = within(backupPanel).getByLabelText("Import operations backup") as HTMLInputElement;
+    const file = new File([JSON.stringify(backup)], "chos-operations-backup-without-current-staff.json", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByTestId("auth-gate")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+  });
+
+  it("preserves registered guardian passwords when restoring redacted backups on the same device", async () => {
+    const registeredAccount = {
+      email: "returning.family@example.com",
+      password: "FamilyPass123",
+      createdAt: "2026-06-01T09:00:00.000Z"
+    };
+    window.localStorage.setItem("chos.accounts.v1", JSON.stringify([registeredAccount]));
+    const backup = buildOperationsBackupSnapshot(
+      makeOperationsBackupInput({
+        accounts: [registeredAccount],
+        accountRoles: [{ email: registeredAccount.email, role: "guardian" }]
+      }),
+      "2026-06-02T12:00:00.000Z"
+    );
+    expect(JSON.stringify(backup.data)).not.toContain("FamilyPass123");
+
+    const restoreRender = renderLoggedInApp("/reports");
+
+    const backupPanel = screen.getByLabelText("Operations data backup");
+    const input = within(backupPanel).getByLabelText("Import operations backup") as HTMLInputElement;
+    const file = new File([JSON.stringify(backup)], "chos-operations-backup-family-account.json", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText("Operations backup restored: 2 records across 2 sections.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ email: registeredAccount.email, password: "FamilyPass123" })
+      ]);
+    });
+
+    window.localStorage.removeItem("chos.session.v1");
+    restoreRender.unmount();
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: registeredAccount.email } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "FamilyPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the current registered guardian session when a restored backup omits legacy role storage", async () => {
+    const registeredAccount = {
+      email: "returning.family@example.com",
+      password: "FamilyPass123",
+      createdAt: "2026-06-01T09:00:00.000Z"
+    };
+    window.localStorage.setItem("chos.accounts.v1", JSON.stringify([registeredAccount]));
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: registeredAccount.email, remembered: true, createdAt: "2026-06-02T09:00:00.000Z" }));
+    const backup = buildOperationsBackupSnapshot(
+      makeOperationsBackupInput({
+        accounts: [registeredAccount]
+      }),
+      "2026-06-02T12:00:00.000Z"
+    );
+
+    render(
+      <AppStateProvider>
+        <RestoreBackupSessionHarness backup={backup} />
+      </AppStateProvider>
+    );
+
+    expect(screen.getByText(`Harness session email: ${registeredAccount.email}`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restore backup harness" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(`Harness session email: ${registeredAccount.email}`)).toBeInTheDocument();
+    });
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: registeredAccount.email, remembered: true });
+  });
+
+  it("rejects incomplete maintenance backups without clearing existing data", async () => {
+    const existingContact = {
+      id: "contact-existing",
+      name: "Existing Lead",
+      email: "lead@example.com",
+      phone: "(262) 555-0198",
+      message: "I want to try a class.",
+      createdAt: "2026-06-01T10:00:00.000Z"
+    };
+    window.localStorage.setItem("chos.contacts.v1", JSON.stringify([existingContact]));
+    const backup = buildOperationsBackupSnapshot(makeOperationsBackupInput(), "2026-06-02T12:00:00.000Z");
+    const incompleteBackup = JSON.parse(JSON.stringify(backup)) as { data: Partial<OperationsBackupInput> };
+    delete incompleteBackup.data.contacts;
+    renderLoggedInApp("/reports");
+
+    const backupPanel = screen.getByLabelText("Operations data backup");
+    const input = within(backupPanel).getByLabelText("Import operations backup") as HTMLInputElement;
+    const file = new File([JSON.stringify(incompleteBackup)], "chos-operations-backup-incomplete.json", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText(/Backup restore failed: Backup file is missing required operations sections: contacts/i)).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.contacts.v1") ?? "[]")).toEqual([existingContact]);
+    expect(input.value).toBe("");
+  });
+
+  it("rejects redacted custom login backups when saved passwords cannot be preserved", async () => {
+    const existingManagedAccount = {
+      id: "managed-existing",
+      displayName: "Existing Staff",
+      username: "existing.staff",
+      password: "ExistingPass123",
+      role: "staff",
+      status: "active",
+      access: ["dashboard", "reports"],
+      createdAt: "2026-06-01T09:00:00.000Z"
+    };
+    const existingChildAccount = {
+      id: "child-existing",
+      parentEmail: "parent123@chos.prototype",
+      name: "Existing Child",
+      username: "existing.child",
+      password: "ChildPass123",
+      age: "8",
+      beltSlug: "yellow",
+      createdAt: "2026-06-01T09:10:00.000Z"
+    };
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([existingManagedAccount]));
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([existingChildAccount]));
+    const backup = buildOperationsBackupSnapshot(
+      makeOperationsBackupInput({
+        managedAccounts: [
+          {
+            id: "managed-restored",
+            displayName: "Restored Staff",
+            username: "restored.staff",
+            password: "RestoredPass123",
+            role: "staff",
+            status: "active",
+            access: ["dashboard", "reports"],
+            createdAt: "2026-06-02T10:00:00.000Z"
+          }
+        ],
+        childAccounts: [
+          {
+            id: "child-restored",
+            parentEmail: "parent123@chos.prototype",
+            name: "Restored Child",
+            username: "restored.child",
+            password: "RestoredChildPass123",
+            age: "7",
+            beltSlug: "white",
+            createdAt: "2026-06-02T10:10:00.000Z"
+          }
+        ]
+      }),
+      "2026-06-02T12:00:00.000Z"
+    );
+    renderLoggedInApp("/reports");
+
+    const backupPanel = screen.getByLabelText("Operations data backup");
+    const input = within(backupPanel).getByLabelText("Import operations backup") as HTMLInputElement;
+    const file = new File([JSON.stringify(backup)], "chos-operations-backup-redacted-logins.json", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText(/Backup restore failed: Backup includes custom login accounts whose passwords are not available locally/i)).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual([existingManagedAccount]);
+    expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).toEqual([existingChildAccount]);
+    expect(input.value).toBe("");
+  });
+
+  it("rejects redacted registered account backups when saved passwords cannot be preserved", async () => {
+    const existingRegisteredAccount = {
+      email: "existing.family@example.com",
+      password: "ExistingFamilyPass123",
+      createdAt: "2026-06-01T09:00:00.000Z"
+    };
+    const existingRoles = [{ email: "manager123@chos.prototype", role: "staff" }];
+    window.localStorage.setItem("chos.accounts.v1", JSON.stringify([existingRegisteredAccount]));
+    const backup = buildOperationsBackupSnapshot(
+      makeOperationsBackupInput({
+        accounts: [
+          {
+            email: "restored.family@example.com",
+            password: "RestoredFamilyPass123",
+            createdAt: "2026-06-02T10:00:00.000Z"
+          }
+        ],
+        accountRoles: [{ email: "restored.family@example.com", role: "guardian" }]
+      }),
+      "2026-06-02T12:00:00.000Z"
+    );
+    expect(JSON.stringify(backup.data)).not.toContain("RestoredFamilyPass123");
+    renderLoggedInApp("/reports");
+
+    const backupPanel = screen.getByLabelText("Operations data backup");
+    const input = within(backupPanel).getByLabelText("Import operations backup") as HTMLInputElement;
+    const file = new File([JSON.stringify(backup)], "chos-operations-backup-redacted-family-login.json", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText(/Backup restore failed: Backup includes custom login accounts whose passwords are not available locally/i)).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toEqual([existingRegisteredAccount]);
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual(existingRoles);
+    expect(input.value).toBe("");
+  });
+
+  it("rejects legacy child login backups when student roles require unavailable passwords", async () => {
+    const existingChildAccount = {
+      id: "child-existing",
+      parentEmail: "parent123@chos.prototype",
+      name: "Existing Child",
+      username: "existing.child",
+      password: "ChildPass123",
+      age: "8",
+      beltSlug: "yellow",
+      createdAt: "2026-06-01T09:10:00.000Z"
+    };
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([existingChildAccount]));
+    const backup = buildOperationsBackupSnapshot(
+      makeOperationsBackupInput({
+        accountRoles: [{ email: "legacy.child", role: "student" }],
+        childAccounts: [
+          {
+            id: "child-legacy",
+            parentEmail: "parent123@chos.prototype",
+            name: "Legacy Child",
+            username: "legacy.child",
+            password: "LegacyChildPass123",
+            age: "7",
+            beltSlug: "white",
+            createdAt: "2026-05-28T10:10:00.000Z"
+          }
+        ]
+      }),
+      "2026-06-02T12:00:00.000Z"
+    );
+    const legacyBackup = JSON.parse(JSON.stringify(backup)) as { data: { childAccounts: Array<Record<string, unknown>> } };
+    legacyBackup.data.childAccounts.forEach((child) => {
+      delete child.hasSavedPassword;
+    });
+    renderLoggedInApp("/reports");
+
+    const backupPanel = screen.getByLabelText("Operations data backup");
+    const input = within(backupPanel).getByLabelText("Import operations backup") as HTMLInputElement;
+    const file = new File([JSON.stringify(legacyBackup)], "chos-operations-backup-legacy-child-login.json", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText(/Backup restore failed: Backup includes custom login accounts whose passwords are not available locally/i)).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).toEqual([existingChildAccount]);
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([{ email: "manager123@chos.prototype", role: "staff" }]);
+    expect(input.value).toBe("");
   });
 
   it("lets staff add a new student and creates a welcome text log", () => {
@@ -1598,6 +6887,25 @@ describe("post-login operations app", () => {
     expect(screen.queryByRole("dialog", { name: "Create New Student" })).not.toBeInTheDocument();
     expect(screen.getByText(/Welcome Ava to Cho's/i)).toBeInTheDocument();
     expect(screen.getByText(/facebook.com\/chosmenomoneefalls/i)).toBeInTheDocument();
+  });
+
+  it("tells staff inactive student creation did not queue a welcome text", async () => {
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create New Student" }));
+    const dialog = screen.getByRole("dialog", { name: "Create New Student" });
+    fireEvent.change(within(dialog).getByLabelText("Full Name"), { target: { value: "Cora Miles" } });
+    fireEvent.change(within(dialog).getByLabelText("Student Email"), { target: { value: "cora@example.com" } });
+    fireEvent.change(within(dialog).getByLabelText("Parent/Guardian Phone Number"), { target: { value: "(262) 555-0102" } });
+    fireEvent.change(within(dialog).getByLabelText("Status"), { target: { value: "Inactive" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create Student" }));
+
+    expect(await screen.findByText("Cora Miles added.")).toBeInTheDocument();
+    expect(screen.queryByText("Cora Miles added with welcome text queued.")).not.toBeInTheDocument();
+    expect(screen.getByText("No welcome texts queued yet.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "welcome", recipientName: "Cora Miles" })
+    ]));
   });
 
   it("keeps prototype state usable when localStorage writes fail", () => {
@@ -1689,6 +6997,1219 @@ describe("post-login operations app", () => {
     const blueGroup = within(directory).getByRole("group", { name: "Blue belt students" });
     expect(within(blueGroup).getByRole("button", { name: "Open Maya Robinson student info" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Maya Robinson Student Info" })).not.toBeInTheDocument();
+  });
+
+  it("filters the student directory by enrollment status without changing the default all-student view", () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-active",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0100",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 2,
+        missedClassCount: 0,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-trial",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "bree@example.com",
+        status: "Trial",
+        beltRank: "Yellow",
+        classesAttended: 1,
+        missedClassCount: 0,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-paused",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Paused",
+        beltRank: "Blue",
+        classesAttended: 8,
+        missedClassCount: 1,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-inactive",
+        firstName: "Drew",
+        lastName: "Parker",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "drew@example.com",
+        status: "Inactive",
+        beltRank: "Black",
+        classesAttended: 40,
+        missedClassCount: 0,
+        joinedAt: "2026-05-01"
+      }
+    ]));
+
+    renderLoggedInApp("/students");
+
+    const filters = screen.getByLabelText("Student status filters");
+    expect(screen.getByText("4 students listed by belt. Select a name to open student info.")).toBeInTheDocument();
+    expect(within(filters).getByRole("button", { name: "Show all students (4)" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(within(filters).getByRole("button", { name: "Show Paused students (1)" }));
+
+    expect(screen.getByText("1 paused student listed by belt. Clear filter to show everyone.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Cora Miles student info" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Ari Nguyen student info" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Bree Santos student info" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Drew Parker student info" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(filters).getByRole("button", { name: "Show all students (4)" }));
+
+    expect(screen.getByText("4 students listed by belt. Select a name to open student info.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Ari Nguyen student info" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Bree Santos student info" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Cora Miles student info" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Drew Parker student info" })).toBeInTheDocument();
+  });
+
+  it("searches the student directory by contact details and combines with status filters", () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-active",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-0100",
+        guardianEmail: "mina@example.com",
+        phone: "(262) 555-0100",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 2,
+        missedClassCount: 0,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-trial",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        guardianName: "Paula Santos",
+        guardianPhone: "(262) 555-0101",
+        guardianEmail: "paula@example.com",
+        phone: "(262) 555-0101",
+        email: "bree@example.com",
+        status: "Trial",
+        beltRank: "Yellow",
+        classesAttended: 1,
+        missedClassCount: 0,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-paused",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        guardianName: "Terry Miles",
+        guardianPhone: "(262) 555-0102",
+        guardianEmail: "terry@example.com",
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Paused",
+        beltRank: "Blue",
+        classesAttended: 8,
+        missedClassCount: 1,
+        joinedAt: "2026-05-01"
+      }
+    ]));
+
+    renderLoggedInApp("/students");
+
+    const filters = screen.getByLabelText("Student status filters");
+    const search = screen.getByRole("searchbox", { name: "Search students" });
+    fireEvent.change(search, { target: { value: "paula" } });
+
+    expect(screen.getByText("1 student matches search. Clear search to show everyone.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Bree Santos student info" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Ari Nguyen student info" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Cora Miles student info" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(filters).getByRole("button", { name: "Show Paused students (1)" }));
+
+    expect(screen.getByText("No paused students match this search.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Bree Santos student info" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(filters).getByRole("button", { name: "Show all students (3)" }));
+
+    expect(screen.getByRole("button", { name: "Open Bree Santos student info" })).toBeInTheDocument();
+  });
+
+  it("queues selected-student outreach directly from the student info modal", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-mina",
+        firstName: "Mina",
+        lastName: "Cho",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0198",
+        email: "mina@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 14,
+        missedClassCount: 0,
+        joinedAt: "2026-05-01"
+      }
+    ]));
+
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Mina Cho student info" }));
+    const dialog = screen.getByRole("dialog", { name: "Mina Cho Student Info" });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Queue progress encouragement for Mina Cho" }));
+    expect(await screen.findByText("Progress encouragement queued for Mina Cho.")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Request profile update from Mina Cho" }));
+    expect(await screen.findByText("Profile update request queued for Mina Cho.")).toBeInTheDocument();
+
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "follow-up",
+        recipientName: "Mina Cho",
+        recipientPhone: "(262) 555-0198",
+        status: "queued",
+        body: expect.stringMatching(/next belt milestone/i)
+      }),
+      expect.objectContaining({
+        kind: "profile-update",
+        recipientName: "Mina Cho",
+        recipientPhone: "(262) 555-0198",
+        status: "queued",
+        body: expect.stringMatching(/student profile information/i)
+      })
+    ]));
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "student-mina", lastContactedAt: expect.any(String) })
+    ]);
+  });
+
+  it("retargets queued outreach when an active student profile contact is corrected", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari-queued",
+        kind: "profile-update",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "2625550101",
+        body: "Hi Ari, please confirm Ari Nguyen's profile.",
+        status: "queued",
+        createdAt: "2026-06-01T10:00:00.000Z"
+      },
+      {
+        id: "message-ari-sent",
+        kind: "follow-up",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "2625550101",
+        body: "Already sent Ari history.",
+        status: "sent",
+        createdAt: "2026-05-31T10:00:00.000Z",
+        sentAt: "2026-05-31T10:05:00.000Z"
+      },
+      {
+        id: "message-bree-queued",
+        kind: "follow-up",
+        recipientName: "Bree Nguyen",
+        recipientPhone: "2625550101",
+        body: "Queued Bree outreach.",
+        status: "queued",
+        createdAt: "2026-06-01T10:10:00.000Z"
+      }
+    ]));
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    const dialog = screen.getByRole("dialog", { name: "Ari Nguyen Student Info" });
+    fireEvent.change(within(dialog).getByLabelText("Full Name"), { target: { value: "Aria Park" } });
+    fireEvent.change(within(dialog).getByLabelText("Parent/Guardian Phone Number"), { target: { value: "(262) 555-0199" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Student Changes" }));
+
+    expect(await screen.findByText("Aria Park updated.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ id: "message-ari-queued", recipientName: "Aria Park", recipientPhone: "(262) 555-0199", body: "Hi Aria, please confirm Aria Park's profile.", status: "queued" }),
+        expect.objectContaining({ id: "message-ari-sent", recipientName: "Ari Nguyen", recipientPhone: "2625550101", status: "sent" }),
+        expect.objectContaining({ id: "message-bree-queued", recipientName: "Bree Nguyen", recipientPhone: "2625550101", status: "queued" })
+      ]);
+    });
+  });
+
+  it("keeps linked student logins in sync when an active student profile is corrected", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-ari",
+        displayName: "Ari Nguyen",
+        username: "ari.student",
+        password: "AriPass123",
+        role: "student",
+        status: "active",
+        email: "ari@example.com",
+        phone: "(262) 555-0101",
+        title: "Yellow Belt Student",
+        access: [],
+        studentId: "student-ari",
+        createdAt: "2026-05-20T10:00:00.000Z"
+      },
+      {
+        id: "managed-bree",
+        displayName: "Bree Nguyen",
+        username: "bree.student",
+        password: "BreePass123",
+        role: "student",
+        status: "active",
+        email: "bree@example.com",
+        phone: "(262) 555-0102",
+        title: "White Belt Student",
+        access: [],
+        studentId: "student-bree",
+        createdAt: "2026-05-20T10:05:00.000Z"
+      }
+    ]));
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    const dialog = screen.getByRole("dialog", { name: "Ari Nguyen Student Info" });
+    fireEvent.change(within(dialog).getByLabelText("Full Name"), { target: { value: "Ari Park" } });
+    fireEvent.change(within(dialog).getByLabelText("Student Email"), { target: { value: "ari.park@example.com" } });
+    fireEvent.change(within(dialog).getByLabelText("Parent/Guardian Phone Number"), { target: { value: "(262) 555-0199" } });
+    fireEvent.change(within(dialog).getByLabelText("Belt rank"), { target: { value: "Blue" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Student Changes" }));
+
+    expect(await screen.findByText("Ari Park updated.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          id: "managed-ari",
+          displayName: "Ari Park",
+          email: "ari.park@example.com",
+          phone: "(262) 555-0199",
+          title: "Blue Belt Student",
+          studentId: "student-ari"
+        }),
+        expect.objectContaining({
+          id: "managed-bree",
+          displayName: "Bree Nguyen",
+          email: "bree@example.com",
+          phone: "(262) 555-0102",
+          title: "White Belt Student",
+          studentId: "student-bree"
+        })
+      ]);
+    });
+  });
+
+  it("keeps direct-message participant names in sync when an active student profile is corrected", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-0198",
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        guardianName: "Paula Nguyen",
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-ari-recipient",
+        threadId: "direct-staff-seed__student-ari",
+        senderId: "direct-staff-seed",
+        senderName: "Instructor Team",
+        recipientId: "student-ari",
+        recipientName: "Ari Nguyen",
+        body: "Ari practice note.",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-ari-sender",
+        threadId: "direct-staff-seed__student-ari",
+        senderId: "student-ari",
+        senderName: "Ari Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Instructor Team",
+        body: "Ari reply.",
+        createdAt: "2026-06-01T10:05:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-ari-parent",
+        threadId: "direct-staff-seed__parent-student-ari",
+        senderId: "parent-student-ari",
+        senderName: "Mina Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Instructor Team",
+        body: "Parent follow-up.",
+        createdAt: "2026-06-01T10:10:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-bree",
+        threadId: "direct-staff-seed__student-bree",
+        senderId: "direct-staff-seed",
+        senderName: "Instructor Team",
+        recipientId: "student-bree",
+        recipientName: "Bree Nguyen",
+        body: "Bree practice note.",
+        createdAt: "2026-06-01T10:15:00.000Z",
+        status: "sent"
+      }
+    ]));
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    const dialog = screen.getByRole("dialog", { name: "Ari Nguyen Student Info" });
+    fireEvent.change(within(dialog).getByLabelText("Full Name"), { target: { value: "Ari Park" } });
+    fireEvent.change(within(dialog).getByLabelText("Parent/Guardian Name"), { target: { value: "Mina Park" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Student Changes" }));
+
+    expect(await screen.findByText("Ari Park updated.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ id: "direct-ari-recipient", recipientId: "student-ari", recipientName: "Ari Park" }),
+        expect.objectContaining({ id: "direct-ari-sender", senderId: "student-ari", senderName: "Ari Park" }),
+        expect.objectContaining({ id: "direct-ari-parent", senderId: "parent-student-ari", senderName: "Mina Park" }),
+        expect.objectContaining({ id: "direct-bree", recipientId: "student-bree", recipientName: "Bree Nguyen" })
+      ]);
+    });
+  });
+
+  it("keeps check-in history names in sync when an active student profile is corrected", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        guardianName: "Mina Nguyen",
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        guardianName: "Paula Nguyen",
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.checkins.v1", JSON.stringify([
+      {
+        id: "checkin-ari",
+        studentId: "student-ari",
+        studentName: "Ari Nguyen",
+        date: "2026-05-28",
+        beltRank: "Yellow"
+      },
+      {
+        id: "checkin-bree",
+        studentId: "student-bree",
+        studentName: "Bree Nguyen",
+        date: "2026-05-29",
+        beltRank: "White"
+      }
+    ]));
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    const dialog = screen.getByRole("dialog", { name: "Ari Nguyen Student Info" });
+    fireEvent.change(within(dialog).getByLabelText("Full Name"), { target: { value: "Ari Park" } });
+    fireEvent.change(within(dialog).getByLabelText("Belt rank"), { target: { value: "Blue" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Student Changes" }));
+
+    expect(await screen.findByText("Ari Park updated.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.checkins.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ id: "checkin-ari", studentId: "student-ari", studentName: "Ari Park", beltRank: "Yellow" }),
+        expect.objectContaining({ id: "checkin-bree", studentId: "student-bree", studentName: "Bree Nguyen", beltRank: "White" })
+      ]);
+    });
+  });
+
+  it("does not queue inactive student quick outreach from direct state calls", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Blue",
+        classesAttended: 24,
+        missedClassCount: 2,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/students"]}>
+        <AppStateProvider>
+          <StudentQuickOutreachHarness studentId="student-cora" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Queue inactive outreach" }));
+
+    expect(await screen.findByText("Harness messages: 0")).toBeInTheDocument();
+    expect(screen.getByText("Harness last contacted: none")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; lastContactedAt?: string }>;
+    expect(savedStudents).toEqual([expect.objectContaining({ id: "student-cora" })]);
+    expect(savedStudents[0].lastContactedAt).toBeUndefined();
+  });
+
+  it("keeps bulk outreach idempotent when the same action fires twice before rerender", async () => {
+    const todayKey = dateKeyOffset(0);
+    const birthdayDate = `${Number(todayKey.slice(0, 4)) - 12}${todayKey.slice(4)}`;
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        dateOfBirth: birthdayDate,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <BulkOutreachDoubleCallHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Send celebration outreach twice" }));
+
+    expect(await screen.findByText("Harness return counts: 1,0")).toBeInTheDocument();
+    expect(await screen.findByText("Harness messages: 1")).toBeInTheDocument();
+    expect(screen.getByText(`Harness last contacted: ${todayKey}`)).toBeInTheDocument();
+    const savedMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]") as Array<{ recipientName: string; kind: string; body: string }>;
+    expect(savedMessages).toEqual([
+      expect.objectContaining({ recipientName: "Ari Nguyen", kind: "celebration", body: expect.stringMatching(/birthday/i) })
+    ]);
+  });
+
+  it("returns existing quick outreach when duplicate requests are already queued today", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/students"]}>
+        <AppStateProvider>
+          <StudentProfileUpdateDoubleCallHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Request profile update twice" }));
+
+    expect(await screen.findByText("Harness quick return names: Ari Nguyen,Ari Nguyen")).toBeInTheDocument();
+    expect(screen.getByText("Harness quick messages: 1")).toBeInTheDocument();
+    expect(screen.getByText(`Harness quick last contacted: ${todayKey}`)).toBeInTheDocument();
+    const savedMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]") as Array<{ recipientName: string; kind: string; body: string }>;
+    expect(savedMessages).toEqual([
+      expect.objectContaining({ recipientName: "Ari Nguyen", kind: "profile-update", body: expect.stringMatching(/profile information/i) })
+    ]);
+  });
+
+  it("does not queue milestone encouragement for a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/students"]}>
+        <AppStateProvider>
+          <DeactivateAndQueueMilestoneHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and queue milestone" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness milestone student status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness milestone return name: none")).toBeInTheDocument();
+      expect(screen.getByText("Harness milestone messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness milestone last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not send bulk milestone encouragement to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <DeactivateAndSendMilestonesHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and send milestones" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness bulk milestone status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness bulk milestone return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness bulk milestone messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness bulk milestone last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not queue a profile update for a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/students"]}>
+        <AppStateProvider>
+          <DeactivateAndQueueProfileUpdateHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and request profile update" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness profile student status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness profile return name: none")).toBeInTheDocument();
+      expect(screen.getByText("Harness profile messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness profile last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not send bulk profile updates to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        profileUpdatedAt: "2025-05-01",
+        joinedAt: "2025-05-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <DeactivateAndSendProfileUpdatesHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and send profile updates" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness bulk profile status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness bulk profile return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness bulk profile messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness bulk profile last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not send class reminders to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-ari", title: "Private Lesson", date: dateKeyOffset(1), time: "4:30 PM", type: "private-lesson", studentId: "student-ari" }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <DeactivateAndSendClassRemindersHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and send class reminders" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness class reminder status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness class reminder return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness class reminder messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness class reminder last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not send celebration outreach to a student made inactive in the same action", async () => {
+    const todayKey = dateKeyOffset(0);
+    const birthdayDate = `${Number(todayKey.slice(0, 4)) - 12}${todayKey.slice(4)}`;
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        dateOfBirth: birthdayDate,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <DeactivateAndSendCelebrationsHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and send celebrations" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness celebration status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness celebration return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness celebration messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness celebration last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not send paused-student reactivation outreach to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Paused",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <DeactivateAndSendPausedReviewHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and review paused students" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness paused status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness paused return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness paused messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness paused last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not send new-student check-ins to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 2,
+        missedClassCount: 0,
+        joinedAt: dateKeyOffset(-7)
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <DeactivateAndSendNewStudentCheckInsHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and send new student check-ins" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness new student status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness new student return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness new student messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness new student last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not send missed-class follow-ups to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 3,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <DeactivateAndSendMissedClassHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and send missed-class follow-ups" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness missed-class status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness missed-class return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness missed-class messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness missed-class last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not send attendance-gap check-ins to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 1,
+        joinedAt: dateKeyOffset(-60),
+        lastCheckIn: dateKeyOffset(-30)
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <DeactivateAndCheckAttendanceGapsHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and check attendance gaps" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness attendance-gap status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness attendance-gap return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness attendance-gap messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness attendance-gap last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not send trial conversion outreach to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Trial",
+        beltRank: "White",
+        classesAttended: 1,
+        missedClassCount: 0,
+        joinedAt: dateKeyOffset(-3)
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <DeactivateAndConvertTrialHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and convert trial students" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness trial status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness trial return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness trial messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness trial last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not send belt test invites to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 14,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <DeactivateAndSendBeltInvitesHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and invite belt candidates" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness belt status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness belt return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness belt messages: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness belt last contacted: none")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; lastContactedAt?: string }>;
+      expect(savedStudents).toEqual([expect.objectContaining({ id: "student-ari", status: "Inactive" })]);
+      expect(savedStudents[0].lastContactedAt).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not queue welcome outreach when creating inactive student records", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/students"]}>
+        <AppStateProvider>
+          <StudentCreationHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create inactive student" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness students: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness messages: 0")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ firstName: "Cora", lastName: "Miles", status: "Inactive", profileUpdatedAt: todayKey })
+      ]);
+    });
+  });
+
+  it("keeps active student creation idempotent when the same enrollment fires twice before rerender", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/students"]}>
+        <AppStateProvider>
+          <StudentCreationDoubleCallHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create student twice" }));
+
+    expect(await screen.findByText("Harness duplicate student returns: Ari Nguyen,Ari Nguyen")).toBeInTheDocument();
+    expect(screen.getByText("Harness duplicate students: 1")).toBeInTheDocument();
+    expect(screen.getByText("Harness duplicate messages: 1")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ firstName: "Ari", lastName: "Nguyen", email: "ari@example.com", phone: "(262) 555-0101", status: "Active", profileUpdatedAt: todayKey })
+    ]);
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ kind: "welcome", recipientName: "Ari Nguyen", recipientPhone: "(262) 555-0101", status: "queued" })
+    ]);
+  });
+
+  it("tells staff inactive students cannot receive quick outreach from the student modal", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Blue",
+        classesAttended: 24,
+        missedClassCount: 2,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Cora Miles student info" }));
+    const dialog = screen.getByRole("dialog", { name: "Cora Miles Student Info" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Queue progress encouragement for Cora Miles" }));
+
+    expect(await screen.findByText("Only current students can receive quick outreach.")).toBeInTheDocument();
+    expect(screen.queryByText("Progress encouragement queued for Cora Miles.")).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
   });
 
   it("groups the student directory into belt category blocks", () => {
@@ -1820,6 +8341,558 @@ describe("post-login operations app", () => {
     expect(screen.queryByRole("dialog", { name: "Talia Brooks Student Info" })).not.toBeInTheDocument();
   });
 
+  it("preserves sibling communication history when deleting a student who shares a family phone", () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "follow-up",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "2625550101",
+        body: "Ari needs a progress check.",
+        status: "queued",
+        createdAt: "2026-06-01T10:00:00.000Z"
+      },
+      {
+        id: "message-bree",
+        kind: "follow-up",
+        recipientName: "Bree Nguyen",
+        recipientPhone: "2625550101",
+        body: "Bree needs a progress check.",
+        status: "queued",
+        createdAt: "2026-06-01T10:05:00.000Z"
+      }
+    ]));
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Student" }));
+
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "message-bree", recipientName: "Bree Nguyen", recipientPhone: "2625550101" })
+    ]);
+    expect(screen.getByRole("button", { name: "Open Bree Nguyen student info" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Ari Nguyen student info" })).not.toBeInTheDocument();
+  });
+
+  it("removes deleted student direct message threads while preserving other conversations", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-ari-student",
+        threadId: "direct-staff-seed__student-ari",
+        senderId: "direct-staff-seed",
+        senderName: "Instructor Team",
+        recipientId: "student-ari",
+        recipientName: "Ari Nguyen",
+        body: "Ari practice note.",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-ari-parent",
+        threadId: "direct-staff-seed__parent-student-ari",
+        senderId: "parent-student-ari",
+        senderName: "Ari Parent",
+        recipientId: "direct-staff-seed",
+        recipientName: "Instructor Team",
+        body: "Parent follow-up.",
+        createdAt: "2026-06-01T10:05:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-bree-student",
+        threadId: "direct-staff-seed__student-bree",
+        senderId: "direct-staff-seed",
+        senderName: "Instructor Team",
+        recipientId: "student-bree",
+        recipientName: "Bree Nguyen",
+        body: "Bree practice note.",
+        createdAt: "2026-06-01T10:10:00.000Z",
+        status: "sent"
+      }
+    ]));
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Student" }));
+
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ id: "direct-bree-student", recipientId: "student-bree" })
+      ]);
+    });
+    expect(screen.getByRole("button", { name: "Open Bree Nguyen student info" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Ari Nguyen student info" })).not.toBeInTheDocument();
+  });
+
+  it("deactivates a deleted student's linked login without affecting other student accounts", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-ari",
+        displayName: "Ari Nguyen",
+        username: "ari.student",
+        password: "AriPass123",
+        role: "student",
+        status: "active",
+        email: "ari@example.com",
+        phone: "(262) 555-0101",
+        title: "Yellow Belt Student",
+        access: [],
+        studentId: "student-ari",
+        createdAt: "2026-05-20T10:00:00.000Z"
+      },
+      {
+        id: "managed-bree",
+        displayName: "Bree Nguyen",
+        username: "bree.student",
+        password: "BreePass123",
+        role: "student",
+        status: "active",
+        email: "bree@example.com",
+        phone: "(262) 555-0102",
+        title: "White Belt Student",
+        access: [],
+        studentId: "student-bree",
+        createdAt: "2026-05-20T10:05:00.000Z"
+      }
+    ]));
+    const managerView = renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Student" }));
+
+    const managedAccounts = JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]") as Array<{ id: string; status: string; studentId?: string }>;
+    const deletedStudentAccount = managedAccounts.find((account) => account.id === "managed-ari");
+    expect(deletedStudentAccount).toEqual(expect.objectContaining({ status: "inactive" }));
+    expect(deletedStudentAccount).not.toHaveProperty("studentId");
+    expect(managedAccounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "managed-bree", status: "active", studentId: "student-bree" })
+    ]));
+
+    managerView.unmount();
+    const accountManagementView = renderLoggedInApp("/manager?tool=create");
+    const deletedStudentAccountCard = screen.getByRole("article", { name: "Ari Nguyen student account" });
+    expect(deletedStudentAccountCard).toHaveTextContent("Inactive");
+    fireEvent.click(within(deletedStudentAccountCard).getByRole("button", { name: "Reactivate Ari Nguyen account" }));
+
+    expect(await screen.findByText("Unable to update account status.")).toBeInTheDocument();
+    expect(deletedStudentAccountCard).toHaveTextContent("Inactive");
+
+    accountManagementView.unmount();
+    window.localStorage.removeItem("chos.session.v1");
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "ari.student" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "AriPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByText("Check the username and password.")).toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "bree.student" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "BreePass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByLabelText("Student profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Bree Nguyen" })).toBeInTheDocument();
+  });
+
+  it("removes inactive student direct message threads while preserving other conversations", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-ari-student",
+        threadId: "direct-staff-seed__student-ari",
+        senderId: "direct-staff-seed",
+        senderName: "Instructor Team",
+        recipientId: "student-ari",
+        recipientName: "Ari Nguyen",
+        body: "Ari practice note.",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-ari-parent",
+        threadId: "direct-staff-seed__parent-student-ari",
+        senderId: "parent-student-ari",
+        senderName: "Ari Parent",
+        recipientId: "direct-staff-seed",
+        recipientName: "Instructor Team",
+        body: "Parent follow-up.",
+        createdAt: "2026-06-01T10:05:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-bree-student",
+        threadId: "direct-staff-seed__student-bree",
+        senderId: "direct-staff-seed",
+        senderName: "Instructor Team",
+        recipientId: "student-bree",
+        recipientName: "Bree Nguyen",
+        body: "Bree practice note.",
+        createdAt: "2026-06-01T10:10:00.000Z",
+        status: "sent"
+      }
+    ]));
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    const dialog = screen.getByRole("dialog", { name: "Ari Nguyen Student Info" });
+    fireEvent.change(within(dialog).getByLabelText("Status"), { target: { value: "Inactive" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Student Changes" }));
+
+    expect(await screen.findByText("Ari Nguyen updated.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ id: "direct-bree-student", recipientId: "student-bree" })
+      ]);
+    });
+  });
+
+  it("cancels inactive student queued outreach with alternate phone formatting", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari-queued",
+        kind: "follow-up",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "2625550101",
+        body: "Queued Ari outreach.",
+        status: "queued",
+        createdAt: "2026-05-20T10:00:00.000Z"
+      },
+      {
+        id: "message-bree-queued",
+        kind: "follow-up",
+        recipientName: "Bree Nguyen",
+        recipientPhone: "2625550101",
+        body: "Queued Bree outreach.",
+        status: "queued",
+        createdAt: "2026-05-20T10:10:00.000Z"
+      }
+    ]));
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    const dialog = screen.getByRole("dialog", { name: "Ari Nguyen Student Info" });
+    fireEvent.change(within(dialog).getByLabelText("Status"), { target: { value: "Inactive" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Student Changes" }));
+
+    expect(await screen.findByText("Ari Nguyen updated.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ id: "message-bree-queued", recipientName: "Bree Nguyen", recipientPhone: "2625550101" })
+      ]);
+    });
+  });
+
+  it("deactivates linked student logins, unlinks schedules, and cancels queued outreach when enrollment status is changed to inactive", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-ari",
+        displayName: "Ari Nguyen",
+        username: "ari.student",
+        password: "AriPass123",
+        role: "student",
+        status: "active",
+        email: "ari@example.com",
+        phone: "(262) 555-0101",
+        title: "Yellow Belt Student",
+        access: [],
+        studentId: "student-ari",
+        createdAt: "2026-05-20T10:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-ari", title: "Ari Private Lesson", date: dateKeyOffset(2), time: "4:30 PM", type: "private-lesson", studentId: "student-ari" },
+      { id: "schedule-open", title: "Open Youth Class", date: dateKeyOffset(2), time: "5:30 PM", type: "class" }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari-queued",
+        kind: "follow-up",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        body: "Queued Ari outreach.",
+        status: "queued",
+        createdAt: "2026-05-20T10:00:00.000Z"
+      },
+      {
+        id: "message-ari-sent",
+        kind: "follow-up",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        body: "Already sent Ari history.",
+        status: "sent",
+        createdAt: "2026-05-19T10:00:00.000Z",
+        sentAt: "2026-05-19T10:05:00.000Z"
+      },
+      {
+        id: "message-bree-queued",
+        kind: "follow-up",
+        recipientName: "Bree Santos",
+        recipientPhone: "(262) 555-0102",
+        body: "Queued Bree outreach.",
+        status: "queued",
+        createdAt: "2026-05-20T10:10:00.000Z"
+      }
+    ]));
+    const studentsView = renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    const dialog = screen.getByRole("dialog", { name: "Ari Nguyen Student Info" });
+    fireEvent.change(within(dialog).getByLabelText("Status"), { target: { value: "Inactive" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Student Changes" }));
+
+    expect(await screen.findByText("Ari Nguyen updated.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ id: "managed-ari", status: "inactive", studentId: "student-ari" })
+      ]);
+    });
+    const savedSchedule = JSON.parse(window.localStorage.getItem("chos.operations.schedule.v1") ?? "[]") as Array<{ id: string; studentId?: string }>;
+    const ariSchedule = savedSchedule.find((item) => item.id === "schedule-ari");
+    expect(ariSchedule).toEqual(expect.objectContaining({ id: "schedule-ari" }));
+    expect(ariSchedule?.studentId).toBeUndefined();
+    expect(savedSchedule).toEqual(expect.arrayContaining([expect.objectContaining({ id: "schedule-open" })]));
+    const savedMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]") as Array<{ id: string; status: string }>;
+    expect(savedMessages).toEqual([
+      expect.objectContaining({ id: "message-ari-sent", status: "sent" }),
+      expect.objectContaining({ id: "message-bree-queued", status: "queued" })
+    ]);
+    expect(savedMessages.some((message) => message.id === "message-ari-queued")).toBe(false);
+
+    studentsView.unmount();
+    const accountManagementView = renderLoggedInApp("/manager?tool=create");
+    const inactiveStudentAccountCard = screen.getByRole("article", { name: "Ari Nguyen student account" });
+    expect(inactiveStudentAccountCard).toHaveTextContent("Inactive");
+    fireEvent.click(within(inactiveStudentAccountCard).getByRole("button", { name: "Reactivate Ari Nguyen account" }));
+
+    expect(await screen.findByText("Unable to update account status.")).toBeInTheDocument();
+
+    accountManagementView.unmount();
+    window.localStorage.removeItem("chos.session.v1");
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "ari.student" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "AriPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByText("Check the username and password.")).toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+  });
+
+  it("reactivates linked student logins when enrollment status returns to active", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Inactive",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-ari",
+        displayName: "Ari Nguyen",
+        username: "ari.student",
+        password: "AriPass123",
+        role: "student",
+        status: "inactive",
+        email: "ari@example.com",
+        phone: "(262) 555-0101",
+        title: "Yellow Belt Student",
+        access: [],
+        studentId: "student-ari",
+        createdAt: "2026-05-20T10:00:00.000Z"
+      }
+    ]));
+    renderLoggedInApp("/students");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Ari Nguyen student info" }));
+    const dialog = screen.getByRole("dialog", { name: "Ari Nguyen Student Info" });
+    fireEvent.change(within(dialog).getByLabelText("Status"), { target: { value: "Active" } });
+    fireEvent.change(within(dialog).getByLabelText("Full Name"), { target: { value: "Ari Park" } });
+    fireEvent.change(within(dialog).getByLabelText("Student Email"), { target: { value: "ari.park@example.com" } });
+    fireEvent.change(within(dialog).getByLabelText("Parent/Guardian Phone Number"), { target: { value: "(262) 555-0199" } });
+    fireEvent.change(within(dialog).getByLabelText("Belt rank"), { target: { value: "Blue" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Student Changes" }));
+
+    expect(await screen.findByText("Ari Park updated.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          id: "managed-ari",
+          status: "active",
+          displayName: "Ari Park",
+          email: "ari.park@example.com",
+          phone: "(262) 555-0199",
+          title: "Blue Belt Student",
+          studentId: "student-ari"
+        })
+      ]);
+    });
+  });
+
   it("uses full-page manager chrome instead of a sidebar on tool pages", () => {
     renderLoggedInApp("/students");
 
@@ -1865,6 +8938,169 @@ describe("post-login operations app", () => {
     expect(screen.queryByRole("dialog", { name: "Add Event" })).not.toBeInTheDocument();
   });
 
+  it("keeps studio event creation idempotent when the same item fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/events"]}>
+        <AppStateProvider>
+          <StudioEventDoubleAddHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add event twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate event returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate events: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.events.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          title: "Family Board Breaking Night",
+          date: "2026-06-20",
+          time: "6:00 PM",
+          details: "Students can invite family for board breaking demos.",
+          audience: "families"
+        })
+      ]);
+    });
+  });
+
+  it("lists only current students in the schedule assignment selector", () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Blue",
+        classesAttended: 24,
+        missedClassCount: 2,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    renderLoggedInApp("/schedule");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Schedule Event" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Schedule Event" });
+    const studentSelect = within(dialog).getByLabelText("Student");
+    expect(within(studentSelect).getByRole("option", { name: "Ari Nguyen" })).toBeInTheDocument();
+    expect(within(studentSelect).queryByRole("option", { name: "Cora Miles" })).not.toBeInTheDocument();
+  });
+
+  it("does not create schedule items for inactive students from direct state calls", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Blue",
+        classesAttended: 24,
+        missedClassCount: 2,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/schedule"]}>
+        <AppStateProvider>
+          <ScheduleStudentAssignmentHarness studentId="student-cora" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add inactive schedule" }));
+
+    expect(await screen.findByText("Harness scheduled items: 0")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.schedule.v1") ?? "[]")).toEqual([]);
+  });
+
+  it("schedules a newly added active student from the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/schedule"]}>
+        <AppStateProvider>
+          <AddAndScheduleStudentHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add and schedule student" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness same-day schedule student: schedule-same-day@example.com")).toBeInTheDocument();
+      expect(screen.getByText("Harness same-day schedule items: 1")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; email: string }>;
+      const sameDayStudent = savedStudents.find((student) => student.email === "schedule-same-day@example.com");
+      expect(sameDayStudent).toEqual(expect.objectContaining({ email: "schedule-same-day@example.com" }));
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.schedule.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          title: "Same Day Intro Lesson",
+          date: "2026-06-15",
+          time: "4:30 PM",
+          type: "private-lesson",
+          studentId: sameDayStudent?.id,
+          notes: "First-day assessment."
+        })
+      ]);
+    });
+  });
+
+  it("keeps schedule item creation idempotent when the same item fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/schedule"]}>
+        <AppStateProvider>
+          <ScheduleDoubleAddHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add schedule twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate schedule returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate scheduled items: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.schedule.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          title: "Youth Testing Prep",
+          date: "2026-06-12",
+          time: "4:30 PM",
+          type: "class",
+          recurring: true,
+          titleColor: "#c51625",
+          notes: "Forms review."
+        })
+      ]);
+    });
+  });
+
   it("lets staff make a schedule item recurring from the existing Scheduling page", () => {
     renderLoggedInApp("/schedule");
 
@@ -1879,6 +9115,86 @@ describe("post-login operations app", () => {
     expect(screen.getByText("Repeats weekly")).toBeInTheDocument();
     expect(screen.getByText("Friday Demo Class")).toBeInTheDocument();
     expect(screen.getByText("2026-05-15 at 6:15 PM")).toBeInTheDocument();
+  });
+
+  it("shows the next weekly occurrence for recurring schedule items", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-17T12:00:00-05:00"));
+    renderLoggedInApp("/schedule");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Schedule Event" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Schedule Event" });
+    fireEvent.change(within(dialog).getByLabelText("Event title"), { target: { value: "Friday Demo Class" } });
+    fireEvent.change(within(dialog).getByLabelText("Schedule date"), { target: { value: "2026-05-15" } });
+    fireEvent.change(within(dialog).getByLabelText("Schedule time"), { target: { value: "6:15 PM" } });
+    fireEvent.click(within(dialog).getByLabelText("Recurring"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Schedule Event" }));
+
+    const scheduleItem = screen.getByText("Friday Demo Class").closest(".workflow-directory-row") as HTMLElement;
+    expect(within(scheduleItem).getByText("Repeats weekly")).toBeInTheDocument();
+    expect(within(scheduleItem).getByText("Next occurrence: 2026-05-22 at 6:15 PM")).toBeInTheDocument();
+  });
+
+  it("marks stale one-time schedule items separately from upcoming work", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-20T12:00:00-05:00"));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-past", title: "Past Private Lesson", date: "2026-05-18", time: "4:30 PM", type: "private-lesson" },
+      { id: "schedule-future", title: "Future Private Lesson", date: "2026-05-22", time: "4:30 PM", type: "private-lesson" }
+    ]));
+
+    renderLoggedInApp("/schedule");
+
+    const pastScheduleItem = screen.getByText("Past Private Lesson").closest(".workflow-directory-row") as HTMLElement;
+    const futureScheduleItem = screen.getByText("Future Private Lesson").closest(".workflow-directory-row") as HTMLElement;
+    expect(within(pastScheduleItem).getByText("Past one-time item")).toBeInTheDocument();
+    expect(within(futureScheduleItem).getByText("Upcoming one-time item")).toBeInTheDocument();
+  });
+
+  it("lets staff remove stale one-time schedule items directly from schedule", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-20T12:00:00-05:00"));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-past", title: "Past Private Lesson", date: "2026-05-18", time: "4:30 PM", type: "private-lesson" },
+      { id: "schedule-future", title: "Future Private Lesson", date: "2026-05-22", time: "4:30 PM", type: "private-lesson" }
+    ]));
+
+    renderLoggedInApp("/schedule");
+
+    const pastScheduleItem = screen.getByText("Past Private Lesson").closest(".workflow-directory-row") as HTMLElement;
+    fireEvent.click(within(pastScheduleItem).getByRole("button", { name: "Remove Past Private Lesson schedule item" }));
+
+    expect(screen.getByText("Past Private Lesson removed from schedule.")).toBeInTheDocument();
+    expect(screen.queryByText("Past Private Lesson")).not.toBeInTheDocument();
+    expect(screen.getByText("Future Private Lesson")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.schedule.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "schedule-future", title: "Future Private Lesson" })
+    ]);
+  });
+
+  it("lets staff clear all past one-time schedule items at once", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-20T12:00:00-05:00"));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-past-private", title: "Past Private Lesson", date: "2026-05-18", time: "4:30 PM", type: "private-lesson" },
+      { id: "schedule-past-class", title: "Past One-Time Class", date: "2026-05-17", time: "5:30 PM", type: "class" },
+      { id: "schedule-future", title: "Future Private Lesson", date: "2026-05-22", time: "4:30 PM", type: "private-lesson" },
+      { id: "schedule-recurring", title: "Past Weekly Class", date: "2026-05-15", time: "6:15 PM", type: "class", recurring: true }
+    ]));
+
+    renderLoggedInApp("/schedule");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear 2 past one-time schedule items" }));
+
+    expect(screen.getByText("2 past schedule items cleared.")).toBeInTheDocument();
+    expect(screen.queryByText("Past Private Lesson")).not.toBeInTheDocument();
+    expect(screen.queryByText("Past One-Time Class")).not.toBeInTheDocument();
+    expect(screen.getByText("Future Private Lesson")).toBeInTheDocument();
+    expect(screen.getByText("Past Weekly Class")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.schedule.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "schedule-future", title: "Future Private Lesson" }),
+      expect.objectContaining({ id: "schedule-recurring", title: "Past Weekly Class", recurring: true })
+    ]);
   });
 
   it("lets staff set a custom title color for schedule items", () => {
@@ -1963,6 +9279,36 @@ describe("post-login operations app", () => {
 
     expect(screen.queryByText("Advanced Sparring")).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Edit Advanced Sparring" })).not.toBeInTheDocument();
+  });
+
+  it("keeps class creation idempotent when the same item fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.classes.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/classes"]}>
+        <AppStateProvider>
+          <StudioClassDoubleAddHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add class twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate class returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate classes: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.classes.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          name: "Youth Sparring",
+          daysOfWeek: [1, 3],
+          startTime: "17:15",
+          endTime: "18:00",
+          recurring: true,
+          titleColor: "#c51625",
+          notes: "Pads, footwork, and controlled sparring."
+        })
+      ]);
+    });
   });
 
   it("keeps recurring classes visible on the existing Classes page", () => {
@@ -2060,8 +9406,487 @@ describe("post-login operations app", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Check In Today" }));
 
-    expect(screen.getByText(/Checked in today/i)).toBeInTheDocument();
+    expect(screen.getByText(/Checked in today:/i)).toBeInTheDocument();
     expect(screen.getByText(/Classes attended/i)).toBeInTheDocument();
+  });
+
+  it("shows next-rank progress on check-in and updates it after attendance is recorded", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 7,
+        missedClassCount: 1,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    renderLoggedInApp("/check-ins");
+
+    const progressPanel = screen.getByLabelText("Check-in belt progress");
+    expect(within(progressPanel).getByText("7 of 8 classes complete")).toBeInTheDocument();
+    expect(within(progressPanel).getByText("Next rank target: Yellow Belt")).toBeInTheDocument();
+    expect(within(progressPanel).getByText("1 class to testing review")).toBeInTheDocument();
+    expect(within(progressPanel).getByLabelText("88% of 8 classes complete")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check In Today" }));
+
+    expect(await within(progressPanel).findByText("8 of 8 classes complete")).toBeInTheDocument();
+    expect(within(progressPanel).getByText("Ready for instructor review")).toBeInTheDocument();
+    expect(within(progressPanel).getByLabelText("100% of 8 classes complete")).toBeInTheDocument();
+  });
+
+  it("checks in the linked student for managed student accounts", async () => {
+    const todayKey = dateKeyOffset(0);
+    const students = [
+      {
+        id: "student-talia",
+        firstName: "Talia",
+        lastName: "Brooks",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0100",
+        email: "talia@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 4,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-derek",
+        firstName: "Derek",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "derek@example.com",
+        status: "Active",
+        beltRank: "Red",
+        classesAttended: 83,
+        missedClassCount: 1,
+        joinedAt: "2026-01-01"
+      }
+    ];
+    const account = {
+      id: "managed-derek",
+      displayName: "Derek Miles",
+      username: "derek.student",
+      password: "Dragon123",
+      role: "student",
+      status: "active",
+      access: [],
+      studentId: "student-derek",
+      createdAt: "2026-05-10T00:00:00.000Z"
+    };
+
+    renderManagedStudentApp("/check-ins", account, students);
+
+    expect(screen.getByRole("heading", { name: "Student Check-In" })).toBeInTheDocument();
+    expect(screen.getByText("Red Belt")).toBeInTheDocument();
+    expect(screen.getByText("Classes attended: 83")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check In Today" }));
+
+    expect(await screen.findByText(/Checked in today:/i)).toBeInTheDocument();
+    await waitFor(() => {
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]");
+      expect(savedStudents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "student-derek", classesAttended: 84, lastCheckIn: todayKey }),
+        expect.objectContaining({ id: "student-talia", classesAttended: 4 })
+      ]));
+      expect(savedStudents.find((student: { id: string; lastCheckIn?: string }) => student.id === "student-talia")?.lastCheckIn).toBeUndefined();
+
+      const savedCheckIns = JSON.parse(window.localStorage.getItem("chos.operations.checkins.v1") ?? "[]");
+      expect(savedCheckIns).toEqual(expect.arrayContaining([
+        expect.objectContaining({ studentId: "student-derek", studentName: "Derek Miles", date: todayKey })
+      ]));
+      expect(savedCheckIns.some((checkIn: { studentId: string }) => checkIn.studentId === "student-talia")).toBe(false);
+    });
+  });
+
+  it("tells staff when check-in queues progress outreach", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 7,
+        missedClassCount: 1,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    renderLoggedInApp("/check-ins");
+
+    fireEvent.click(screen.getByRole("button", { name: "Check In Today" }));
+
+    expect(await screen.findByText("Ari Nguyen checked in. Progress outreach queued.")).toBeInTheDocument();
+  });
+
+  it("does not present older check-in records as today", () => {
+    const yesterdayKey = dateKeyOffset(-1);
+    window.localStorage.setItem("chos.operations.checkins.v1", JSON.stringify([
+      { id: "checkin-yesterday", studentId: "student-talia-brooks-seed", studentName: "Talia Brooks", date: yesterdayKey, beltRank: "White" }
+    ]));
+
+    renderLoggedInApp("/check-ins");
+
+    expect(screen.queryByText(/Checked in today:/i)).not.toBeInTheDocument();
+    expect(screen.getByText(`Last check-in: ${yesterdayKey}`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check In Today" })).toBeEnabled();
+  });
+
+  it("lists only current students in the staff check-in selector", () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 9,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Blue",
+        classesAttended: 24,
+        missedClassCount: 2,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    renderLoggedInApp("/check-ins");
+
+    const studentSelect = screen.getByLabelText("Student");
+    expect(within(studentSelect).getByRole("option", { name: "Ari Nguyen" })).toBeInTheDocument();
+    expect(within(studentSelect).queryByRole("option", { name: "Cora Miles" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Blue Belt")).not.toBeInTheDocument();
+  });
+
+  it("shows a clear check-in empty state when no current students are available", () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Blue",
+        classesAttended: 24,
+        missedClassCount: 2,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    renderLoggedInApp("/check-ins");
+
+    expect(screen.getByText("No current students are available for check-in.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Student")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check In Today" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Blue Belt")).not.toBeInTheDocument();
+  });
+
+  it("prevents duplicate same-day check-ins from inflating attendance", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 9,
+        missedClassCount: 3,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/check-ins"]}>
+        <AppStateProvider>
+          <CheckInDoubleCallHarness studentId="student-ari" todayKey={todayKey} />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Double check in" }));
+
+    expect(await screen.findByText("Harness classes: 10")).toBeInTheDocument();
+    expect(screen.getByText("Harness today logs: 1")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "student-ari", classesAttended: 10, missedClassCount: 0, lastCheckIn: todayKey })
+      ]));
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.checkins.v1") ?? "[]").filter((checkIn: { studentId: string; date: string }) => checkIn.studentId === "student-ari" && checkIn.date === todayKey)).toHaveLength(1);
+    });
+  });
+
+  it("checks in a newly added active student from the same action", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.checkins.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/check-ins"]}>
+        <AppStateProvider>
+          <AddAndCheckInStudentHarness todayKey={todayKey} />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add and check in student" }));
+
+    expect(await screen.findByText("Harness same-day classes: 1")).toBeInTheDocument();
+    expect(screen.getByText("Harness same-day check-ins: 1")).toBeInTheDocument();
+    await waitFor(() => {
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; classesAttended: number; lastCheckIn?: string }>;
+      const sameDayStudent = savedStudents.find((student) => student.id.startsWith("student-"));
+      expect(sameDayStudent).toMatchObject({ classesAttended: 1, lastCheckIn: todayKey });
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.checkins.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          studentId: sameDayStudent?.id,
+          studentName: "Same Day Student",
+          date: todayKey,
+          beltRank: "White"
+        })
+      ]);
+    });
+  });
+
+  it("does not check in a student made inactive in the same action", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 9,
+        missedClassCount: 3,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.checkins.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/check-ins"]}>
+        <AppStateProvider>
+          <DeactivateAndCheckInStudentHarness studentId="student-ari" todayKey={todayKey} />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and check in student" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness inactive status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness inactive classes: 9")).toBeInTheDocument();
+      expect(screen.getByText("Harness inactive check-ins: 0")).toBeInTheDocument();
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; status: string; classesAttended: number; lastCheckIn?: string }>;
+      expect(savedStudents).toEqual([
+        expect.objectContaining({ id: "student-ari", status: "Inactive", classesAttended: 9 })
+      ]);
+      expect(savedStudents[0].lastCheckIn).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.checkins.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not recreate a deleted student when check-in fires in the same action", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 9,
+        missedClassCount: 3,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.checkins.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/check-ins"]}>
+        <AppStateProvider>
+          <DeleteAndCheckInStudentHarness studentId="student-ari" todayKey={todayKey} />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete and check in student" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness deleted student: missing")).toBeInTheDocument();
+      expect(screen.getByText("Harness deleted check-ins: 0")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual([]);
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.checkins.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("does not record inactive student check-ins from direct state calls", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Inactive",
+        beltRank: "Yellow",
+        classesAttended: 9,
+        missedClassCount: 3,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/check-ins"]}>
+        <AppStateProvider>
+          <CheckInDoubleCallHarness studentId="student-ari" todayKey={todayKey} />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Double check in" }));
+
+    await waitFor(() => {
+      const savedStudents = JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]") as Array<{ id: string; classesAttended: number; missedClassCount: number; lastCheckIn?: string }>;
+      expect(savedStudents).toEqual([
+        expect.objectContaining({ id: "student-ari", classesAttended: 9, missedClassCount: 3 })
+      ]);
+      expect(savedStudents[0].lastCheckIn).toBeUndefined();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.checkins.v1") ?? "[]").filter((checkIn: { studentId: string; date: string }) => checkIn.studentId === "student-ari" && checkIn.date === todayKey)).toHaveLength(0);
+    });
+    expect(screen.getByText("Harness classes: 9")).toBeInTheDocument();
+    expect(screen.getByText("Harness today logs: 0")).toBeInTheDocument();
+  });
+
+  it("queues one progress outreach text when check-in reaches belt review readiness", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 7,
+        missedClassCount: 1,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/check-ins"]}>
+        <AppStateProvider>
+          <CheckInDoubleCallHarness studentId="student-ari" todayKey={todayKey} />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Double check in" }));
+
+    expect(await screen.findByText("Harness classes: 8")).toBeInTheDocument();
+    expect(screen.getByText("Harness today logs: 1")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "student-ari", classesAttended: 8, missedClassCount: 0, lastCheckIn: todayKey, lastContactedAt: todayKey })
+      ]));
+      const ariMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]").filter(
+        (message: { recipientName: string }) => message.recipientName === "Ari Nguyen"
+      );
+      expect(ariMessages).toEqual([
+        expect.objectContaining({
+          kind: "follow-up",
+          recipientName: "Ari Nguyen",
+          recipientPhone: "(262) 555-0101",
+          status: "queued",
+          body: expect.stringMatching(/belt testing review/i)
+        })
+      ]);
+    });
+  });
+
+  it("does not repeat automatic progress outreach after the check-in threshold was already reached", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 8,
+        missedClassCount: 1,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/check-ins"]}>
+        <AppStateProvider>
+          <CheckInDoubleCallHarness studentId="student-ari" todayKey={todayKey} />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Double check in" }));
+
+    expect(await screen.findByText("Harness classes: 9")).toBeInTheDocument();
+    expect(screen.getByText("Harness today logs: 1")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "student-ari", classesAttended: 9, missedClassCount: 0, lastCheckIn: todayKey })
+      ]));
+      const ariMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]").filter(
+        (message: { recipientName: string }) => message.recipientName === "Ari Nguyen"
+      );
+      expect(ariMessages).toHaveLength(0);
+    });
   });
 
   it("queues missed-class follow-up texts for students who missed three classes", () => {
@@ -2073,6 +9898,605 @@ describe("post-login operations app", () => {
     expect(screen.getAllByText(/missed 3 classes/i).length).toBeGreaterThan(0);
   });
 
+  it("lets staff send every queued text from message settings", async () => {
+    renderLoggedInApp("/messages");
+
+    fireEvent.click(screen.getByRole("button", { name: "Send Missed-Class Follow-Ups" }));
+    expect(await screen.findByText("2 missed-class follow-up texts queued.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send Queued Texts" }));
+
+    expect(await screen.findByText("2 queued texts sent.")).toBeInTheDocument();
+    expect(screen.queryByText("queued")).not.toBeInTheDocument();
+    expect(screen.getAllByText("sent").length).toBeGreaterThan(1);
+  });
+
+  it("sends only queued texts for current students and removes stale queued recipients", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "follow-up",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        body: "Ari needs a quick check-in.",
+        status: "queued",
+        createdAt: "2026-06-02T10:00:00.000Z"
+      },
+      {
+        id: "message-cora",
+        kind: "follow-up",
+        recipientName: "Cora Miles",
+        recipientPhone: "(262) 555-0103",
+        body: "Cora has stale outreach.",
+        status: "queued",
+        createdAt: "2026-06-02T10:05:00.000Z"
+      },
+      {
+        id: "message-unknown",
+        kind: "profile-update",
+        recipientName: "Noah Woods",
+        recipientPhone: "(262) 555-0104",
+        body: "Noah is no longer in the student list.",
+        status: "queued",
+        createdAt: "2026-06-02T10:10:00.000Z"
+      },
+      {
+        id: "message-cora-sent",
+        kind: "follow-up",
+        recipientName: "Cora Miles",
+        recipientPhone: "(262) 555-0103",
+        body: "Historical Cora message.",
+        status: "sent",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        sentAt: "2026-06-01T10:05:00.000Z"
+      }
+    ]));
+
+    renderLoggedInApp("/messages");
+
+    expect(screen.getByText("1 text waiting to be sent.")).toBeInTheDocument();
+    expect(screen.queryByText("3 texts waiting to be sent.")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send Queued Texts" }));
+
+    expect(await screen.findByText("1 queued text sent.")).toBeInTheDocument();
+    expect(screen.getByText("0 texts waiting to be sent.")).toBeInTheDocument();
+    expect(screen.getByText("Ari needs a quick check-in.")).toBeInTheDocument();
+    expect(screen.queryByText("Cora has stale outreach.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Noah is no longer in the student list.")).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "message-ari", status: "sent", sentAt: expect.any(String) }),
+      expect.objectContaining({ id: "message-cora-sent", status: "sent" })
+    ]);
+  });
+
+  it("keeps queued text sending idempotent when send fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 6,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "follow-up",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        body: "Ari needs a quick check-in.",
+        status: "queued",
+        createdAt: "2026-06-02T10:00:00.000Z"
+      },
+      {
+        id: "message-bree",
+        kind: "profile-update",
+        recipientName: "Bree Santos",
+        recipientPhone: "(262) 555-0102",
+        body: "Bree needs a profile update request.",
+        status: "queued",
+        createdAt: "2026-06-02T10:05:00.000Z"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/messages"]}>
+        <AppStateProvider>
+          <QueuedTextsDoubleSendHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Send queued texts twice" }));
+
+    expect(await screen.findByText("Harness send return counts: 2,0")).toBeInTheDocument();
+    expect(screen.getByText("Harness queued statuses: sent,sent")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "message-ari", status: "sent", sentAt: expect.any(String) }),
+      expect.objectContaining({ id: "message-bree", status: "sent", sentAt: expect.any(String) })
+    ]);
+  });
+
+  it("lets staff send one queued text without sending the entire queue", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 6,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "follow-up",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        body: "Ari needs a quick missed-class follow-up.",
+        status: "queued",
+        createdAt: "2026-06-02T10:00:00.000Z"
+      },
+      {
+        id: "message-bree",
+        kind: "profile-update",
+        recipientName: "Bree Santos",
+        recipientPhone: "(262) 555-0102",
+        body: "Bree needs a profile update request.",
+        status: "queued",
+        createdAt: "2026-06-02T10:05:00.000Z"
+      }
+    ]));
+
+    renderLoggedInApp("/messages");
+
+    const ariMessage = screen.getByText("Ari needs a quick missed-class follow-up.").closest(".message-preview") as HTMLElement;
+    const breeMessage = screen.getByText("Bree needs a profile update request.").closest(".message-preview") as HTMLElement;
+
+    fireEvent.click(within(ariMessage).getByRole("button", { name: "Send text to Ari Nguyen" }));
+
+    expect(await screen.findByText("Queued text to Ari Nguyen sent.")).toBeInTheDocument();
+    expect(within(ariMessage).getByText("sent")).toBeInTheDocument();
+    expect(within(breeMessage).getByText("queued")).toBeInTheDocument();
+    expect(screen.getByText("1 text waiting to be sent.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "message-ari", status: "sent", sentAt: expect.any(String) }),
+      expect.objectContaining({ id: "message-bree", status: "queued" })
+    ]);
+  });
+
+  it("keeps single queued text sending idempotent when one message fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "follow-up",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        body: "Ari needs a quick check-in.",
+        status: "queued",
+        createdAt: "2026-06-02T10:00:00.000Z"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/messages"]}>
+        <AppStateProvider>
+          <SingleQueuedTextDoubleSendHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Send Ari queued text twice" }));
+
+    expect(await screen.findByText("Harness single send returns: Ari Nguyen,none")).toBeInTheDocument();
+    expect(screen.getByText("Harness single statuses: sent")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "message-ari", status: "sent", sentAt: expect.any(String) })
+    ]);
+  });
+
+  it("removes a stale queued recipient instead of sending it from the single-text action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-cora",
+        kind: "follow-up",
+        recipientName: "Cora Miles",
+        recipientPhone: "(262) 555-0103",
+        body: "Cora has stale outreach.",
+        status: "queued",
+        createdAt: "2026-06-02T10:05:00.000Z"
+      }
+    ]));
+
+    renderLoggedInApp("/messages");
+
+    const coraMessage = screen.getByText("Cora has stale outreach.").closest(".message-preview") as HTMLElement;
+    fireEvent.click(within(coraMessage).getByRole("button", { name: "Send text to Cora Miles" }));
+
+    expect(await screen.findByText("That queued text is no longer waiting.")).toBeInTheDocument();
+    expect(screen.getByText("0 texts waiting to be sent.")).toBeInTheDocument();
+    expect(screen.queryByText("Cora has stale outreach.")).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+  });
+
+  it("does not send a queued text to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "follow-up",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        body: "Ari needs a quick check-in.",
+        status: "queued",
+        createdAt: "2026-06-02T10:00:00.000Z"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/messages"]}>
+        <AppStateProvider>
+          <DeactivateAndSendQueuedTextHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and send queued text" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness queued student status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness queued send return: none")).toBeInTheDocument();
+      expect(screen.getByText("Harness queued message statuses: none")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ id: "student-ari", status: "Inactive" })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("lets staff clear stale queued texts when no deliverable texts are waiting", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-cora",
+        kind: "follow-up",
+        recipientName: "Cora Miles",
+        recipientPhone: "(262) 555-0103",
+        body: "Cora has stale outreach.",
+        status: "queued",
+        createdAt: "2026-06-02T10:05:00.000Z"
+      },
+      {
+        id: "message-noah",
+        kind: "profile-update",
+        recipientName: "Noah Woods",
+        recipientPhone: "(262) 555-0104",
+        body: "Noah is no longer listed.",
+        status: "queued",
+        createdAt: "2026-06-02T10:10:00.000Z"
+      },
+      {
+        id: "message-cora-sent",
+        kind: "follow-up",
+        recipientName: "Cora Miles",
+        recipientPhone: "(262) 555-0103",
+        body: "Historical Cora message.",
+        status: "sent",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        sentAt: "2026-06-01T10:05:00.000Z"
+      }
+    ]));
+
+    renderLoggedInApp("/messages");
+
+    expect(screen.getByText("0 texts waiting to be sent.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send Queued Texts" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear Stale Texts" }));
+
+    expect(await screen.findByText("2 stale queued texts removed.")).toBeInTheDocument();
+    expect(screen.queryByText("Cora has stale outreach.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Noah is no longer listed.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear Stale Texts" })).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "message-cora-sent", status: "sent" })
+    ]);
+  });
+
+  it("keeps stale queued text cleanup idempotent when clear fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-cora",
+        kind: "follow-up",
+        recipientName: "Cora Miles",
+        recipientPhone: "(262) 555-0103",
+        body: "Cora has stale outreach.",
+        status: "queued",
+        createdAt: "2026-06-02T10:05:00.000Z"
+      },
+      {
+        id: "message-noah",
+        kind: "profile-update",
+        recipientName: "Noah Woods",
+        recipientPhone: "(262) 555-0104",
+        body: "Noah is no longer listed.",
+        status: "queued",
+        createdAt: "2026-06-02T10:10:00.000Z"
+      },
+      {
+        id: "message-cora-sent",
+        kind: "follow-up",
+        recipientName: "Cora Miles",
+        recipientPhone: "(262) 555-0103",
+        body: "Historical Cora message.",
+        status: "sent",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        sentAt: "2026-06-01T10:05:00.000Z"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/messages"]}>
+        <AppStateProvider>
+          <StaleQueuedTextsDoubleClearHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear stale queued texts twice" }));
+
+    expect(await screen.findByText("Harness stale clear returns: 2,0")).toBeInTheDocument();
+    expect(screen.getByText("Harness stale messages: 1")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "message-cora-sent", status: "sent" })
+    ]);
+  });
+
+  it("keeps lead review automation idempotent when review fires twice before rerender", async () => {
+    const starterDate = dateKeyOffset(1);
+    window.localStorage.setItem("chos.contacts.v1", JSON.stringify([
+      {
+        id: "contact-ari",
+        name: "Ari Nguyen",
+        email: "ari@example.com",
+        phone: "(262) 555-0101",
+        message: "We want to try the starter program.",
+        createdAt: `${dateKeyOffset(0)}T10:00:00.000Z`
+      }
+    ]));
+    window.localStorage.setItem("chos.bookings.v1", JSON.stringify([
+      { persons: 2, date: starterDate, time: "5:30 PM", timezone: "America/Chicago" }
+    ]));
+    window.localStorage.setItem("chos.operations.leadReviews.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <LeadReviewDoubleCallHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Review leads twice" }));
+
+    expect(await screen.findByText("Harness lead review returns: 2,0")).toBeInTheDocument();
+    expect(screen.getByText("Harness lead reviews: 2")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.leadReviews.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ leadId: "contact-ari", kind: "contact", label: "Ari Nguyen" }),
+      expect.objectContaining({ leadId: expect.stringContaining("booking-"), kind: "booking", label: `Starter booking ${starterDate}` })
+    ]);
+  });
+
+  it("reviews a contact lead saved in the same action", async () => {
+    window.localStorage.setItem("chos.contacts.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.bookings.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.leadReviews.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <SaveContactAndReviewLeadsHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save contact and review leads" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness saved contacts: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness same-action lead return: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness same-action lead reviews: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.leadReviews.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ leadId: "contact-ari", kind: "contact", label: "Ari Nguyen" })
+      ]);
+    });
+  });
+
+  it("keeps low-inventory restock idempotent when restock fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.merchandise.v1", JSON.stringify([
+      {
+        id: "gloves-low",
+        name: "Youth Gloves",
+        category: "Gloves",
+        price: 39,
+        stock: 1,
+        reorderPoint: 3,
+        targetStock: 8,
+        description: "Youth gloves for class pickup.",
+        imageLabel: "gloves"
+      },
+      {
+        id: "uniform-ok",
+        name: "Student Uniform",
+        category: "Uniforms",
+        price: 59,
+        stock: 6,
+        reorderPoint: 3,
+        targetStock: 8,
+        description: "Student uniform for class pickup.",
+        imageLabel: "uniform"
+      }
+    ]));
+
+    render(
+      <MemoryRouter initialEntries={["/reports"]}>
+        <AppStateProvider>
+          <LowInventoryRestockDoubleCallHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Restock inventory twice" }));
+
+    expect(await screen.findByText("Harness restock returns: 1,0")).toBeInTheDocument();
+    expect(screen.getByText("Harness inventory stocks: gloves-low:8,uniform-ok:6")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.merchandise.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "gloves-low", stock: 8, lastRestockedAt: dateKeyOffset(0) }),
+      expect.objectContaining({ id: "uniform-ok", stock: 6 })
+    ]);
+  });
+
   it("sends a marketing blast for discounts and monthly specials", () => {
     renderLoggedInApp("/messages");
 
@@ -2081,6 +10505,215 @@ describe("post-login operations app", () => {
 
     expect(screen.getAllByText(/May special: 10% off gloves this month/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Marketing blast/i).length).toBeGreaterThan(0);
+  });
+
+  it("queues marketing blasts only for current students with phone numbers", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0100",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 2,
+        missedClassCount: 0,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "bree@example.com",
+        status: "Paused",
+        beltRank: "Yellow",
+        classesAttended: 8,
+        missedClassCount: 0,
+        joinedAt: "2026-04-01"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-03-01"
+      },
+      {
+        id: "student-dane",
+        firstName: "Dane",
+        lastName: "Woods",
+        ...completeStudentSafetyFields,
+        phone: "",
+        email: "dane@example.com",
+        status: "Active",
+        beltRank: "Green",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Marketing message"), { target: { value: "June family night is open for registration." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send Marketing Blast" }));
+
+    expect(await screen.findByText("Marketing blast queued for 2 students.")).toBeInTheDocument();
+    const savedMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]") as Array<{ recipientName: string; kind: string; body: string }>;
+    expect(savedMessages).toHaveLength(2);
+    expect(savedMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientName: "Ari Nguyen", kind: "marketing", body: "June family night is open for registration." }),
+      expect.objectContaining({ recipientName: "Bree Santos", kind: "marketing", body: "June family night is open for registration." })
+    ]));
+    expect(savedMessages.some((message) => message.recipientName === "Cora Miles")).toBe(false);
+    expect(savedMessages.some((message) => message.recipientName === "Dane Woods")).toBe(false);
+  });
+
+  it("does not send a marketing blast to a student made inactive in the same action", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.campaigns.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/messages"]}>
+        <AppStateProvider>
+          <DeactivateAndSendMarketingBlastHarness studentId="student-ari" />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate and send marketing blast" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness marketing student status: Inactive")).toBeInTheDocument();
+      expect(screen.getByText("Harness marketing return count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness marketing campaign count: 0")).toBeInTheDocument();
+      expect(screen.getByText("Harness marketing message count: 0")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual([
+        expect.objectContaining({ id: "student-ari", status: "Inactive" })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.campaigns.v1") ?? "[]")).toEqual([]);
+    });
+  });
+
+  it("keeps duplicate marketing blasts from creating duplicate campaigns or texts", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0100",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 2,
+        missedClassCount: 0,
+        joinedAt: "2026-05-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 8,
+        missedClassCount: 0,
+        joinedAt: "2026-04-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.campaigns.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/messages"]}>
+        <AppStateProvider>
+          <MarketingBlastDoubleCallHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Send marketing blast twice" }));
+
+    expect(await screen.findByText("Harness marketing return counts: 2,0")).toBeInTheDocument();
+    expect(screen.getByText("Harness campaigns: 1")).toBeInTheDocument();
+    expect(screen.getByText("Harness marketing messages: 2")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.campaigns.v1") ?? "[]")).toHaveLength(1);
+    const savedMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]") as Array<{ recipientName: string; kind: string; campaignId?: string }>;
+    expect(savedMessages).toHaveLength(2);
+    expect(savedMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientName: "Ari Nguyen", kind: "marketing", campaignId: expect.any(String) }),
+      expect.objectContaining({ recipientName: "Bree Santos", kind: "marketing", campaignId: expect.any(String) })
+    ]));
+  });
+
+  it("does not create empty marketing campaigns when no current students can receive texts", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "cora@example.com",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-03-01"
+      },
+      {
+        id: "student-dane",
+        firstName: "Dane",
+        lastName: "Woods",
+        ...completeStudentSafetyFields,
+        phone: "",
+        email: "dane@example.com",
+        status: "Active",
+        beltRank: "Green",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-02-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.campaigns.v1", JSON.stringify([]));
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Marketing message"), { target: { value: "June family night is open for registration." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send Marketing Blast" }));
+
+    expect(await screen.findByText("No current student phone numbers are available.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.campaigns.v1") ?? "[]")).toEqual([]);
   });
 
   it("expands selected messages inside the single Home feed panel", () => {
@@ -2107,6 +10740,30 @@ describe("post-login operations app", () => {
 
     expect(attendanceRow).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByLabelText("Attendance Confirmation details")).not.toBeInTheDocument();
+  });
+
+  it("lets managers reply to inbound app messages from the Home feed", async () => {
+    renderLoggedInApp("/");
+
+    const feedPanel = screen.getByLabelText("Messages and event notifications");
+    const directRow = within(feedPanel).getByRole("button", { name: /Talia Brooks.*Thank you, I will be there for training/i });
+    fireEvent.click(directRow);
+
+    expect(directRow).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("heading", { name: "App message from Talia Brooks" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Write a reply"), { target: { value: "Thanks Talia, see you then." } });
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+
+    expect(await screen.findByText("Reply sent to Talia Brooks.")).toBeInTheDocument();
+    const savedDirectMessages = JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]") as Array<{ senderId: string; recipientId: string; recipientName: string; body: string }>;
+    expect(savedDirectMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        senderId: "direct-staff-seed",
+        recipientId: "student-talia-brooks-seed",
+        recipientName: "Talia Brooks",
+        body: "Thanks Talia, see you then."
+      })
+    ]));
   });
 
   it("marks Home feed messages and event notifications as read when opened", () => {
@@ -2147,6 +10804,38 @@ describe("post-login operations app", () => {
     expect(screen.getByRole("button", { name: /John Doe.*Attendance Confirmation/i })).toBeInTheDocument();
   });
 
+  it("keeps merchandise creation idempotent when the same item fires twice before rerender", async () => {
+    window.localStorage.setItem("chos.operations.merchandise.v1", JSON.stringify([]));
+
+    render(
+      <MemoryRouter initialEntries={["/merchandise"]}>
+        <AppStateProvider>
+          <MerchandiseDoubleAddHarness />
+        </AppStateProvider>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add merchandise twice" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Harness duplicate merchandise returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate merchandise items: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.merchandise.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          name: "Red Sparring Gloves",
+          category: "Gloves",
+          price: 49,
+          stock: 8,
+          reorderPoint: 3,
+          targetStock: 14,
+          description: "Competition gloves for sparring days.",
+          imageLabel: "gloves",
+          imageDataUrl: "data:image/png;base64,gloves"
+        })
+      ]);
+    });
+  });
+
   it("lets staff add, edit, upload an image, and delete merchandise", async () => {
     renderLoggedInApp("/merchandise");
 
@@ -2158,6 +10847,8 @@ describe("post-login operations app", () => {
     fireEvent.change(within(addDialog).getByLabelText("Category"), { target: { value: "Gloves" } });
     fireEvent.change(within(addDialog).getByLabelText("Price"), { target: { value: "49" } });
     fireEvent.change(within(addDialog).getByLabelText("Stock"), { target: { value: "8" } });
+    fireEvent.change(within(addDialog).getByLabelText("Reorder point"), { target: { value: "3" } });
+    fireEvent.change(within(addDialog).getByLabelText("Target stock"), { target: { value: "14" } });
     fireEvent.change(within(addDialog).getByLabelText("Description"), { target: { value: "Competition gloves for sparring days." } });
     fireEvent.change(within(addDialog).getByLabelText("Product image"), {
       target: { files: [new File(["glove-image"], "gloves.png", { type: "image/png" })] }
@@ -2172,7 +10863,10 @@ describe("post-login operations app", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Edit Red Sparring Gloves" }));
     const editDialog = screen.getByRole("dialog", { name: "Edit Red Sparring Gloves" });
+    expect(within(editDialog).getByLabelText("Reorder point")).toHaveValue(3);
+    expect(within(editDialog).getByLabelText("Target stock")).toHaveValue(14);
     fireEvent.change(within(editDialog).getByLabelText("Stock"), { target: { value: "12" } });
+    fireEvent.change(within(editDialog).getByLabelText("Target stock"), { target: { value: "16" } });
     fireEvent.click(within(editDialog).getByRole("button", { name: "Save Merchandise Changes" }));
 
     expect(screen.getByText("12 in stock")).toBeInTheDocument();

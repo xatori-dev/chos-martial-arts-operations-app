@@ -1,5 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
+import { isSafeStudyMaterialFile, isSafeTrainingVideoFile } from "./contentSafety";
 import { getProduct, studio } from "./data";
+import { parseOperationsBackupSnapshot, type OperationsBackupData } from "./operationsBackup";
+import { getClassReminderCandidates, getLeadCandidates, getMerchandiseTargetStock, getStudentCelebrationEvents, getStudentProfileIssues, isAttendanceGapFollowUpDue, isBeltTestInviteDue, isLowStockMerchandiseItem, isMilestoneEncouragementDue, isMissedClassFollowUpDue, isNewStudentCheckInDue, isPausedStudentReviewDue, isProfileUpdateRequestDue, isQueuedMessageDeliverable, isStaleOneTimeScheduledClass, isTrialConversionDue } from "./operationsReports";
+import { buildStudentBeltProgress } from "./studentProgress";
 import type {
   AccountRole,
   AccountSession,
@@ -10,6 +14,7 @@ import type {
   Coupon,
   CustomerInfo,
   DirectMessage,
+  LeadReview,
   ManagedAccount,
   ManagerAccessKey,
   MerchandiseItem,
@@ -33,6 +38,7 @@ const keys = {
   orders: "chos.orders.v1",
   bookings: "chos.bookings.v1",
   contacts: "chos.contacts.v1",
+  leadReviews: "chos.operations.leadReviews.v1",
   session: "chos.session.v1",
   accounts: "chos.accounts.v1",
   accountRoles: "chos.accountRoles.v1",
@@ -633,8 +639,8 @@ const seedStudioEvents: StudioEvent[] = [
 ];
 
 const seedMerchandiseItems: MerchandiseItem[] = [
-  { id: "merch-gloves-seed", name: "Youth Boxing Gloves", category: "Gloves", price: 39, stock: 6, description: "Youth 6oz gloves for bag work and sparring prep.", imageLabel: "gloves" },
-  { id: "merch-uniform-seed", name: "White Basic Uniform", category: "Uniforms", price: 39, stock: 10, description: "Starter uniform with Cho's logo patches.", imageLabel: "uniform" }
+  { id: "merch-gloves-seed", name: "Youth Boxing Gloves", category: "Gloves", price: 39, stock: 2, reorderPoint: 3, targetStock: 8, description: "Youth 6oz gloves for bag work and sparring prep.", imageLabel: "gloves" },
+  { id: "merch-uniform-seed", name: "White Basic Uniform", category: "Uniforms", price: 39, stock: 10, reorderPoint: 4, targetStock: 12, description: "Starter uniform with Cho's logo patches.", imageLabel: "uniform" }
 ];
 
 interface Toast {
@@ -646,6 +652,7 @@ interface Toast {
 
 interface AccountRecord {
   email: string;
+  password?: string;
   createdAt: string;
 }
 
@@ -732,6 +739,7 @@ type ManagedAccountInput = {
   notes?: string;
   access?: ManagerAccessKey[];
   studentId?: string;
+  linkedStudent?: StudentRecord;
 };
 
 type ManagerAccountAccess = {
@@ -746,6 +754,8 @@ type MerchandiseInput = {
   category: string;
   price: number;
   stock: number;
+  reorderPoint?: number;
+  targetStock?: number;
   description?: string;
   imageDataUrl?: string;
 };
@@ -783,6 +793,10 @@ type StudyGuideMaterialInput = {
   fileDataUrl: string;
 };
 
+type StudentCheckInResult = StudentCheckIn & {
+  queuedMessage?: MessageLog;
+};
+
 interface AppState {
   cart: CartItem[];
   coupon?: Coupon;
@@ -790,12 +804,15 @@ interface AppState {
   orders: Order[];
   bookings: BookingDetails[];
   contacts: ContactSubmission[];
+  leadReviews: LeadReview[];
   session?: AccountSession;
   accountRole?: AccountRole;
   accounts: AccountRecord[];
+  accountRoles: AccountRoleRecord[];
   managedAccounts: ManagedAccount[];
   currentManagedAccount?: ManagedAccount;
   managerAccountAccess: ManagerAccountAccess;
+  childAccounts: ChildAccount[];
   guardianChildren: ChildAccount[];
   students: StudentRecord[];
   studioClasses: StudioClass[];
@@ -820,19 +837,21 @@ interface AppState {
   clearCart: () => void;
   applyCartCoupon: (code: string) => Coupon;
   clearCoupon: () => void;
-  placeOrder: (customer: CustomerInfo, notes: string) => Order;
+  placeOrder: (customer: CustomerInfo, notes: string) => Order | undefined;
   saveBooking: (booking: BookingDetails) => void;
   saveContact: (contact: ContactSubmission) => void;
   login: (email: string, remembered: boolean, role?: AccountRole) => void;
+  loginRegisteredAccount: (credentials: { username: string; password: string }) => AccountRecord | undefined;
   loginManagedAccount: (credentials: { username: string; password: string }) => ManagedAccount | undefined;
   loginChildAccount: (childId: string) => void;
   loginChildCredentials: (credentials: { username: string; password: string }) => ChildAccount | undefined;
   managedUsernameExists: (username: string) => boolean;
-  childUsernameExists: (username: string) => boolean;
+  childUsernameExists: (username: string, options?: { excludeChildId?: string }) => boolean;
   logout: () => void;
-  register: (email: string) => void;
+  register: (account: { email: string; password: string }) => AccountRecord | undefined;
   setAccountRole: (role: AccountRole) => void;
   createManagedAccount: (account: ManagedAccountInput) => ManagedAccount | undefined;
+  updateManagedAccountStatus: (accountId: string, status: ManagedAccount["status"]) => ManagedAccount | undefined;
   addChildAccount: (child: { name: string; age: string; beltSlug: string; username: string; password: string }) => ChildAccount | undefined;
   updateChildAccount: (childId: string, child: { name: string; age: string; beltSlug: string; username: string; password: string }) => ChildAccount | undefined;
   addOperationsStudent: (student: StudentInput) => StudentRecord | undefined;
@@ -842,6 +861,8 @@ interface AppState {
   updateStudioClass: (classId: string, studioClass: StudioClassInput) => StudioClass | undefined;
   deleteStudioClass: (classId: string) => StudioClass | undefined;
   addScheduledClass: (scheduledClass: { title: string; date: string; time: string; type: string; recurring?: boolean; titleColor?: string; studentId?: string; notes?: string }) => ScheduledClass | undefined;
+  deleteScheduledClass: (scheduledClassId: string) => ScheduledClass | undefined;
+  deletePastOneTimeScheduledClasses: (todayKey: string) => ScheduledClass[];
   addStudioEvent: (event: { title: string; date: string; time: string; details: string; audience: StudioEvent["audience"] }) => StudioEvent | undefined;
   addTrainingVideoFolder: (folder: TrainingVideoFolderInput) => TrainingVideoFolder | undefined;
   addTrainingVideo: (video: TrainingVideoInput) => TrainingVideo | undefined;
@@ -850,9 +871,26 @@ interface AppState {
   addMerchandiseItem: (item: MerchandiseInput) => MerchandiseItem | undefined;
   updateMerchandiseItem: (itemId: string, item: MerchandiseInput) => MerchandiseItem | undefined;
   deleteMerchandiseItem: (itemId: string) => MerchandiseItem | undefined;
-  recordStudentCheckIn: (studentId: string) => StudentCheckIn | undefined;
+  restockLowInventory: () => number;
+  reviewLeadFollowUps: () => number;
+  restoreOperationsBackup: (rawBackup: string) => { restoredRecords: number; restoredSections: number } | undefined;
+  recordStudentCheckIn: (studentId: string) => StudentCheckInResult | undefined;
   sendMissedClassFollowUps: () => number;
+  sendAttendanceGapCheckIns: () => number;
+  sendTrialConversionFollowUps: () => number;
+  sendNewStudentCheckIns: () => number;
+  sendPausedStudentReactivationFollowUps: () => number;
+  sendCelebrationOutreach: () => number;
+  sendProfileUpdateRequests: () => number;
+  sendClassReminders: () => number;
+  sendMilestoneEncouragements: () => number;
+  sendBeltTestInvites: () => number;
+  queueStudentMilestoneEncouragement: (studentId: string) => MessageLog | undefined;
+  queueStudentProfileUpdateRequest: (studentId: string) => MessageLog | undefined;
   sendMarketingBlast: (body: string) => number;
+  sendQueuedTexts: () => number;
+  sendQueuedText: (messageId: string) => MessageLog | undefined;
+  clearStaleQueuedTexts: () => number;
   sendDirectMessage: (message: { senderId: string; senderName: string; recipientId: string; recipientName: string; body: string }) => DirectMessage | undefined;
 }
 
@@ -901,26 +939,62 @@ function useStoredState<T>(key: string, fallback: T) {
   return [value, update] as const;
 }
 
+function isCurrentStudentEnrollment(student: Pick<StudentRecord, "status">) {
+  return (student.status?.trim() || "Active").toLowerCase() !== "inactive";
+}
+
+function hasValidManagedStudentLink(account: Pick<ManagedAccount, "role" | "studentId">, students: readonly Pick<StudentRecord, "id" | "status">[]) {
+  if (account.role !== "student") return true;
+  const studentId = account.studentId?.trim();
+  return Boolean(studentId && students.some((student) => student.id === studentId && isCurrentStudentEnrollment(student)));
+}
+
+function hasValidManagedStudentInputLink(account: Pick<ManagedAccountInput, "role" | "status" | "studentId" | "linkedStudent">, students: readonly Pick<StudentRecord, "id" | "status">[]) {
+  if (account.role !== "student" || (account.status ?? "active") !== "active") return true;
+  const studentId = account.studentId?.trim();
+  const linkedStudent = account.linkedStudent?.id === studentId ? account.linkedStudent : students.find((student) => student.id === studentId);
+  return Boolean(studentId && linkedStudent && isCurrentStudentEnrollment(linkedStudent));
+}
+
 function readPrototypeSession() {
   const session = readStorage<AccountSession | undefined>(keys.session, undefined);
   if (!session?.email) return undefined;
-  if (session.email.toLowerCase() === prototypeManagerLogin.email.toLowerCase()) return session;
-  if (session.email.toLowerCase() === prototypeStudentLogin.email.toLowerCase()) return session;
-  if (session.email.toLowerCase() === prototypeParentLogin.email.toLowerCase()) return session;
+  const normalizedEmail = session.email.toLowerCase();
+  if (normalizedEmail === prototypeManagerLogin.email.toLowerCase()) return session;
+  if (normalizedEmail === prototypeStudentLogin.email.toLowerCase()) return session;
+  if (normalizedEmail === prototypeParentLogin.email.toLowerCase()) return session;
+  const accounts = readStorage<AccountRecord[]>(keys.accounts, []);
   const managedAccounts = readStorage<ManagedAccount[]>(keys.managedAccounts, []);
-  if (managedAccounts.some((account) => account.username.toLowerCase() === session.email.toLowerCase() && account.status !== "inactive")) return session;
   const childAccounts = readStorage<ChildAccount[]>(keys.childAccounts, seedChildAccounts);
-  if (childAccounts.some((child) => child.username.toLowerCase() === session.email.toLowerCase())) return session;
-  if (session.email.toLowerCase().endsWith(".child")) return session;
+  const registeredAccount = accounts.some((account) => account.email.trim().toLowerCase() === normalizedEmail && Boolean(account.password?.trim()));
+  if (registeredAccount && isRegisteredAccountLoginCollision(normalizedEmail, managedAccounts, childAccounts)) {
+    removeStorage(keys.session);
+    return undefined;
+  }
+  if (registeredAccount) return session;
+  const students = readStorage<StudentRecord[]>(keys.students, seedStudents);
+  if (managedAccounts.some((account) => account.username.toLowerCase() === normalizedEmail && account.status !== "inactive" && hasValidManagedStudentLink(account, students))) return session;
+  if (childAccounts.some((child) => child.username.toLowerCase() === normalizedEmail)) return session;
   removeStorage(keys.session);
   return undefined;
 }
 
-function inferPrototypeAccountRole(email: string): AccountRole | undefined {
+function inferBuiltInPrototypeAccountRole(email: string): AccountRole | undefined {
   const normalizedEmail = email.toLowerCase();
   if (normalizedEmail === prototypeManagerLogin.email.toLowerCase()) return "staff";
   if (normalizedEmail === prototypeStudentLogin.email.toLowerCase()) return "student";
   if (normalizedEmail === prototypeParentLogin.email.toLowerCase()) return "guardian";
+  return undefined;
+}
+
+function isBuiltInPrototypeIdentity(email: string) {
+  return Boolean(inferBuiltInPrototypeAccountRole(email.trim().toLowerCase()));
+}
+
+function inferPrototypeAccountRole(email: string): AccountRole | undefined {
+  const builtInRole = inferBuiltInPrototypeAccountRole(email);
+  if (builtInRole) return builtInRole;
+  const normalizedEmail = email.toLowerCase();
   if (normalizedEmail.endsWith(".child")) return "student";
   return undefined;
 }
@@ -942,7 +1016,8 @@ function useSessionState() {
 }
 
 function todayStamp() {
-  return new Date().toISOString().slice(0, 10);
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 }
 
 function createPrototypeId(prefix: string) {
@@ -986,8 +1061,259 @@ function childUsernameFromName(name: string) {
   return `${usernameBase || "student"}.child`;
 }
 
+function isChildUsernameUnavailable(username: string, childAccounts: readonly ChildAccount[], managedAccounts: readonly ManagedAccount[], excludeChildId?: string) {
+  const normalizedUsername = normalizeChildUsername(username);
+  if (!normalizedUsername) return false;
+  const normalizedLower = normalizedUsername.toLowerCase();
+  return (
+    isPrototypeLoginUsername(normalizedUsername) ||
+    managedAccounts.some((account) => account.username.toLowerCase() === normalizedLower) ||
+    childAccounts.some((child) => child.id !== excludeChildId && child.username.toLowerCase() === normalizedLower)
+  );
+}
+
+function isRegisteredAccountLoginCollision(email: string, managedAccounts: readonly Pick<ManagedAccount, "username">[], childAccounts: readonly Pick<ChildAccount, "username">[]) {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return false;
+  return (
+    managedAccounts.some((account) => account.username.trim().toLowerCase() === normalizedEmail) ||
+    childAccounts.some((child) => child.username.trim().toLowerCase() === normalizedEmail)
+  );
+}
+
+function managedAccountCreationKey(account: Pick<ManagedAccount, "displayName" | "username" | "password" | "role" | "status" | "studentId" | "email" | "phone" | "title" | "notes" | "access">) {
+  return [
+    normalizeContactText(account.displayName),
+    normalizeAccountUsername(account.username),
+    account.password.trim(),
+    account.role,
+    account.status,
+    account.studentId?.trim() ?? "",
+    normalizeContactText(account.email ?? ""),
+    normalizeContactText(account.phone ?? ""),
+    normalizeContactText(account.title ?? ""),
+    normalizeContactText(account.notes ?? ""),
+    account.access.join(",")
+  ].join("::");
+}
+
+function childAccountCreationKey(child: Pick<ChildAccount, "parentEmail" | "name" | "username" | "password" | "age" | "beltSlug">) {
+  return [
+    child.parentEmail.trim().toLowerCase(),
+    normalizeContactText(child.name),
+    normalizeChildUsername(child.username),
+    child.password?.trim() ?? "",
+    child.age.trim(),
+    child.beltSlug
+  ].join("::");
+}
+
+function registeredAccountCreationKey(account: Pick<AccountRecord, "email" | "password">) {
+  return [account.email.trim().toLowerCase(), account.password?.trim() ?? ""].join("::");
+}
+
 function studentFullName(student: Pick<StudentRecord, "firstName" | "lastName">) {
   return `${student.firstName} ${student.lastName}`.trim();
+}
+
+function isCurrentOperationsStudent(student: StudentRecord) {
+  return isCurrentStudentEnrollment(student);
+}
+
+function isValidBookingDetails(booking: BookingDetails) {
+  return (
+    Number.isInteger(booking.persons) &&
+    booking.persons > 0 &&
+    Boolean(booking.date.trim()) &&
+    Boolean(booking.time.trim()) &&
+    booking.timezone === "America/Chicago"
+  );
+}
+
+function normalizeBookingDetails(booking: BookingDetails): BookingDetails {
+  return {
+    persons: booking.persons,
+    date: booking.date.trim(),
+    time: booking.time.trim(),
+    timezone: booking.timezone
+  };
+}
+
+function bookingDetailsKey(booking: BookingDetails) {
+  const normalizedBooking = normalizeBookingDetails(booking);
+  return [normalizedBooking.date, normalizedBooking.time, normalizedBooking.timezone, normalizedBooking.persons].join("::");
+}
+
+function isValidContactSubmission(contact: ContactSubmission) {
+  return Boolean(contact.name.trim() && contact.message.trim() && (contact.email.trim() || contact.phone.trim()));
+}
+
+function normalizeMessagePhone(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits || value.trim().toLowerCase();
+}
+
+function normalizeContactText(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function studioClassCreationKey(studioClass: Pick<StudioClass, "name" | "daysOfWeek" | "startTime" | "endTime" | "recurring" | "notes">) {
+  return [
+    normalizeContactText(studioClass.name),
+    [...studioClass.daysOfWeek].sort((left, right) => left - right).join(","),
+    studioClass.startTime.trim(),
+    studioClass.endTime.trim(),
+    studioClass.recurring === false ? "calendar-off" : "recurring",
+    normalizeContactText(studioClass.notes ?? "")
+  ].join("::");
+}
+
+function scheduledClassCreationKey(scheduledClass: Pick<ScheduledClass, "title" | "date" | "time" | "type" | "recurring" | "studentId" | "notes">) {
+  return [
+    normalizeContactText(scheduledClass.title),
+    scheduledClass.date.trim(),
+    scheduledClass.time.trim(),
+    scheduledClass.type.trim().toLowerCase(),
+    scheduledClass.recurring ? "recurring" : "single",
+    scheduledClass.studentId?.trim() ?? "",
+    normalizeContactText(scheduledClass.notes ?? "")
+  ].join("::");
+}
+
+function studioEventCreationKey(event: Pick<StudioEvent, "title" | "date" | "time" | "details" | "audience">) {
+  return [
+    normalizeContactText(event.title),
+    event.date.trim(),
+    event.time.trim(),
+    normalizeContactText(event.details),
+    event.audience
+  ].join("::");
+}
+
+function merchandiseItemCatalogKey(item: Pick<MerchandiseItem, "name" | "category"> | Pick<MerchandiseInput, "name" | "category">) {
+  return [normalizeContactText(item.name), normalizeContactText(item.category)].join("::");
+}
+
+function trainingVideoFolderCreationKey(folder: Pick<TrainingVideoFolder, "name" | "subject"> | Pick<TrainingVideoFolderInput, "name" | "subject">) {
+  return [normalizeContactText(folder.name), normalizeContactText(folder.subject)].join("::");
+}
+
+function trainingVideoCreationKey(video: Pick<TrainingVideo, "folderId" | "title" | "fileName" | "mimeType" | "videoDataUrl"> | Pick<TrainingVideoInput, "folderId" | "title" | "fileName" | "mimeType" | "videoDataUrl">) {
+  return [video.folderId.trim(), normalizeContactText(video.title), normalizeContactText(video.fileName), video.mimeType.trim().toLowerCase(), video.videoDataUrl.trim()].join("::");
+}
+
+function studyGuideFolderCreationKey(folder: Pick<StudyGuideFolder, "name" | "subject" | "parentId"> | Pick<StudyGuideFolderInput, "name" | "subject" | "parentId">) {
+  return [normalizeContactText(folder.name), normalizeContactText(folder.subject), folder.parentId?.trim() ?? ""].join("::");
+}
+
+function studyGuideMaterialCreationKey(material: Pick<StudyGuideMaterial, "folderId" | "title" | "fileName" | "mimeType" | "fileDataUrl"> | Pick<StudyGuideMaterialInput, "folderId" | "title" | "fileName" | "mimeType" | "fileDataUrl">) {
+  return [material.folderId.trim(), normalizeContactText(material.title), normalizeContactText(material.fileName), material.mimeType.trim().toLowerCase(), material.fileDataUrl.trim()].join("::");
+}
+
+function contactSubmissionDateKey(contact: Pick<ContactSubmission, "createdAt">) {
+  const createdAt = contact.createdAt.trim();
+  return createdAt.includes("T") ? createdAt.slice(0, 10) : createdAt;
+}
+
+function contactSubmissionKey(contact: ContactSubmission) {
+  return [
+    contactSubmissionDateKey(contact),
+    normalizeContactText(contact.name),
+    contact.email.trim().toLowerCase(),
+    normalizeMessagePhone(contact.phone),
+    normalizeContactText(contact.message)
+  ].join("::");
+}
+
+function studentEnrollmentKey(student: Pick<StudentRecord, "firstName" | "lastName" | "email" | "phone">) {
+  return [
+    studentFullName(student).trim().toLowerCase(),
+    student.email.trim().toLowerCase(),
+    normalizeMessagePhone(student.phone)
+  ].join("::");
+}
+
+function isMessageLogLinkedToStudent(message: Pick<MessageLog, "recipientName" | "recipientPhone">, student: StudentRecord) {
+  return (
+    message.recipientName.trim().toLowerCase() === studentFullName(student).trim().toLowerCase() &&
+    normalizeMessagePhone(message.recipientPhone) === normalizeMessagePhone(student.phone)
+  );
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function replaceWholeWord(value: string, search: string, replacement: string) {
+  const cleanSearch = search.trim();
+  const cleanReplacement = replacement.trim();
+  if (!cleanSearch || cleanSearch === cleanReplacement) return value;
+  return value.replace(new RegExp(`\\b${escapeRegExp(cleanSearch)}\\b`, "g"), cleanReplacement);
+}
+
+function retargetQueuedMessageBody(body: string, previousStudent: StudentRecord, updatedStudent: StudentRecord) {
+  const previousName = studentFullName(previousStudent);
+  const updatedName = studentFullName(updatedStudent);
+  const fullNameRetargeted = previousName === updatedName ? body : body.split(previousName).join(updatedName);
+  return replaceWholeWord(fullNameRetargeted, previousStudent.firstName, updatedStudent.firstName);
+}
+
+function retargetQueuedMessageForStudent(message: MessageLog, previousStudent: StudentRecord, updatedStudent: StudentRecord): MessageLog {
+  if (message.status !== "queued" || !isMessageLogLinkedToStudent(message, previousStudent)) return message;
+  return {
+    ...message,
+    recipientName: studentFullName(updatedStudent),
+    recipientPhone: updatedStudent.phone,
+    body: retargetQueuedMessageBody(message.body, previousStudent, updatedStudent)
+  };
+}
+
+function managedStudentAccountDetails(student: StudentRecord) {
+  return {
+    displayName: studentFullName(student),
+    email: student.email,
+    phone: student.phone,
+    title: `${student.beltRank} Belt Student`
+  };
+}
+
+function isDirectMessageParticipantAvailable(participantId: string, students: readonly StudentRecord[]) {
+  const cleanParticipantId = participantId.trim();
+  if (!cleanParticipantId) return false;
+  if (cleanParticipantId.startsWith("direct-staff-")) return true;
+  const studentId = cleanParticipantId.startsWith("parent-") ? cleanParticipantId.slice("parent-".length) : cleanParticipantId;
+  return students.some((student) => student.id === studentId && isCurrentOperationsStudent(student));
+}
+
+function isDirectMessageLinkedToStudent(message: Pick<DirectMessage, "senderId" | "recipientId">, studentId: string) {
+  const studentParticipantIds = new Set([studentId, `parent-${studentId}`]);
+  return studentParticipantIds.has(message.senderId.trim()) || studentParticipantIds.has(message.recipientId.trim());
+}
+
+function directMessageParticipantNameForStudent(participantId: string, student: StudentRecord) {
+  const cleanParticipantId = participantId.trim();
+  const studentName = studentFullName(student);
+  if (cleanParticipantId === student.id) return studentName;
+  if (cleanParticipantId === `parent-${student.id}`) return student.guardianName?.trim() || `${studentName} Parent/Guardian`;
+  return undefined;
+}
+
+function retargetDirectMessageForStudent(message: DirectMessage, student: StudentRecord): DirectMessage {
+  const senderName = directMessageParticipantNameForStudent(message.senderId, student);
+  const recipientName = directMessageParticipantNameForStudent(message.recipientId, student);
+  if (!senderName && !recipientName) return message;
+  return {
+    ...message,
+    senderName: senderName ?? message.senderName,
+    recipientName: recipientName ?? message.recipientName
+  };
+}
+
+function retargetCheckInForStudent(checkIn: StudentCheckIn, student: StudentRecord): StudentCheckIn {
+  if (checkIn.studentId !== student.id) return checkIn;
+  const studentName = studentFullName(student);
+  if (checkIn.studentName === studentName) return checkIn;
+  return { ...checkIn, studentName };
 }
 
 function splitStudentName(name: string) {
@@ -1024,6 +1350,7 @@ function normalizeStudentInput(student: StudentInput, fallbackEnrollmentDate = t
     program: student.program?.trim() || "Youth Foundations",
     status: student.status?.trim() || "Active",
     beltRank,
+    profileUpdatedAt: todayStamp(),
     joinedAt: enrollmentDate,
     notes: student.notes?.trim()
   };
@@ -1037,6 +1364,51 @@ function missedClassTextForStudent(student: StudentRecord) {
   return `We missed you in class, ${student.firstName}. You missed ${student.missedClassCount} classes. Reply or call ${studio.phone} so we can help you get back on schedule.`;
 }
 
+function trialConversionTextForStudent(student: StudentRecord) {
+  return `Hi ${student.firstName}, we would love to help you choose the best Cho's program after your trial. Reply or call ${studio.phone} and we will help with the next step.`;
+}
+
+function newStudentCheckInTextForStudent(student: StudentRecord) {
+  const programLabel = student.program?.trim() ? ` in ${student.program.trim()}` : "";
+  return `Hi ${student.firstName}, how is your first week${programLabel} at Cho's Martial Arts going? Reply or call ${studio.phone} if we can help with schedule, gear, or training questions.`;
+}
+
+function attendanceGapCheckInTextForStudent(student: StudentRecord) {
+  return `Hi ${student.firstName}, we missed seeing you at Cho's Martial Arts. Reply or call ${studio.phone} if you need help finding a class time or getting back on the mat.`;
+}
+
+function pausedStudentTextForStudent(student: StudentRecord) {
+  return `Hi ${student.firstName}, we would love to help you get back on the mat. Reply or call ${studio.phone} and we will find the right class time.`;
+}
+
+function beltTestInviteTextForStudent(student: StudentRecord) {
+  return `Hi ${student.firstName}, your class count and consistency show you may be ready for belt testing review. Reply or call ${studio.phone} and we will confirm the next step.`;
+}
+
+function milestoneEncouragementTextForStudent(student: StudentRecord) {
+  const progress = buildStudentBeltProgress(student);
+  const nextRankLabel = progress.nextRankName ? `${progress.nextRankName} Belt` : "your next rank";
+  return `Hi ${student.firstName}, you are ${progress.progressPercent}% of the way to your next belt milestone for ${nextRankLabel}. Keep training strong and ask your instructor what to focus on next.`;
+}
+
+function celebrationTextForStudent(student: StudentRecord, event: ReturnType<typeof getStudentCelebrationEvents>[number]) {
+  if (event.reason === "birthday") {
+    return `Hi ${student.firstName}, Cho's Martial Arts is celebrating your birthday this week. Keep training strong and enjoy your special day.`;
+  }
+  const yearLabel = event.years === 1 ? "1 year" : `${event.years ?? 0} years`;
+  return `Hi ${student.firstName}, your Cho's training anniversary is this week. Thank you for training with us for ${yearLabel}; we are proud of your progress.`;
+}
+
+function profileUpdateTextForStudent(student: StudentRecord) {
+  const issues = getStudentProfileIssues(student);
+  const issueLabel = issues.length === 1 ? issues[0].toLowerCase() : "profile information";
+  return `Hi ${student.firstName}, Cho's Martial Arts is updating student profile information for safety and communication. Please reply with your current ${issueLabel} or call ${studio.phone}.`;
+}
+
+function classReminderTextForStudent(student: StudentRecord, reminder: ReturnType<typeof getClassReminderCandidates>[number]) {
+  return `Hi ${student.firstName}, reminder: ${reminder.title} is scheduled for ${reminder.date} at ${reminder.time} at Cho's Martial Arts. Reply or call ${studio.phone} if you need help.`;
+}
+
 function makeMessageLog(input: Omit<MessageLog, "id" | "createdAt" | "status">): MessageLog {
   return {
     ...input,
@@ -1046,11 +1418,144 @@ function makeMessageLog(input: Omit<MessageLog, "id" | "createdAt" | "status">):
   };
 }
 
+function messageLogDateKey(message: Pick<MessageLog, "createdAt">) {
+  const createdAt = message.createdAt.trim();
+  return createdAt.includes("T") ? createdAt.slice(0, 10) : createdAt;
+}
+
+function messageLogOutreachKey(message: Pick<MessageLog, "kind" | "recipientName" | "recipientPhone" | "body" | "createdAt">) {
+  return [
+    messageLogDateKey(message),
+    message.kind,
+    message.recipientName.trim().toLowerCase(),
+    normalizeMessagePhone(message.recipientPhone),
+    message.body.trim()
+  ].join("::");
+}
+
+function directMessageDateKey(message: Pick<DirectMessage, "createdAt">) {
+  const createdAt = message.createdAt.trim();
+  return createdAt.includes("T") ? createdAt.slice(0, 10) : createdAt;
+}
+
+function directMessageOutboxKey(message: Pick<DirectMessage, "threadId" | "senderId" | "recipientId" | "body" | "createdAt" | "status">) {
+  return [
+    directMessageDateKey(message),
+    message.threadId.trim(),
+    message.senderId.trim(),
+    message.recipientId.trim(),
+    message.status,
+    message.body.trim()
+  ].join("::");
+}
+
+function prependUniqueMessageLogs(logs: readonly MessageLog[], current: readonly MessageLog[]) {
+  const seenKeys = new Set(current.map(messageLogOutreachKey));
+  const inserted = logs.filter((log) => {
+    const key = messageLogOutreachKey(log);
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
+  });
+  return {
+    inserted,
+    next: inserted.length ? [...inserted, ...current] : [...current]
+  };
+}
+
+function cleanNonnegativeInteger(value: number | undefined, fallback: number) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.floor(value as number));
+}
+
+function cleanMerchandiseThresholds(item: MerchandiseInput) {
+  const reorderPoint = cleanNonnegativeInteger(item.reorderPoint, 3);
+  const targetStock = cleanNonnegativeInteger(item.targetStock, 8);
+  return {
+    reorderPoint,
+    targetStock: Math.max(targetStock, reorderPoint + 1)
+  };
+}
+
+function restoreRegisteredAccountPasswords(restoredAccounts: OperationsBackupData["accounts"], currentAccounts: AccountRecord[]) {
+  const currentByEmail = new Map(currentAccounts.map((account) => [account.email.trim().toLowerCase(), account]));
+  return restoredAccounts.map((account) => {
+    const restoredAccount = account as AccountRecord;
+    return {
+      ...restoredAccount,
+      password: currentByEmail.get(restoredAccount.email.trim().toLowerCase())?.password
+    };
+  }) as AccountRecord[];
+}
+
+function restoreManagedAccountPasswords(restoredAccounts: OperationsBackupData["managedAccounts"], currentAccounts: ManagedAccount[]) {
+  const currentById = new Map(currentAccounts.map((account) => [account.id, account]));
+  const currentByUsername = new Map(currentAccounts.map((account) => [account.username.toLowerCase(), account]));
+  return restoredAccounts.map((account) => ({
+    ...account,
+    password: currentById.get(account.id)?.password ?? currentByUsername.get(account.username.toLowerCase())?.password ?? ""
+  })) as ManagedAccount[];
+}
+
+function restoreChildAccountPasswords(restoredAccounts: OperationsBackupData["childAccounts"], currentAccounts: ChildAccount[]) {
+  const currentById = new Map(currentAccounts.map((account) => [account.id, account]));
+  const currentByUsername = new Map(currentAccounts.map((account) => [account.username.toLowerCase(), account]));
+  return restoredAccounts.map(({ hasSavedPassword: _hasSavedPassword, ...account }) => ({
+    ...account,
+    password: currentById.get(account.id)?.password ?? currentByUsername.get(account.username.toLowerCase())?.password
+  })) as ChildAccount[];
+}
+
+function assertRestoredLoginPasswordsAvailable(
+  restoredAccounts: AccountRecord[],
+  restoredManagedAccounts: ManagedAccount[],
+  restoredChildAccounts: ChildAccount[],
+  restoredChildAccountBackups: OperationsBackupData["childAccounts"],
+  restoredAccountRoles: readonly AccountRoleRecord[]
+) {
+  const restoredStudentRoleUsernames = new Set(
+    restoredAccountRoles
+      .filter((record) => record.role === "student")
+      .map((record) => record.email.trim().toLowerCase())
+  );
+  const passwordProtectedChildIds = new Set(
+    restoredChildAccountBackups
+      .filter((child) => child.hasSavedPassword || restoredStudentRoleUsernames.has(child.username.trim().toLowerCase()))
+      .map((child) => child.id)
+  );
+  const missingRegisteredPasswords = restoredAccounts.some((account) => !account.password?.trim());
+  const missingManagedPasswords = restoredManagedAccounts.some((account) => !account.password.trim());
+  const missingChildPasswords = restoredChildAccounts.some((child) => passwordProtectedChildIds.has(child.id) && !child.password?.trim());
+  if (missingRegisteredPasswords || missingManagedPasswords || missingChildPasswords) {
+    throw new Error("Backup includes custom login accounts whose passwords are not available locally. Exported backups redact saved passwords, so import on a device that already has those logins saved or recreate the custom logins before importing.");
+  }
+}
+
+function isSessionAvailableAfterRestore(
+  currentSession: AccountSession | undefined,
+  restoredAccounts: AccountRecord[],
+  restoredManagedAccounts: ManagedAccount[],
+  restoredChildAccounts: ChildAccount[],
+  restoredStudents: readonly StudentRecord[]
+) {
+  const normalizedEmail = currentSession?.email.trim().toLowerCase();
+  if (!normalizedEmail) return false;
+  if (inferBuiltInPrototypeAccountRole(normalizedEmail)) return true;
+  if (restoredAccounts.some((account) => account.email.trim().toLowerCase() === normalizedEmail && Boolean(account.password?.trim()))) {
+    return true;
+  }
+  if (restoredManagedAccounts.some((account) => account.username.toLowerCase() === normalizedEmail && account.status !== "inactive" && hasValidManagedStudentLink(account, restoredStudents))) {
+    return true;
+  }
+  return restoredChildAccounts.some((child) => child.username.toLowerCase() === normalizedEmail);
+}
+
 export function AppStateProvider({ children }: PropsWithChildren) {
   const [cart, setCart] = useStoredState<CartItem[]>(keys.cart, []);
   const [orders, setOrders] = useStoredState<Order[]>(keys.orders, []);
   const [bookings, setBookings] = useStoredState<BookingDetails[]>(keys.bookings, []);
   const [contacts, setContacts] = useStoredState<ContactSubmission[]>(keys.contacts, []);
+  const [leadReviews, setLeadReviews] = useStoredState<LeadReview[]>(keys.leadReviews, []);
   const [session, setSession] = useSessionState();
   const [accounts, setAccounts] = useStoredState<AccountRecord[]>(keys.accounts, []);
   const [accountRoles, setAccountRoles] = useStoredState<AccountRoleRecord[]>(keys.accountRoles, []);
@@ -1072,6 +1577,274 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const [studyGuideMaterials, setStudyGuideMaterials] = useStoredState<StudyGuideMaterial[]>(keys.studyGuideMaterials, []);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastTimersRef = useRef<Map<string, number>>(new Map());
+  const cartRef = useRef(cart);
+  const ordersRef = useRef(orders);
+  const bookingsRef = useRef(bookings);
+  const contactsRef = useRef(contacts);
+  const accountsRef = useRef(accounts);
+  const studioClassesRef = useRef(studioClasses);
+  const scheduledClassesRef = useRef(scheduledClasses);
+  const studioEventsRef = useRef(studioEvents);
+  const studentsRef = useRef(students);
+  const checkInsRef = useRef(checkIns);
+  const messageLogsRef = useRef(messageLogs);
+  const directMessagesRef = useRef(directMessages);
+  const leadReviewsRef = useRef(leadReviews);
+  const managedAccountsRef = useRef(managedAccounts);
+  const childAccountsRef = useRef(childAccounts);
+  const merchandiseItemsRef = useRef(merchandiseItems);
+  const trainingVideoFoldersRef = useRef(trainingVideoFolders);
+  const trainingVideosRef = useRef(trainingVideos);
+  const studyGuideFoldersRef = useRef(studyGuideFolders);
+  const studyGuideMaterialsRef = useRef(studyGuideMaterials);
+
+  useEffect(() => {
+    cartRef.current = cart;
+  }, [cart]);
+
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
+
+  useEffect(() => {
+    bookingsRef.current = bookings;
+  }, [bookings]);
+
+  useEffect(() => {
+    contactsRef.current = contacts;
+  }, [contacts]);
+
+  useEffect(() => {
+    accountsRef.current = accounts;
+  }, [accounts]);
+
+  useEffect(() => {
+    studioClassesRef.current = studioClasses;
+  }, [studioClasses]);
+
+  useEffect(() => {
+    scheduledClassesRef.current = scheduledClasses;
+  }, [scheduledClasses]);
+
+  useEffect(() => {
+    studioEventsRef.current = studioEvents;
+  }, [studioEvents]);
+
+  useEffect(() => {
+    trainingVideoFoldersRef.current = trainingVideoFolders;
+  }, [trainingVideoFolders]);
+
+  useEffect(() => {
+    trainingVideosRef.current = trainingVideos;
+  }, [trainingVideos]);
+
+  useEffect(() => {
+    studyGuideFoldersRef.current = studyGuideFolders;
+  }, [studyGuideFolders]);
+
+  useEffect(() => {
+    studyGuideMaterialsRef.current = studyGuideMaterials;
+  }, [studyGuideMaterials]);
+
+  const updateCartState = useCallback(
+    (next: CartItem[] | ((current: CartItem[]) => CartItem[])) => {
+      const current = cartRef.current;
+      const resolved = typeof next === "function" ? (next as (currentCart: CartItem[]) => CartItem[])(current) : next;
+      if (resolved === current) return resolved;
+      cartRef.current = resolved;
+      setCart(resolved);
+      return resolved;
+    },
+    [setCart]
+  );
+
+  const updateOrdersState = useCallback(
+    (next: Order[] | ((current: Order[]) => Order[])) => {
+      const current = ordersRef.current;
+      const resolved = typeof next === "function" ? (next as (currentOrders: Order[]) => Order[])(current) : next;
+      if (resolved === current) return resolved;
+      ordersRef.current = resolved;
+      setOrders(resolved);
+      return resolved;
+    },
+    [setOrders]
+  );
+
+  const updateBookingsState = useCallback(
+    (next: BookingDetails[] | ((current: BookingDetails[]) => BookingDetails[])) => {
+      const current = bookingsRef.current;
+      const resolved = typeof next === "function" ? (next as (currentBookings: BookingDetails[]) => BookingDetails[])(current) : next;
+      if (resolved === current) return resolved;
+      bookingsRef.current = resolved;
+      setBookings(resolved);
+      return resolved;
+    },
+    [setBookings]
+  );
+
+  const updateAccountsState = useCallback(
+    (next: AccountRecord[] | ((current: AccountRecord[]) => AccountRecord[])) => {
+      const current = accountsRef.current;
+      const resolved = typeof next === "function" ? (next as (currentAccounts: AccountRecord[]) => AccountRecord[])(current) : next;
+      if (resolved === current) return resolved;
+      accountsRef.current = resolved;
+      setAccounts(resolved);
+      return resolved;
+    },
+    [setAccounts]
+  );
+
+  const updateStudioClassesState = useCallback(
+    (next: StudioClass[] | ((current: StudioClass[]) => StudioClass[])) => {
+      const current = studioClassesRef.current;
+      const resolved = typeof next === "function" ? (next as (currentClasses: StudioClass[]) => StudioClass[])(current) : next;
+      if (resolved === current) return resolved;
+      studioClassesRef.current = resolved;
+      setStudioClasses(resolved);
+      return resolved;
+    },
+    [setStudioClasses]
+  );
+
+  const updateScheduledClassesState = useCallback(
+    (next: ScheduledClass[] | ((current: ScheduledClass[]) => ScheduledClass[])) => {
+      const current = scheduledClassesRef.current;
+      const resolved = typeof next === "function" ? (next as (currentClasses: ScheduledClass[]) => ScheduledClass[])(current) : next;
+      if (resolved === current) return resolved;
+      scheduledClassesRef.current = resolved;
+      setScheduledClasses(resolved);
+      return resolved;
+    },
+    [setScheduledClasses]
+  );
+
+  const updateStudioEventsState = useCallback(
+    (next: StudioEvent[] | ((current: StudioEvent[]) => StudioEvent[])) => {
+      const current = studioEventsRef.current;
+      const resolved = typeof next === "function" ? (next as (currentEvents: StudioEvent[]) => StudioEvent[])(current) : next;
+      if (resolved === current) return resolved;
+      studioEventsRef.current = resolved;
+      setStudioEvents(resolved);
+      return resolved;
+    },
+    [setStudioEvents]
+  );
+
+  const updateManagedAccountsState = useCallback(
+    (next: ManagedAccount[] | ((current: ManagedAccount[]) => ManagedAccount[])) => {
+      const current = managedAccountsRef.current;
+      const resolved = typeof next === "function" ? (next as (currentAccounts: ManagedAccount[]) => ManagedAccount[])(current) : next;
+      if (resolved === current) return resolved;
+      managedAccountsRef.current = resolved;
+      setManagedAccounts(resolved);
+      return resolved;
+    },
+    [setManagedAccounts]
+  );
+
+  const updateChildAccountsState = useCallback(
+    (next: ChildAccount[] | ((current: ChildAccount[]) => ChildAccount[])) => {
+      const current = childAccountsRef.current;
+      const resolved = typeof next === "function" ? (next as (currentAccounts: ChildAccount[]) => ChildAccount[])(current) : next;
+      if (resolved === current) return resolved;
+      childAccountsRef.current = resolved;
+      setChildAccounts(resolved);
+      return resolved;
+    },
+    [setChildAccounts]
+  );
+
+  const updateMerchandiseItemsState = useCallback(
+    (next: MerchandiseItem[] | ((current: MerchandiseItem[]) => MerchandiseItem[])) => {
+      const current = merchandiseItemsRef.current;
+      const resolved = typeof next === "function" ? (next as (currentItems: MerchandiseItem[]) => MerchandiseItem[])(current) : next;
+      if (resolved === current) return resolved;
+      merchandiseItemsRef.current = resolved;
+      setMerchandiseItems(resolved);
+      return resolved;
+    },
+    [setMerchandiseItems]
+  );
+
+  const updateTrainingVideoFoldersState = useCallback(
+    (next: TrainingVideoFolder[] | ((current: TrainingVideoFolder[]) => TrainingVideoFolder[])) => {
+      const current = trainingVideoFoldersRef.current;
+      const resolved = typeof next === "function" ? (next as (currentFolders: TrainingVideoFolder[]) => TrainingVideoFolder[])(current) : next;
+      if (resolved === current) return resolved;
+      trainingVideoFoldersRef.current = resolved;
+      setTrainingVideoFolders(resolved);
+      return resolved;
+    },
+    [setTrainingVideoFolders]
+  );
+
+  const updateTrainingVideosState = useCallback(
+    (next: TrainingVideo[] | ((current: TrainingVideo[]) => TrainingVideo[])) => {
+      const current = trainingVideosRef.current;
+      const resolved = typeof next === "function" ? (next as (currentVideos: TrainingVideo[]) => TrainingVideo[])(current) : next;
+      if (resolved === current) return resolved;
+      trainingVideosRef.current = resolved;
+      setTrainingVideos(resolved);
+      return resolved;
+    },
+    [setTrainingVideos]
+  );
+
+  const updateStudyGuideFoldersState = useCallback(
+    (next: StudyGuideFolder[] | ((current: StudyGuideFolder[]) => StudyGuideFolder[])) => {
+      const current = studyGuideFoldersRef.current;
+      const resolved = typeof next === "function" ? (next as (currentFolders: StudyGuideFolder[]) => StudyGuideFolder[])(current) : next;
+      if (resolved === current) return resolved;
+      studyGuideFoldersRef.current = resolved;
+      setStudyGuideFolders(resolved);
+      return resolved;
+    },
+    [setStudyGuideFolders]
+  );
+
+  const updateStudyGuideMaterialsState = useCallback(
+    (next: StudyGuideMaterial[] | ((current: StudyGuideMaterial[]) => StudyGuideMaterial[])) => {
+      const current = studyGuideMaterialsRef.current;
+      const resolved = typeof next === "function" ? (next as (currentMaterials: StudyGuideMaterial[]) => StudyGuideMaterial[])(current) : next;
+      if (resolved === current) return resolved;
+      studyGuideMaterialsRef.current = resolved;
+      setStudyGuideMaterials(resolved);
+      return resolved;
+    },
+    [setStudyGuideMaterials]
+  );
+
+  useEffect(() => {
+    studentsRef.current = students;
+  }, [students]);
+
+  useEffect(() => {
+    checkInsRef.current = checkIns;
+  }, [checkIns]);
+
+  useEffect(() => {
+    messageLogsRef.current = messageLogs;
+  }, [messageLogs]);
+
+  useEffect(() => {
+    directMessagesRef.current = directMessages;
+  }, [directMessages]);
+
+  useEffect(() => {
+    leadReviewsRef.current = leadReviews;
+  }, [leadReviews]);
+
+  useEffect(() => {
+    managedAccountsRef.current = managedAccounts;
+  }, [managedAccounts]);
+
+  useEffect(() => {
+    childAccountsRef.current = childAccounts;
+  }, [childAccounts]);
+
+  useEffect(() => {
+    merchandiseItemsRef.current = merchandiseItems;
+  }, [merchandiseItems]);
 
   const showToast = useCallback((message: string, actionLabel?: string, onAction?: () => void) => {
     const id = createPrototypeId("toast");
@@ -1098,28 +1871,64 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     []
   );
 
+  const appendUniqueMessageLogs = useCallback(
+    (logs: readonly MessageLog[]) => {
+      const { inserted, next } = prependUniqueMessageLogs(logs, messageLogsRef.current);
+      if (inserted.length) {
+        messageLogsRef.current = next;
+        setMessageLogs(next);
+      }
+      return inserted;
+    },
+    [setMessageLogs]
+  );
+
+  const findExistingMessageLog = useCallback(
+    (log: MessageLog) => messageLogsRef.current.find((message) => messageLogOutreachKey(message) === messageLogOutreachKey(log)),
+    []
+  );
+
   const totals = useMemo(() => calculateTotals(cart, coupon), [cart, coupon]);
   const currentManagedAccount = useMemo(() => {
     if (!session) return undefined;
     const normalizedEmail = session.email.toLowerCase();
-    return managedAccounts.find((account) => account.username.toLowerCase() === normalizedEmail && account.status !== "inactive");
-  }, [managedAccounts, session]);
+    return managedAccounts.find((account) => account.username.toLowerCase() === normalizedEmail && account.status !== "inactive" && hasValidManagedStudentLink(account, students));
+  }, [managedAccounts, session, students]);
+  const currentRegisteredAccount = useMemo(() => {
+    if (!session) return undefined;
+    const normalizedEmail = session.email.toLowerCase();
+    return accounts.find((account) => account.email.trim().toLowerCase() === normalizedEmail && Boolean(account.password?.trim()));
+  }, [accounts, session]);
+  const currentChildAccount = useMemo(() => {
+    if (!session) return undefined;
+    const normalizedEmail = session.email.toLowerCase();
+    return childAccounts.find((child) => child.username.toLowerCase() === normalizedEmail);
+  }, [childAccounts, session]);
   const accountRole = useMemo(() => {
     if (!session) return undefined;
     const normalizedEmail = session.email.toLowerCase();
-    return accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role ?? currentManagedAccount?.role ?? inferPrototypeAccountRole(session.email);
-  }, [accountRoles, currentManagedAccount, session]);
+    const registeredRole: AccountRole | undefined = currentRegisteredAccount ? "guardian" : undefined;
+    const childRole: AccountRole | undefined = currentChildAccount ? "student" : undefined;
+    return inferBuiltInPrototypeAccountRole(session.email) ?? currentManagedAccount?.role ?? registeredRole ?? childRole ?? accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role ?? inferPrototypeAccountRole(session.email);
+  }, [accountRoles, currentChildAccount, currentManagedAccount, currentRegisteredAccount, session]);
   const managerAccountAccess = useMemo<ManagerAccountAccess>(() => {
     const isManagerOwner = session?.email.toLowerCase() === prototypeManagerLogin.email.toLowerCase();
     const normalizedEmail = session?.email.toLowerCase();
     const storedRole = normalizedEmail ? accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role : undefined;
+    const builtInRole = normalizedEmail ? inferBuiltInPrototypeAccountRole(normalizedEmail) : undefined;
     const allowedTools = isManagerOwner
       ? managerAccessKeys
-      : currentManagedAccount?.role === "staff"
-        ? normalizeManagerAccess(currentManagedAccount.access)
-        : storedRole === "staff"
-          ? defaultStaffAccess
-        : [];
+      : currentManagedAccount
+        ? currentManagedAccount.role === "staff"
+          ? normalizeManagerAccess(currentManagedAccount.access)
+          : []
+        : currentRegisteredAccount
+          ? []
+          : currentChildAccount
+            ? []
+            : !builtInRole && storedRole === "staff"
+              ? defaultStaffAccess
+              : [];
 
     return {
       isManagerOwner,
@@ -1127,7 +1936,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       canGrantCreateAccess: isManagerOwner,
       allowedTools
     };
-  }, [accountRoles, currentManagedAccount, session]);
+  }, [accountRoles, currentChildAccount, currentManagedAccount, currentRegisteredAccount, session]);
   const guardianChildren = useMemo(
     () => (session ? childAccounts.filter((child) => child.parentEmail.toLowerCase() === session.email.toLowerCase()) : []),
     [childAccounts, session]
@@ -1137,8 +1946,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     (email: string, role: AccountRole) => {
       setAccountRoles((current) => {
         const normalizedEmail = email.toLowerCase();
+        const authoritativeRole = inferBuiltInPrototypeAccountRole(normalizedEmail) ?? role;
         const existing = current.some((record) => record.email.toLowerCase() === normalizedEmail);
-        return existing ? current.map((record) => (record.email.toLowerCase() === normalizedEmail ? { ...record, role } : record)) : [...current, { email, role }];
+        return existing
+          ? current.map((record) => (record.email.toLowerCase() === normalizedEmail ? { ...record, role: authoritativeRole } : record))
+          : [...current, { email, role: authoritativeRole }];
       });
     },
     [setAccountRoles]
@@ -1147,8 +1959,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const addProductToCart = useCallback(
     (productSlug: string, quantity: number) => {
       const product = getProduct(productSlug);
-      if (!product) return;
-      setCart((current) => {
+      if (!product || !Number.isFinite(quantity) || quantity <= 0) return;
+      updateCartState((current) => {
         const existing = current.find((item) => item.productSlug === productSlug && !item.booking);
         if (existing) {
           return current.map((item) => (item.id === existing.id ? { ...item, quantity: item.quantity + quantity } : item));
@@ -1166,55 +1978,67 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         ];
       });
     },
-    [setCart]
+    [updateCartState]
   );
 
   const saveBooking = useCallback(
     (booking: BookingDetails) => {
-      setBookings((current) => [...current, booking]);
+      if (!isValidBookingDetails(booking)) return;
+      const normalizedBooking = normalizeBookingDetails(booking);
+      updateBookingsState((current) => {
+        if (current.some((item) => bookingDetailsKey(item) === bookingDetailsKey(normalizedBooking))) return current;
+        return [...current, normalizedBooking];
+      });
     },
-    [setBookings]
+    [updateBookingsState]
   );
 
   const addBookingToCart = useCallback(
     (booking: BookingDetails) => {
       const product = getProduct("starter-program");
-      if (!product) return;
-      setCart((current) => [
-        ...current,
-        {
-          id: `booking-${Date.now()}`,
-          productSlug: product.slug,
-          name: `${product.name} - ${booking.date} ${booking.time}`,
-          unitPrice: product.price * booking.persons,
-          displayPrice: product.displayPrice,
-          quantity: 1,
-          booking
-        }
-      ]);
-      saveBooking(booking);
+      if (!product || !isValidBookingDetails(booking)) return;
+      const normalizedBooking = normalizeBookingDetails(booking);
+      const bookingKey = bookingDetailsKey(normalizedBooking);
+      updateCartState((current) => {
+        const isExistingStarterBooking = current.some((item) => item.productSlug === product.slug && item.booking && bookingDetailsKey(item.booking) === bookingKey);
+        if (isExistingStarterBooking) return current;
+        return [
+          ...current,
+          {
+            id: `booking-${Date.now()}`,
+            productSlug: product.slug,
+            name: `${product.name} - ${normalizedBooking.date} ${normalizedBooking.time}`,
+            unitPrice: product.price * normalizedBooking.persons,
+            displayPrice: product.displayPrice,
+            quantity: 1,
+            booking: normalizedBooking
+          }
+        ];
+      });
+      saveBooking(normalizedBooking);
     },
-    [saveBooking, setCart]
+    [saveBooking, updateCartState]
   );
 
   const updateCartQuantity = useCallback(
     (id: string, quantity: number) => {
-      setCart((current) => current.map((item) => (item.id === id ? { ...item, quantity: Math.max(1, quantity) } : item)));
+      if (!Number.isFinite(quantity)) return;
+      updateCartState((current) => current.map((item) => (item.id === id ? { ...item, quantity: Math.max(1, quantity) } : item)));
     },
-    [setCart]
+    [updateCartState]
   );
 
   const removeCartItem = useCallback(
     (id: string) => {
-      setCart((current) => current.filter((item) => item.id !== id));
+      updateCartState((current) => current.filter((item) => item.id !== id));
     },
-    [setCart]
+    [updateCartState]
   );
 
   const clearCart = useCallback(() => {
-    setCart([]);
+    updateCartState([]);
     setCoupon(undefined);
-  }, [setCart, setCoupon]);
+  }, [setCoupon, updateCartState]);
 
   const applyCartCoupon = useCallback(
     (code: string) => {
@@ -1229,18 +2053,24 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const placeOrder = useCallback(
     (customer: CustomerInfo, notes: string) => {
-      const order = createOrder({ existingOrdersCount: orders.length, customer, items: cart, coupon, notes });
-      setOrders((current) => [...current, order]);
-      setCart([]);
+      const currentCart = cartRef.current;
+      if (!currentCart.length) return undefined;
+      const order = createOrder({ existingOrdersCount: ordersRef.current.length, customer, items: currentCart, coupon, notes });
+      updateOrdersState((current) => [...current, order]);
+      updateCartState([]);
       setCoupon(undefined);
       return order;
     },
-    [cart, coupon, orders.length, setCart, setCoupon, setOrders]
+    [coupon, setCoupon, updateCartState, updateOrdersState]
   );
 
   const saveContact = useCallback(
     (contact: ContactSubmission) => {
-      setContacts((current) => [...current, contact]);
+      if (!isValidContactSubmission(contact)) return;
+      if (contactsRef.current.some((item) => contactSubmissionKey(item) === contactSubmissionKey(contact))) return;
+      const nextContacts = [...contactsRef.current, contact];
+      contactsRef.current = nextContacts;
+      setContacts(nextContacts);
     },
     [setContacts]
   );
@@ -1253,17 +2083,32 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [saveRoleForEmail, setSession]
   );
 
+  const loginRegisteredAccount = useCallback(
+    (credentials: { username: string; password: string }) => {
+      const normalizedEmail = credentials.username.trim().toLowerCase();
+      const password = credentials.password.trim();
+      if (!normalizedEmail || !password || isBuiltInPrototypeIdentity(normalizedEmail)) return undefined;
+      if (isRegisteredAccountLoginCollision(normalizedEmail, managedAccountsRef.current, childAccountsRef.current)) return undefined;
+      const account = accountsRef.current.find((item) => item.email.trim().toLowerCase() === normalizedEmail && item.password === password);
+      if (!account) return undefined;
+      saveRoleForEmail(account.email, "guardian");
+      setSession({ email: account.email, remembered: true, createdAt: new Date().toISOString() });
+      return account;
+    },
+    [saveRoleForEmail, setSession]
+  );
+
   const managedUsernameExists = useCallback(
     (username: string) => {
       const normalizedUsername = normalizeAccountUsername(username);
       if (!normalizedUsername) return false;
       return (
         isPrototypeLoginUsername(normalizedUsername) ||
-        managedAccounts.some((account) => account.username.toLowerCase() === normalizedUsername.toLowerCase()) ||
-        childAccounts.some((child) => child.username.toLowerCase() === normalizedUsername.toLowerCase())
+        managedAccountsRef.current.some((account) => account.username.toLowerCase() === normalizedUsername.toLowerCase()) ||
+        childAccountsRef.current.some((child) => child.username.toLowerCase() === normalizedUsername.toLowerCase())
       );
     },
-    [childAccounts, managedAccounts]
+    []
   );
 
   const loginManagedAccount = useCallback(
@@ -1271,15 +2116,19 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const normalizedUsername = normalizeAccountUsername(credentials.username);
       const password = credentials.password.trim();
       if (!normalizedUsername || !password) return undefined;
-      const account = managedAccounts.find(
-        (item) => item.username.toLowerCase() === normalizedUsername.toLowerCase() && item.password === password && item.status !== "inactive"
+      const account = managedAccountsRef.current.find(
+        (item) =>
+          item.username.toLowerCase() === normalizedUsername.toLowerCase() &&
+          item.password === password &&
+          item.status !== "inactive" &&
+          hasValidManagedStudentLink(item, studentsRef.current)
       );
       if (!account) return undefined;
       saveRoleForEmail(account.username, account.role);
       setSession({ email: account.username, remembered: true, createdAt: new Date().toISOString() });
       return account;
     },
-    [managedAccounts, saveRoleForEmail, setSession]
+    [saveRoleForEmail, setSession]
   );
 
   const logout = useCallback(() => setSession(undefined), [setSession]);
@@ -1298,29 +2147,46 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const username = normalizeAccountUsername(account.username);
       const password = account.password.trim();
       if (!displayName || !username || !password) return undefined;
-      if (managedUsernameExists(username)) return undefined;
       const role = account.role;
+      const status = account.status ?? "active";
+      const studentId = account.studentId?.trim() || undefined;
+      if (!hasValidManagedStudentInputLink({ ...account, status, studentId }, students)) return undefined;
       const createdAccount: ManagedAccount = {
         id: createPrototypeId("managed-account"),
         displayName,
         username,
         password,
         role,
-        status: account.status ?? "active",
+        status,
         email: account.email?.trim() || undefined,
         phone: account.phone?.trim() || undefined,
         title: account.title?.trim() || undefined,
         notes: account.notes?.trim() || undefined,
         access: role === "staff" ? normalizeManagerAccess(account.access) : [],
-        studentId: account.studentId,
+        studentId: role === "student" ? studentId : undefined,
         createdBy: session?.email,
         createdAt: new Date().toISOString()
       };
-      setManagedAccounts((current) => [createdAccount, ...current]);
+      const existingAccount = managedAccountsRef.current.find((currentAccount) => managedAccountCreationKey(currentAccount) === managedAccountCreationKey(createdAccount));
+      if (existingAccount) return existingAccount;
+      if (managedUsernameExists(username)) return undefined;
+      updateManagedAccountsState((current) => [createdAccount, ...current]);
       saveRoleForEmail(username, role);
       return createdAccount;
     },
-    [managedUsernameExists, saveRoleForEmail, session?.email, setManagedAccounts]
+    [managedUsernameExists, saveRoleForEmail, session?.email, students, updateManagedAccountsState]
+  );
+
+  const updateManagedAccountStatus = useCallback(
+    (accountId: string, status: ManagedAccount["status"]) => {
+      const existingAccount = managedAccounts.find((account) => account.id === accountId);
+      if (!existingAccount) return undefined;
+      if (status === "active" && !hasValidManagedStudentLink(existingAccount, students)) return undefined;
+      const updatedAccount: ManagedAccount = { ...existingAccount, status };
+      setManagedAccounts((current) => current.map((account) => (account.id === accountId ? updatedAccount : account)));
+      return updatedAccount;
+    },
+    [managedAccounts, setManagedAccounts, students]
   );
 
   const addChildAccount = useCallback(
@@ -1331,7 +2197,6 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const username = normalizeChildUsername(child.username) || childUsernameFromName(cleanedName);
       const password = child.password.trim();
       if (!username || !password) return undefined;
-      if (childAccounts.some((item) => item.username.toLowerCase() === username.toLowerCase())) return undefined;
       const createdChild: ChildAccount = {
         id: createPrototypeId("child"),
         parentEmail: session.email,
@@ -1342,11 +2207,14 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         beltSlug: child.beltSlug,
         createdAt: new Date().toISOString()
       };
-      setChildAccounts((current) => [...current, createdChild]);
+      const existingChild = childAccountsRef.current.find((currentChild) => childAccountCreationKey(currentChild) === childAccountCreationKey(createdChild));
+      if (existingChild) return existingChild;
+      if (isChildUsernameUnavailable(username, childAccountsRef.current, managedAccountsRef.current)) return undefined;
+      updateChildAccountsState((current) => [...current, createdChild]);
       saveRoleForEmail(username, "student");
       return createdChild;
     },
-    [childAccounts, saveRoleForEmail, session, setChildAccounts]
+    [saveRoleForEmail, session, updateChildAccountsState]
   );
 
   const updateChildAccount = useCallback(
@@ -1359,7 +2227,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const username = normalizeChildUsername(child.username) || existingChild.username;
       const password = child.password.trim() || existingChild.password || "";
       if (!username) return undefined;
-      if (childAccounts.some((item) => item.id !== childId && item.username.toLowerCase() === username.toLowerCase())) return undefined;
+      if (isChildUsernameUnavailable(username, childAccounts, managedAccounts, childId)) return undefined;
       const updatedChild: ChildAccount = {
         ...existingChild,
         name: cleanedName,
@@ -1372,17 +2240,17 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       saveRoleForEmail(username, "student");
       return updatedChild;
     },
-    [childAccounts, saveRoleForEmail, session, setChildAccounts]
+    [childAccounts, managedAccounts, saveRoleForEmail, session, setChildAccounts]
   );
 
   const loginChildAccount = useCallback(
     (childId: string) => {
-      const child = childAccounts.find((item) => item.id === childId);
-      if (!child) return;
+      const child = childAccountsRef.current.find((item) => item.id === childId);
+      if (!child || !session || child.parentEmail.toLowerCase() !== session.email.toLowerCase()) return;
       saveRoleForEmail(child.username, "student");
       setSession({ email: child.username, remembered: true, createdAt: new Date().toISOString() });
     },
-    [childAccounts, saveRoleForEmail, setSession]
+    [saveRoleForEmail, session, setSession]
   );
 
   const loginChildCredentials = useCallback(
@@ -1390,58 +2258,69 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const normalizedUsername = normalizeChildUsername(credentials.username);
       const password = credentials.password.trim();
       if (!normalizedUsername || !password) return undefined;
-      const child = childAccounts.find((item) => item.username.toLowerCase() === normalizedUsername.toLowerCase() && item.password === password);
+      const child = childAccountsRef.current.find((item) => item.username.toLowerCase() === normalizedUsername.toLowerCase() && item.password === password);
       if (!child) return undefined;
       saveRoleForEmail(child.username, "student");
       setSession({ email: child.username, remembered: true, createdAt: new Date().toISOString() });
       return child;
     },
-    [childAccounts, saveRoleForEmail, setSession]
+    [saveRoleForEmail, setSession]
   );
 
   const childUsernameExists = useCallback(
-    (username: string) => {
-      const normalizedUsername = normalizeChildUsername(username);
-      return Boolean(normalizedUsername && childAccounts.some((item) => item.username.toLowerCase() === normalizedUsername.toLowerCase()));
-    },
-    [childAccounts]
+    (username: string, options?: { excludeChildId?: string }) => isChildUsernameUnavailable(username, childAccountsRef.current, managedAccountsRef.current, options?.excludeChildId),
+    []
   );
 
   const register = useCallback(
-    (email: string) => {
-      setAccounts((current) => (current.some((account) => account.email === email) ? current : [...current, { email, createdAt: new Date().toISOString() }]));
+    (account: { email: string; password: string }) => {
+      const email = account.email.trim().toLowerCase();
+      const password = account.password.trim();
+      if (!email || !password || isBuiltInPrototypeIdentity(email)) return undefined;
+      const createdAccount = { email, password, createdAt: new Date().toISOString() };
+      const existingAccount = accountsRef.current.find((currentAccount) => registeredAccountCreationKey(currentAccount) === registeredAccountCreationKey(createdAccount));
+      if (existingAccount) return existingAccount;
+      if (accountsRef.current.some((currentAccount) => currentAccount.email.trim().toLowerCase() === email)) return undefined;
+      if (isRegisteredAccountLoginCollision(email, managedAccountsRef.current, childAccountsRef.current)) return undefined;
+      updateAccountsState((current) => [...current, createdAccount]);
+      return createdAccount;
     },
-    [setAccounts]
+    [updateAccountsState]
   );
 
   const addOperationsStudent = useCallback(
     (student: StudentInput) => {
       const normalizedStudent = normalizeStudentInput(student);
       if (!normalizedStudent) return undefined;
+      const matchingStudent = studentsRef.current.find((item) => studentEnrollmentKey(item) === studentEnrollmentKey(normalizedStudent));
+      if (matchingStudent) return matchingStudent;
       const createdStudent: StudentRecord = {
         ...normalizedStudent,
         id: createPrototypeId("student"),
         classesAttended: 0,
         missedClassCount: 0
       };
-      setStudents((current) => [createdStudent, ...current]);
-      setMessageLogs((current) => [
-        makeMessageLog({
-          kind: "welcome",
-          recipientName: studentFullName(createdStudent),
-          recipientPhone: createdStudent.phone,
-          body: welcomeTextForStudent(createdStudent)
-        }),
-        ...current
-      ]);
+      const nextStudents = [createdStudent, ...studentsRef.current];
+      studentsRef.current = nextStudents;
+      setStudents(nextStudents);
+      if (isCurrentStudentEnrollment(createdStudent)) {
+        appendUniqueMessageLogs([
+          makeMessageLog({
+            kind: "welcome",
+            recipientName: studentFullName(createdStudent),
+            recipientPhone: createdStudent.phone,
+            body: welcomeTextForStudent(createdStudent)
+          })
+        ]);
+      }
       return createdStudent;
     },
-    [setMessageLogs, setStudents]
+    [appendUniqueMessageLogs, setStudents]
   );
 
   const updateOperationsStudent = useCallback(
     (studentId: string, student: StudentInput) => {
-      const existing = students.find((item) => item.id === studentId);
+      const existing = studentsRef.current.find((item) => item.id === studentId);
       if (!existing) return undefined;
       const normalizedStudent = normalizeStudentInput(student, existing.enrollmentDate || existing.joinedAt);
       if (!normalizedStudent) return undefined;
@@ -1449,23 +2328,58 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         ...existing,
         ...normalizedStudent
       };
-      setStudents((current) => current.map((item) => (item.id === studentId ? updatedStudent : item)));
+      const wasCurrentEnrollment = isCurrentStudentEnrollment(existing);
+      const nextStudents = studentsRef.current.map((item) => (item.id === studentId ? updatedStudent : item));
+      studentsRef.current = nextStudents;
+      setStudents(nextStudents);
+      setCheckIns((current) => current.map((checkIn) => retargetCheckInForStudent(checkIn, updatedStudent)));
+      if (!isCurrentStudentEnrollment(updatedStudent)) {
+        updateScheduledClassesState((current) => current.map((item) => (item.studentId === studentId ? { ...item, studentId: undefined } : item)));
+        setMessageLogs((current) =>
+          current.filter((message) => message.status !== "queued" || !isMessageLogLinkedToStudent(message, existing))
+        );
+        setManagedAccounts((current) =>
+          current.map((account) => (account.role === "student" && account.studentId === studentId ? { ...account, ...managedStudentAccountDetails(updatedStudent), status: "inactive" } : account))
+        );
+        setDirectMessages((current) => current.filter((message) => !isDirectMessageLinkedToStudent(message, studentId)));
+      } else {
+        const shouldReactivateLinkedStudentLogin = !wasCurrentEnrollment;
+        setManagedAccounts((current) =>
+          current.map((account) =>
+            account.role === "student" && account.studentId === studentId
+              ? { ...account, ...managedStudentAccountDetails(updatedStudent), status: shouldReactivateLinkedStudentLogin ? "active" : account.status }
+              : account
+          )
+        );
+        setMessageLogs((current) => current.map((message) => retargetQueuedMessageForStudent(message, existing, updatedStudent)));
+        setDirectMessages((current) => current.map((message) => retargetDirectMessageForStudent(message, updatedStudent)));
+      }
       return updatedStudent;
     },
-    [setStudents, students]
+    [setCheckIns, setDirectMessages, setManagedAccounts, setMessageLogs, setStudents, updateScheduledClassesState]
   );
 
   const deleteOperationsStudent = useCallback(
     (studentId: string) => {
-      const existing = students.find((item) => item.id === studentId);
+      const existing = studentsRef.current.find((item) => item.id === studentId);
       if (!existing) return undefined;
-      setStudents((current) => current.filter((item) => item.id !== studentId));
-      setScheduledClasses((current) => current.map((item) => (item.studentId === studentId ? { ...item, studentId: undefined } : item)));
-      setCheckIns((current) => current.filter((item) => item.studentId !== studentId));
-      setMessageLogs((current) => current.filter((item) => item.recipientPhone !== existing.phone));
+      const nextStudents = studentsRef.current.filter((item) => item.id !== studentId);
+      studentsRef.current = nextStudents;
+      setStudents(nextStudents);
+      updateScheduledClassesState((current) => current.map((item) => (item.studentId === studentId ? { ...item, studentId: undefined } : item)));
+      const nextCheckIns = checkInsRef.current.filter((item) => item.studentId !== studentId);
+      checkInsRef.current = nextCheckIns;
+      setCheckIns(nextCheckIns);
+      updateManagedAccountsState((current) => current.map((account) => (account.studentId === studentId ? { ...account, status: "inactive", studentId: undefined } : account)));
+      const nextDirectMessages = directMessagesRef.current.filter((message) => !isDirectMessageLinkedToStudent(message, studentId));
+      directMessagesRef.current = nextDirectMessages;
+      setDirectMessages(nextDirectMessages);
+      const nextMessageLogs = messageLogsRef.current.filter((item) => !isMessageLogLinkedToStudent(item, existing));
+      messageLogsRef.current = nextMessageLogs;
+      setMessageLogs(nextMessageLogs);
       return existing;
     },
-    [setCheckIns, setMessageLogs, setScheduledClasses, setStudents, students]
+    [setCheckIns, setDirectMessages, setMessageLogs, setStudents, updateManagedAccountsState, updateScheduledClassesState]
   );
 
   const addScheduledClass = useCallback(
@@ -1473,6 +2387,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const title = scheduledClass.title.trim();
       const type = scheduledClass.type.trim();
       if (!title || !scheduledClass.date || !scheduledClass.time.trim() || !type) return undefined;
+      const studentId = scheduledClass.studentId?.trim();
+      if (studentId && !studentsRef.current.some((student) => student.id === studentId && isCurrentStudentEnrollment(student))) return undefined;
       const createdClass: ScheduledClass = {
         id: createPrototypeId("schedule"),
         title,
@@ -1481,13 +2397,36 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         type,
         recurring: scheduledClass.recurring || undefined,
         titleColor: scheduledClass.titleColor?.trim() || undefined,
-        studentId: scheduledClass.studentId,
+        studentId: studentId || undefined,
         notes: scheduledClass.notes?.trim()
       };
-      setScheduledClasses((current) => [createdClass, ...current]);
+      const existingClass = scheduledClassesRef.current.find((item) => scheduledClassCreationKey(item) === scheduledClassCreationKey(createdClass));
+      if (existingClass) return existingClass;
+      updateScheduledClassesState((current) => [createdClass, ...current]);
       return createdClass;
     },
-    [setScheduledClasses]
+    [updateScheduledClassesState]
+  );
+
+  const deleteScheduledClass = useCallback(
+    (scheduledClassId: string) => {
+      const existing = scheduledClassesRef.current.find((item) => item.id === scheduledClassId);
+      if (!existing) return undefined;
+      updateScheduledClassesState((current) => current.filter((item) => item.id !== scheduledClassId));
+      return existing;
+    },
+    [updateScheduledClassesState]
+  );
+
+  const deletePastOneTimeScheduledClasses = useCallback(
+    (todayKey: string) => {
+      const staleItems = scheduledClassesRef.current.filter((item) => isStaleOneTimeScheduledClass(item, todayKey));
+      if (!staleItems.length) return [];
+      const staleIds = new Set(staleItems.map((item) => item.id));
+      updateScheduledClassesState((current) => current.filter((item) => !staleIds.has(item.id)));
+      return staleItems;
+    },
+    [updateScheduledClassesState]
   );
 
   const cleanStudioClass = useCallback((studioClass: StudioClassInput) => {
@@ -1515,15 +2454,17 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         id: createPrototypeId("class"),
         ...cleaned
       };
-      setStudioClasses((current) => [createdClass, ...current]);
+      const existingClass = studioClassesRef.current.find((item) => studioClassCreationKey(item) === studioClassCreationKey(createdClass));
+      if (existingClass) return existingClass;
+      updateStudioClassesState((current) => [createdClass, ...current]);
       return createdClass;
     },
-    [cleanStudioClass, setStudioClasses]
+    [cleanStudioClass, updateStudioClassesState]
   );
 
   const updateStudioClass = useCallback(
     (classId: string, studioClass: StudioClassInput) => {
-      const existing = studioClasses.find((item) => item.id === classId);
+      const existing = studioClassesRef.current.find((item) => item.id === classId);
       if (!existing) return undefined;
       const cleaned = cleanStudioClass(studioClass);
       if (!cleaned) return undefined;
@@ -1531,20 +2472,20 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         ...existing,
         ...cleaned
       };
-      setStudioClasses((current) => current.map((item) => (item.id === classId ? updatedClass : item)));
+      updateStudioClassesState((current) => current.map((item) => (item.id === classId ? updatedClass : item)));
       return updatedClass;
     },
-    [cleanStudioClass, setStudioClasses, studioClasses]
+    [cleanStudioClass, updateStudioClassesState]
   );
 
   const deleteStudioClass = useCallback(
     (classId: string) => {
-      const existing = studioClasses.find((item) => item.id === classId);
+      const existing = studioClassesRef.current.find((item) => item.id === classId);
       if (!existing) return undefined;
-      setStudioClasses((current) => current.filter((item) => item.id !== classId));
+      updateStudioClassesState((current) => current.filter((item) => item.id !== classId));
       return existing;
     },
-    [setStudioClasses, studioClasses]
+    [updateStudioClassesState]
   );
 
   const addStudioEvent = useCallback(
@@ -1559,10 +2500,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         details: event.details.trim(),
         audience: event.audience
       };
-      setStudioEvents((current) => [createdEvent, ...current]);
+      const existingEvent = studioEventsRef.current.find((item) => studioEventCreationKey(item) === studioEventCreationKey(createdEvent));
+      if (existingEvent) return existingEvent;
+      updateStudioEventsState((current) => [createdEvent, ...current]);
       return createdEvent;
     },
-    [setStudioEvents]
+    [updateStudioEventsState]
   );
 
   const addTrainingVideoFolder = useCallback(
@@ -1577,10 +2520,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         description: folder.description?.trim() || undefined,
         createdAt: new Date().toISOString()
       };
-      setTrainingVideoFolders((current) => [...current, createdFolder]);
+      const existingFolder = trainingVideoFoldersRef.current.find((currentFolder) => trainingVideoFolderCreationKey(currentFolder) === trainingVideoFolderCreationKey(createdFolder));
+      if (existingFolder) return existingFolder;
+      updateTrainingVideoFoldersState((current) => [...current, createdFolder]);
       return createdFolder;
     },
-    [setTrainingVideoFolders]
+    [updateTrainingVideoFoldersState]
   );
 
   const addTrainingVideo = useCallback(
@@ -1588,8 +2533,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const title = video.title.trim();
       const fileName = video.fileName.trim();
       const mimeType = video.mimeType.trim() || "video/mp4";
-      const folderExists = trainingVideoFolders.some((folder) => folder.id === video.folderId);
-      if (!title || !folderExists || !fileName || !video.videoDataUrl.startsWith("data:video/")) return undefined;
+      const folderExists = trainingVideoFoldersRef.current.some((folder) => folder.id === video.folderId);
+      if (!title || !folderExists || !fileName || !video.videoDataUrl.startsWith("data:video/") || !isSafeTrainingVideoFile(video)) return undefined;
       const createdVideo: TrainingVideo = {
         id: createPrototypeId("video"),
         folderId: video.folderId,
@@ -1601,10 +2546,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         videoDataUrl: video.videoDataUrl,
         createdAt: new Date().toISOString()
       };
-      setTrainingVideos((current) => [...current, createdVideo]);
+      const existingVideo = trainingVideosRef.current.find((currentVideo) => trainingVideoCreationKey(currentVideo) === trainingVideoCreationKey(createdVideo));
+      if (existingVideo) return existingVideo;
+      updateTrainingVideosState((current) => [...current, createdVideo]);
       return createdVideo;
     },
-    [setTrainingVideos, trainingVideoFolders]
+    [updateTrainingVideosState]
   );
 
   const addStudyGuideFolder = useCallback(
@@ -1612,7 +2559,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const name = folder.name.trim();
       const subject = folder.subject.trim();
       const parentId = folder.parentId?.trim() || undefined;
-      const parentExists = !parentId || studyGuideFolders.some((currentFolder) => currentFolder.id === parentId);
+      const parentExists = !parentId || studyGuideFoldersRef.current.some((currentFolder) => currentFolder.id === parentId);
       if (!name || !subject || !parentExists) return undefined;
       const createdFolder: StudyGuideFolder = {
         id: createPrototypeId("study-folder"),
@@ -1622,10 +2569,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         description: folder.description?.trim() || undefined,
         createdAt: new Date().toISOString()
       };
-      setStudyGuideFolders((current) => [...current, createdFolder]);
+      const existingFolder = studyGuideFoldersRef.current.find((currentFolder) => studyGuideFolderCreationKey(currentFolder) === studyGuideFolderCreationKey(createdFolder));
+      if (existingFolder) return existingFolder;
+      updateStudyGuideFoldersState((current) => [...current, createdFolder]);
       return createdFolder;
     },
-    [setStudyGuideFolders, studyGuideFolders]
+    [updateStudyGuideFoldersState]
   );
 
   const addStudyGuideMaterial = useCallback(
@@ -1633,8 +2582,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const title = material.title.trim();
       const fileName = material.fileName.trim();
       const mimeType = material.mimeType.trim() || "application/octet-stream";
-      const folderExists = studyGuideFolders.some((folder) => folder.id === material.folderId);
-      if (!title || !folderExists || !fileName || !material.fileDataUrl.startsWith("data:")) return undefined;
+      const folderExists = studyGuideFoldersRef.current.some((folder) => folder.id === material.folderId);
+      if (!title || !folderExists || !fileName || !material.fileDataUrl.startsWith("data:") || !isSafeStudyMaterialFile(material)) return undefined;
       const createdMaterial: StudyGuideMaterial = {
         id: createPrototypeId("study-material"),
         folderId: material.folderId,
@@ -1646,10 +2595,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         fileDataUrl: material.fileDataUrl,
         createdAt: new Date().toISOString()
       };
-      setStudyGuideMaterials((current) => [...current, createdMaterial]);
+      const existingMaterial = studyGuideMaterialsRef.current.find((currentMaterial) => studyGuideMaterialCreationKey(currentMaterial) === studyGuideMaterialCreationKey(createdMaterial));
+      if (existingMaterial) return existingMaterial;
+      updateStudyGuideMaterialsState((current) => [...current, createdMaterial]);
       return createdMaterial;
     },
-    [setStudyGuideMaterials, studyGuideFolders]
+    [updateStudyGuideMaterialsState]
   );
 
   const addMerchandiseItem = useCallback(
@@ -1657,20 +2608,25 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const name = item.name.trim();
       const category = item.category.trim();
       if (!name || !category || !Number.isFinite(item.price) || !Number.isFinite(item.stock) || item.price < 0 || item.stock < 0) return undefined;
+      const thresholds = cleanMerchandiseThresholds(item);
       const createdItem: MerchandiseItem = {
         id: createPrototypeId("merch"),
         name,
         category,
         price: item.price,
-        stock: item.stock,
+        stock: Math.floor(item.stock),
+        reorderPoint: thresholds.reorderPoint,
+        targetStock: thresholds.targetStock,
         description: item.description?.trim() || `${category} available for pickup at Cho's Martial Arts.`,
         imageLabel: category.toLowerCase(),
         imageDataUrl: item.imageDataUrl
       };
-      setMerchandiseItems((current) => [createdItem, ...current]);
+      const existingItem = merchandiseItemsRef.current.find((currentItem) => merchandiseItemCatalogKey(currentItem) === merchandiseItemCatalogKey(createdItem));
+      if (existingItem) return existingItem;
+      updateMerchandiseItemsState((current) => [createdItem, ...current]);
       return createdItem;
     },
-    [setMerchandiseItems]
+    [updateMerchandiseItemsState]
   );
 
   const updateMerchandiseItem = useCallback(
@@ -1678,45 +2634,170 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const name = item.name.trim();
       const category = item.category.trim();
       if (!name || !category || !Number.isFinite(item.price) || !Number.isFinite(item.stock) || item.price < 0 || item.stock < 0) return undefined;
-      let updatedItem: MerchandiseItem | undefined;
-      setMerchandiseItems((current) =>
+      const thresholds = cleanMerchandiseThresholds(item);
+      const existingItem = merchandiseItemsRef.current.find((currentItem) => currentItem.id === itemId);
+      if (!existingItem) return undefined;
+      const updatedItem: MerchandiseItem = {
+        ...existingItem,
+        name,
+        category,
+        price: item.price,
+        stock: Math.floor(item.stock),
+        reorderPoint: thresholds.reorderPoint,
+        targetStock: thresholds.targetStock,
+        description: item.description?.trim() || `${category} available for pickup at Cho's Martial Arts.`,
+        imageLabel: category.toLowerCase(),
+        imageDataUrl: item.imageDataUrl
+      };
+      updateMerchandiseItemsState((current) =>
         current.map((currentItem) => {
           if (currentItem.id !== itemId) return currentItem;
-          updatedItem = {
-            ...currentItem,
-            name,
-            category,
-            price: item.price,
-            stock: item.stock,
-            description: item.description?.trim() || `${category} available for pickup at Cho's Martial Arts.`,
-            imageLabel: category.toLowerCase(),
-            imageDataUrl: item.imageDataUrl
-          };
           return updatedItem;
         })
       );
       return updatedItem;
     },
-    [setMerchandiseItems]
+    [updateMerchandiseItemsState]
   );
+
+  const restockLowInventory = useCallback(() => {
+    const targets = merchandiseItemsRef.current.filter(isLowStockMerchandiseItem);
+    if (!targets.length) return 0;
+    const targetIds = new Set(targets.map((item) => item.id));
+    const restockedAt = todayStamp();
+    const nextMerchandiseItems = merchandiseItemsRef.current.map((item) =>
+      targetIds.has(item.id)
+        ? {
+            ...item,
+            stock: getMerchandiseTargetStock(item),
+            lastRestockedAt: restockedAt
+          }
+        : item
+    );
+    updateMerchandiseItemsState(nextMerchandiseItems);
+    return targets.length;
+  }, [updateMerchandiseItemsState]);
+
+  const reviewLeadFollowUps = useCallback(() => {
+    const candidates = getLeadCandidates({ bookings: bookingsRef.current, contacts: contactsRef.current, leadReviews: leadReviewsRef.current, students: studentsRef.current });
+    if (!candidates.length) return 0;
+    const reviewedAt = new Date().toISOString();
+    const seenLeadIds = new Set(leadReviewsRef.current.map((review) => review.leadId.trim()).filter(Boolean));
+    const nextReviews = candidates.flatMap((candidate) => {
+      if (seenLeadIds.has(candidate.id)) return [];
+      seenLeadIds.add(candidate.id);
+      return [{
+        id: createPrototypeId("lead-review"),
+        leadId: candidate.id,
+        kind: candidate.kind,
+        label: candidate.name,
+        reviewedAt
+      }];
+    });
+    if (!nextReviews.length) return 0;
+    const nextLeadReviews = [...leadReviewsRef.current, ...nextReviews];
+    leadReviewsRef.current = nextLeadReviews;
+    setLeadReviews(nextLeadReviews);
+    return nextReviews.length;
+  }, [setLeadReviews]);
 
   const deleteMerchandiseItem = useCallback(
     (itemId: string) => {
-      let deletedItem: MerchandiseItem | undefined;
-      setMerchandiseItems((current) => {
-        deletedItem = current.find((item) => item.id === itemId);
-        return current.filter((item) => item.id !== itemId);
-      });
-      return deletedItem;
+      const existingItem = merchandiseItemsRef.current.find((item) => item.id === itemId);
+      if (!existingItem) return undefined;
+      updateMerchandiseItemsState((current) => current.filter((item) => item.id !== itemId));
+      return existingItem;
     },
-    [setMerchandiseItems]
+    [updateMerchandiseItemsState]
+  );
+
+  const restoreOperationsBackup = useCallback(
+    (rawBackup: string) => {
+      const snapshot = parseOperationsBackupSnapshot(rawBackup);
+      const restoredAccountRoles = snapshot.data.accountRoles as AccountRoleRecord[];
+      const restoredAccounts = restoreRegisteredAccountPasswords(snapshot.data.accounts, accounts);
+      const restoredManagedAccounts = restoreManagedAccountPasswords(snapshot.data.managedAccounts, managedAccounts);
+      const restoredChildAccounts = restoreChildAccountPasswords(snapshot.data.childAccounts, childAccounts);
+      assertRestoredLoginPasswordsAvailable(restoredAccounts, restoredManagedAccounts, restoredChildAccounts, snapshot.data.childAccounts, restoredAccountRoles);
+      const restoredStudents = snapshot.data.students as StudentRecord[];
+      const restoredMessageLogs = snapshot.data.messageLogs as MessageLog[];
+      const restoredDirectMessages = snapshot.data.directMessages as DirectMessage[];
+      const restoredCheckIns = snapshot.data.checkIns as StudentCheckIn[];
+      const restoredContacts = snapshot.data.contacts as ContactSubmission[];
+      const restoredLeadReviews = snapshot.data.leadReviews as LeadReview[];
+      updateAccountsState(restoredAccounts);
+      setAccountRoles(restoredAccountRoles);
+      updateManagedAccountsState(restoredManagedAccounts);
+      updateChildAccountsState(restoredChildAccounts);
+      studentsRef.current = restoredStudents;
+      setStudents(restoredStudents);
+      updateStudioClassesState(snapshot.data.studioClasses as StudioClass[]);
+      updateScheduledClassesState(snapshot.data.scheduledClasses as ScheduledClass[]);
+      setMessageCampaigns(snapshot.data.messageCampaigns as MessageCampaign[]);
+      messageLogsRef.current = restoredMessageLogs;
+      setMessageLogs(restoredMessageLogs);
+      directMessagesRef.current = restoredDirectMessages;
+      setDirectMessages(restoredDirectMessages);
+      updateStudioEventsState(snapshot.data.studioEvents as StudioEvent[]);
+      updateMerchandiseItemsState(snapshot.data.merchandiseItems as MerchandiseItem[]);
+      checkInsRef.current = restoredCheckIns;
+      setCheckIns(restoredCheckIns);
+      updateTrainingVideoFoldersState(snapshot.data.trainingVideoFolders as TrainingVideoFolder[]);
+      updateTrainingVideosState(snapshot.data.trainingVideos as TrainingVideo[]);
+      updateStudyGuideFoldersState(snapshot.data.studyGuideFolders as StudyGuideFolder[]);
+      updateStudyGuideMaterialsState(snapshot.data.studyGuideMaterials as StudyGuideMaterial[]);
+      updateOrdersState(snapshot.data.orders as Order[]);
+      updateBookingsState(snapshot.data.bookings as BookingDetails[]);
+      contactsRef.current = restoredContacts;
+      setContacts(restoredContacts);
+      leadReviewsRef.current = restoredLeadReviews;
+      setLeadReviews(restoredLeadReviews);
+      if (!isSessionAvailableAfterRestore(session, restoredAccounts, restoredManagedAccounts, restoredChildAccounts, restoredStudents)) {
+        setSession(undefined);
+      }
+      return {
+        restoredRecords: snapshot.summary.totalRecords,
+        restoredSections: snapshot.sections.filter((section) => section.count > 0).length
+      };
+    },
+    [
+      childAccounts,
+      accounts,
+      managedAccounts,
+      session,
+      setAccountRoles,
+      setCheckIns,
+      setContacts,
+      setDirectMessages,
+      setLeadReviews,
+      setMessageCampaigns,
+      setMessageLogs,
+      setSession,
+      setStudents,
+      updateAccountsState,
+      updateBookingsState,
+      updateChildAccountsState,
+      updateManagedAccountsState,
+      updateMerchandiseItemsState,
+      updateStudyGuideFoldersState,
+      updateStudyGuideMaterialsState,
+      updateStudioClassesState,
+      updateScheduledClassesState,
+      updateStudioEventsState,
+      updateTrainingVideoFoldersState,
+      updateTrainingVideosState,
+      updateOrdersState
+    ]
   );
 
   const recordStudentCheckIn = useCallback(
     (studentId: string) => {
-      const student = students.find((item) => item.id === studentId);
+      const student = studentsRef.current.find((item) => item.id === studentId);
       if (!student) return undefined;
+      if (!isCurrentOperationsStudent(student)) return undefined;
       const checkInDate = todayStamp();
+      const alreadyCheckedIn = checkInsRef.current.some((checkIn) => checkIn.studentId === studentId && checkIn.date === checkInDate);
+      if (alreadyCheckedIn) return undefined;
       const createdCheckIn: StudentCheckIn = {
         id: createPrototypeId("checkin"),
         studentId: student.id,
@@ -1724,27 +2805,59 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         date: checkInDate,
         beltRank: student.beltRank
       };
-      setStudents((current) =>
-        current.map((item) =>
+      const updatedStudent: StudentRecord = {
+        ...student,
+        classesAttended: student.classesAttended + 1,
+        missedClassCount: 0,
+        lastCheckIn: checkInDate
+      };
+      const reachedBeltReview = !isBeltTestInviteDue(student, checkInDate) && isBeltTestInviteDue(updatedStudent, checkInDate);
+      const reachedMilestone = !isMilestoneEncouragementDue(student, checkInDate) && isMilestoneEncouragementDue(updatedStudent, checkInDate);
+      const queuedMessage = reachedBeltReview
+        ? makeMessageLog({
+            kind: "follow-up",
+            recipientName: studentFullName(updatedStudent),
+            recipientPhone: updatedStudent.phone,
+            body: beltTestInviteTextForStudent(updatedStudent)
+          })
+        : reachedMilestone
+          ? makeMessageLog({
+              kind: "follow-up",
+              recipientName: studentFullName(updatedStudent),
+              recipientPhone: updatedStudent.phone,
+              body: milestoneEncouragementTextForStudent(updatedStudent)
+            })
+          : undefined;
+      const insertedMessages = queuedMessage ? appendUniqueMessageLogs([queuedMessage]) : [];
+      const nextStudents = studentsRef.current.map((item) =>
           item.id === studentId
             ? {
                 ...item,
                 classesAttended: item.classesAttended + 1,
                 missedClassCount: 0,
-                lastCheckIn: checkInDate
+                lastCheckIn: checkInDate,
+                lastContactedAt: insertedMessages.length ? checkInDate : item.lastContactedAt
               }
             : item
-        )
       );
-      setCheckIns((current) => [createdCheckIn, ...current]);
-      return createdCheckIn;
+      studentsRef.current = nextStudents;
+      setStudents(nextStudents);
+      checkInsRef.current = [createdCheckIn, ...checkInsRef.current];
+      setCheckIns((current) =>
+        current.some((checkIn) => checkIn.studentId === studentId && checkIn.date === checkInDate)
+          ? current
+          : [createdCheckIn, ...current]
+      );
+      return insertedMessages[0] ? { ...createdCheckIn, queuedMessage: insertedMessages[0] } : createdCheckIn;
     },
-    [setCheckIns, setStudents, students]
+    [appendUniqueMessageLogs, setCheckIns, setStudents]
   );
 
   const sendMissedClassFollowUps = useCallback(() => {
-    const targets = students.filter((student) => student.missedClassCount >= 3 && student.phone.trim());
+    const today = todayStamp();
+    const targets = studentsRef.current.filter((student) => isMissedClassFollowUpDue(student, today));
     if (!targets.length) return 0;
+    const targetIds = new Set(targets.map((student) => student.id));
     const logs = targets.map((student) =>
       makeMessageLog({
         kind: "follow-up",
@@ -1753,15 +2866,255 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         body: missedClassTextForStudent(student)
       })
     );
-    setMessageLogs((current) => [...logs, ...current]);
-    setStudents((current) => current.map((student) => (student.missedClassCount >= 3 ? { ...student, lastContactedAt: todayStamp() } : student)));
-    return logs.length;
-  }, [setMessageLogs, setStudents, students]);
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const nextStudents = studentsRef.current.map((student) => (targetIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+    studentsRef.current = nextStudents;
+    setStudents(nextStudents);
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const sendAttendanceGapCheckIns = useCallback(() => {
+    const today = todayStamp();
+    const targets = studentsRef.current.filter((student) => isAttendanceGapFollowUpDue(student, today));
+    if (!targets.length) return 0;
+    const targetIds = new Set(targets.map((student) => student.id));
+    const logs = targets.map((student) =>
+      makeMessageLog({
+        kind: "follow-up",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: attendanceGapCheckInTextForStudent(student)
+      })
+    );
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const nextStudents = studentsRef.current.map((student) => (targetIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+    studentsRef.current = nextStudents;
+    setStudents(nextStudents);
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const sendTrialConversionFollowUps = useCallback(() => {
+    const today = todayStamp();
+    const targets = studentsRef.current.filter((student) => isTrialConversionDue(student, today));
+    if (!targets.length) return 0;
+    const targetIds = new Set(targets.map((student) => student.id));
+    const logs = targets.map((student) =>
+      makeMessageLog({
+        kind: "follow-up",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: trialConversionTextForStudent(student)
+      })
+    );
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const nextStudents = studentsRef.current.map((student) => (targetIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+    studentsRef.current = nextStudents;
+    setStudents(nextStudents);
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const sendNewStudentCheckIns = useCallback(() => {
+    const today = todayStamp();
+    const targets = studentsRef.current.filter((student) => isNewStudentCheckInDue(student, today));
+    if (!targets.length) return 0;
+    const targetIds = new Set(targets.map((student) => student.id));
+    const logs = targets.map((student) =>
+      makeMessageLog({
+        kind: "follow-up",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: newStudentCheckInTextForStudent(student)
+      })
+    );
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const nextStudents = studentsRef.current.map((student) => (targetIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+    studentsRef.current = nextStudents;
+    setStudents(nextStudents);
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const sendPausedStudentReactivationFollowUps = useCallback(() => {
+    const today = todayStamp();
+    const targets = studentsRef.current.filter((student) => isPausedStudentReviewDue(student, today));
+    if (!targets.length) return 0;
+    const targetIds = new Set(targets.map((student) => student.id));
+    const logs = targets.map((student) =>
+      makeMessageLog({
+        kind: "follow-up",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: pausedStudentTextForStudent(student)
+      })
+    );
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const nextStudents = studentsRef.current.map((student) => (targetIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+    studentsRef.current = nextStudents;
+    setStudents(nextStudents);
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const sendCelebrationOutreach = useCallback(() => {
+    const today = todayStamp();
+    const targetEvents = studentsRef.current.flatMap((student) => getStudentCelebrationEvents(student, today).map((event) => ({ student, event })));
+    if (!targetEvents.length) return 0;
+    const targetIds = new Set(targetEvents.map(({ student }) => student.id));
+    const logs = targetEvents.map(({ student, event }) =>
+      makeMessageLog({
+        kind: "celebration",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: celebrationTextForStudent(student, event)
+      })
+    );
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const nextStudents = studentsRef.current.map((student) => (targetIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+    studentsRef.current = nextStudents;
+    setStudents(nextStudents);
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const sendProfileUpdateRequests = useCallback(() => {
+    const today = todayStamp();
+    const targets = studentsRef.current.filter((student) => isProfileUpdateRequestDue(student, today));
+    if (!targets.length) return 0;
+    const targetIds = new Set(targets.map((student) => student.id));
+    const logs = targets.map((student) =>
+      makeMessageLog({
+        kind: "profile-update",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: profileUpdateTextForStudent(student)
+      })
+    );
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const nextStudents = studentsRef.current.map((student) => (targetIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+    studentsRef.current = nextStudents;
+    setStudents(nextStudents);
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const sendClassReminders = useCallback(() => {
+    const today = todayStamp();
+    const currentStudents = studentsRef.current;
+    const targets = getClassReminderCandidates(currentStudents, scheduledClassesRef.current, today);
+    if (!targets.length) return 0;
+    const studentsById = new Map(currentStudents.map((student) => [student.id, student]));
+    const targetStudentIds = new Set(targets.map((target) => target.studentId));
+    const logs = targets.flatMap((target) => {
+      const student = studentsById.get(target.studentId);
+      if (!student) return [];
+      return makeMessageLog({
+        kind: "reminder",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: classReminderTextForStudent(student, target)
+      });
+    });
+    if (!logs.length) return 0;
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const nextStudents = studentsRef.current.map((student) => (targetStudentIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+    studentsRef.current = nextStudents;
+    setStudents(nextStudents);
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const sendMilestoneEncouragements = useCallback(() => {
+    const today = todayStamp();
+    const targets = studentsRef.current.filter((student) => isMilestoneEncouragementDue(student, today));
+    if (!targets.length) return 0;
+    const targetIds = new Set(targets.map((student) => student.id));
+    const logs = targets.map((student) =>
+      makeMessageLog({
+        kind: "follow-up",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: milestoneEncouragementTextForStudent(student)
+      })
+    );
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const nextStudents = studentsRef.current.map((student) => (targetIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+    studentsRef.current = nextStudents;
+    setStudents(nextStudents);
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const sendBeltTestInvites = useCallback(() => {
+    const today = todayStamp();
+    const targets = studentsRef.current.filter((student) => isBeltTestInviteDue(student, today));
+    if (!targets.length) return 0;
+    const targetIds = new Set(targets.map((student) => student.id));
+    const logs = targets.map((student) =>
+      makeMessageLog({
+        kind: "follow-up",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: beltTestInviteTextForStudent(student)
+      })
+    );
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const nextStudents = studentsRef.current.map((student) => (targetIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+    studentsRef.current = nextStudents;
+    setStudents(nextStudents);
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const queueStudentMilestoneEncouragement = useCallback(
+    (studentId: string) => {
+      const student = studentsRef.current.find((item) => item.id === studentId);
+      if (!student || !isCurrentStudentEnrollment(student) || !student.phone.trim()) return undefined;
+      const today = todayStamp();
+      const log = makeMessageLog({
+        kind: "follow-up",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: milestoneEncouragementTextForStudent(student)
+      });
+      const [insertedLog] = appendUniqueMessageLogs([log]);
+      const queuedLog = insertedLog ?? findExistingMessageLog(log);
+      const nextStudents = studentsRef.current.map((item) => (item.id === student.id ? { ...item, lastContactedAt: today } : item));
+      studentsRef.current = nextStudents;
+      setStudents(nextStudents);
+      return queuedLog;
+    },
+    [appendUniqueMessageLogs, findExistingMessageLog, setStudents]
+  );
+
+  const queueStudentProfileUpdateRequest = useCallback(
+    (studentId: string) => {
+      const student = studentsRef.current.find((item) => item.id === studentId);
+      if (!student || !isCurrentStudentEnrollment(student) || !student.phone.trim()) return undefined;
+      const today = todayStamp();
+      const log = makeMessageLog({
+        kind: "profile-update",
+        recipientName: studentFullName(student),
+        recipientPhone: student.phone,
+        body: profileUpdateTextForStudent(student)
+      });
+      const [insertedLog] = appendUniqueMessageLogs([log]);
+      const queuedLog = insertedLog ?? findExistingMessageLog(log);
+      const nextStudents = studentsRef.current.map((item) => (item.id === student.id ? { ...item, lastContactedAt: today } : item));
+      studentsRef.current = nextStudents;
+      setStudents(nextStudents);
+      return queuedLog;
+    },
+    [appendUniqueMessageLogs, findExistingMessageLog, setStudents]
+  );
 
   const sendMarketingBlast = useCallback(
     (body: string) => {
       const cleanBody = body.trim();
       if (!cleanBody) return 0;
+      const logs = studentsRef.current
+        .filter((student) => isCurrentOperationsStudent(student) && student.phone.trim())
+        .map((student) =>
+          makeMessageLog({
+            kind: "marketing",
+            recipientName: studentFullName(student),
+            recipientPhone: student.phone,
+            body: cleanBody
+          })
+        );
+      if (!logs.length) return 0;
       const campaign: MessageCampaign = {
         id: createPrototypeId("campaign"),
         title: "Marketing blast",
@@ -1769,28 +3122,77 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         audience: "all-students",
         createdAt: new Date().toISOString()
       };
-      const logs = students
-        .filter((student) => student.phone.trim())
-        .map((student) =>
-          makeMessageLog({
-            kind: "marketing",
-            recipientName: studentFullName(student),
-            recipientPhone: student.phone,
-            body: cleanBody,
-            campaignId: campaign.id
-          })
-        );
+      const logsWithCampaign = logs.map((log) => ({ ...log, campaignId: campaign.id }));
+      const insertedLogs = appendUniqueMessageLogs(logsWithCampaign);
+      if (!insertedLogs.length) return 0;
       setMessageCampaigns((current) => [campaign, ...current]);
-      setMessageLogs((current) => [...logs, ...current]);
-      return logs.length;
+      return insertedLogs.length;
     },
-    [setMessageCampaigns, setMessageLogs, students]
+    [appendUniqueMessageLogs, setMessageCampaigns]
   );
+
+  const sendQueuedTexts = useCallback(() => {
+    const currentMessageLogs = messageLogsRef.current;
+    const currentStudents = studentsRef.current;
+    const deliverableQueuedIds = new Set(
+      currentMessageLogs.filter((message) => message.status === "queued" && isQueuedMessageDeliverable(message, currentStudents)).map((message) => message.id)
+    );
+    const staleQueuedIds = new Set(
+      currentMessageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, currentStudents)).map((message) => message.id)
+    );
+    if (!deliverableQueuedIds.size && !staleQueuedIds.size) return 0;
+    const sentAt = new Date().toISOString();
+    const nextMessageLogs = currentMessageLogs.flatMap((message): MessageLog[] => {
+      if (message.status !== "queued") return [message];
+      if (deliverableQueuedIds.has(message.id)) return [{ ...message, status: "sent", sentAt }];
+      if (staleQueuedIds.has(message.id)) return [];
+      return [message];
+    });
+    messageLogsRef.current = nextMessageLogs;
+    setMessageLogs(nextMessageLogs);
+    return deliverableQueuedIds.size;
+  }, [setMessageLogs]);
+
+  const sendQueuedText = useCallback(
+    (messageId: string) => {
+      const currentMessageLogs = messageLogsRef.current;
+      const queuedMessage = currentMessageLogs.find((message) => message.id === messageId && message.status === "queued");
+      if (!queuedMessage) return undefined;
+      if (!isQueuedMessageDeliverable(queuedMessage, studentsRef.current)) {
+        const nextMessageLogs = currentMessageLogs.filter((message) => message.id !== messageId || message.status !== "queued");
+        messageLogsRef.current = nextMessageLogs;
+        setMessageLogs(nextMessageLogs);
+        return undefined;
+      }
+      const sentAt = new Date().toISOString();
+      const sentMessage: MessageLog = { ...queuedMessage, status: "sent", sentAt };
+      const nextMessageLogs = currentMessageLogs.map((message) => (message.id === messageId && message.status === "queued" ? sentMessage : message));
+      messageLogsRef.current = nextMessageLogs;
+      setMessageLogs(nextMessageLogs);
+      return sentMessage;
+    },
+    [setMessageLogs]
+  );
+
+  const clearStaleQueuedTexts = useCallback(() => {
+    const currentMessageLogs = messageLogsRef.current;
+    const currentStudents = studentsRef.current;
+    const staleQueuedIds = new Set(
+      currentMessageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, currentStudents)).map((message) => message.id)
+    );
+    if (!staleQueuedIds.size) return 0;
+    const nextMessageLogs = currentMessageLogs.filter((message) => message.status !== "queued" || !staleQueuedIds.has(message.id));
+    messageLogsRef.current = nextMessageLogs;
+    setMessageLogs(nextMessageLogs);
+    return staleQueuedIds.size;
+  }, [setMessageLogs]);
 
   const sendDirectMessage = useCallback(
     (message: { senderId: string; senderName: string; recipientId: string; recipientName: string; body: string }) => {
       const body = message.body.trim();
       if (!message.senderId || !message.recipientId || message.senderId === message.recipientId || !body) return undefined;
+      const currentStudents = studentsRef.current;
+      if (!isDirectMessageParticipantAvailable(message.senderId, currentStudents) || !isDirectMessageParticipantAvailable(message.recipientId, currentStudents)) return undefined;
       const threadId = [message.senderId, message.recipientId].sort().join("__");
       const createdMessage: DirectMessage = {
         id: createPrototypeId("direct"),
@@ -1803,7 +3205,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         createdAt: new Date().toISOString(),
         status: "sent"
       };
-      setDirectMessages((current) => [...current, createdMessage]);
+      const existingMessage = directMessagesRef.current.find((item) => directMessageOutboxKey(item) === directMessageOutboxKey(createdMessage));
+      if (existingMessage) return existingMessage;
+      const nextDirectMessages = [...directMessagesRef.current, createdMessage];
+      directMessagesRef.current = nextDirectMessages;
+      setDirectMessages(nextDirectMessages);
       return createdMessage;
     },
     [setDirectMessages]
@@ -1816,12 +3222,15 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     orders,
     bookings,
     contacts,
+    leadReviews,
     session,
     accountRole,
     accounts,
+    accountRoles,
     managedAccounts,
     currentManagedAccount,
     managerAccountAccess,
+    childAccounts,
     guardianChildren,
     students,
     studioClasses,
@@ -1850,6 +3259,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     saveBooking,
     saveContact,
     login,
+    loginRegisteredAccount,
     loginManagedAccount,
     loginChildAccount,
     loginChildCredentials,
@@ -1859,6 +3269,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     register,
     setAccountRole,
     createManagedAccount,
+    updateManagedAccountStatus,
     addChildAccount,
     updateChildAccount,
     addOperationsStudent,
@@ -1868,6 +3279,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     updateStudioClass,
     deleteStudioClass,
     addScheduledClass,
+    deleteScheduledClass,
+    deletePastOneTimeScheduledClasses,
     addStudioEvent,
     addTrainingVideoFolder,
     addTrainingVideo,
@@ -1876,9 +3289,26 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     addMerchandiseItem,
     updateMerchandiseItem,
     deleteMerchandiseItem,
+    restockLowInventory,
+    reviewLeadFollowUps,
+    restoreOperationsBackup,
     recordStudentCheckIn,
     sendMissedClassFollowUps,
+    sendAttendanceGapCheckIns,
+    sendTrialConversionFollowUps,
+    sendNewStudentCheckIns,
+    sendPausedStudentReactivationFollowUps,
+    sendCelebrationOutreach,
+    sendProfileUpdateRequests,
+    sendClassReminders,
+    sendMilestoneEncouragements,
+    sendBeltTestInvites,
+    queueStudentMilestoneEncouragement,
+    queueStudentProfileUpdateRequest,
     sendMarketingBlast,
+    sendQueuedTexts,
+    sendQueuedText,
+    clearStaleQueuedTexts,
     sendDirectMessage
   };
 

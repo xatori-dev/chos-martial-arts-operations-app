@@ -169,6 +169,14 @@ export interface ContactSubmission {
   createdAt: string;
 }
 
+export interface LeadReview {
+  id: string;
+  leadId: string;
+  kind: "booking" | "contact";
+  label: string;
+  reviewedAt: string;
+}
+
 export interface AccountSession {
   email: string;
   remembered: boolean;
@@ -249,6 +257,7 @@ export interface StudentRecord {
   missedClassCount: number;
   lastCheckIn?: string;
   lastContactedAt?: string;
+  profileUpdatedAt?: string;
   joinedAt: string;
   notes?: string;
 }
@@ -288,12 +297,13 @@ export interface MessageCampaign {
 
 export interface MessageLog {
   id: string;
-  kind: "welcome" | "reminder" | "follow-up" | "marketing";
+  kind: "welcome" | "reminder" | "follow-up" | "marketing" | "celebration" | "profile-update";
   recipientName: string;
   recipientPhone: string;
   body: string;
   status: "queued" | "sent";
   createdAt: string;
+  sentAt?: string;
   campaignId?: string;
 }
 
@@ -365,6 +375,9 @@ export interface MerchandiseItem {
   category: string;
   price: number;
   stock: number;
+  reorderPoint?: number;
+  targetStock?: number;
+  lastRestockedAt?: string;
   description: string;
   imageLabel: string;
   imageDataUrl?: string;

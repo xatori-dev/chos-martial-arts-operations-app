@@ -246,7 +246,7 @@ function LaunchLogoAnimation({ onReveal, onComplete }: { onReveal: () => void; o
 }
 
 function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean; handoffActive?: boolean }) {
-  const { childUsernameExists, login, loginChildCredentials, loginManagedAccount, managedUsernameExists, register, showToast } = useAppState();
+  const { childUsernameExists, login, loginChildCredentials, loginManagedAccount, loginRegisteredAccount, managedUsernameExists, register, showToast } = useAppState();
   const navigate = useNavigate();
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [registerForm, setRegisterForm] = useState({ email: "", password: "" });
@@ -285,6 +285,11 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
       navigate("/");
       return;
     }
+    const registeredAccount = loginRegisteredAccount(loginForm);
+    if (registeredAccount) {
+      navigate("/");
+      return;
+    }
     const managedAccount = loginManagedAccount(loginForm);
     if (managedAccount) {
       navigate("/");
@@ -298,8 +303,7 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
       showToast("Check the child username and password.");
       return;
     }
-    login(loginForm.username, true, "staff");
-    navigate("/");
+    showToast("Check the username and password.");
   };
 
   const submitRegister = (event: FormEvent) => {
@@ -310,8 +314,12 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
       showToast("Check the create account fields.");
       return;
     }
-    register(registerForm.email);
-    login(registerForm.email, true, "staff");
+    const registeredAccount = register(registerForm);
+    if (!registeredAccount) {
+      showToast("That account is already registered. Sign in with the saved password.");
+      return;
+    }
+    login(registeredAccount.email, true, "guardian");
     navigate("/");
   };
 
