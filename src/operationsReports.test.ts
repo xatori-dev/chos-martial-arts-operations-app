@@ -18,6 +18,7 @@ function makeStudent(overrides: Partial<StudentRecord> & Pick<StudentRecord, "id
     classesAttended: 0,
     missedClassCount: 0,
     joinedAt: "2026-05-01",
+    smsConsentUpdatedAt: "2026-05-01T10:00:00.000Z",
     ...overrides
   };
 }
@@ -742,6 +743,45 @@ describe("buildReportsCommandCenter", () => {
     expect(report.priorityActions).toEqual([
       expect.objectContaining({ id: "queued-texts", count: 1, detail: "Ari Nguyen" }),
       expect.objectContaining({ id: "stale-queued-text-cleanup", title: "Clear stale queued texts", count: 2, detail: "Cora Miles, Noah Woods" })
+    ]);
+  });
+
+  it("requires explicit SMS opt-in before queued texts are relay-ready", () => {
+    const report = buildReportsCommandCenter({
+      today: "2026-06-01",
+      students: [
+        makeStudent({
+          id: "student-1",
+          firstName: "Ari",
+          lastName: "Nguyen",
+          phone: "(262) 555-0101",
+          studentSmsConsentUpdatedAt: "2026-05-20T10:00:00.000Z",
+          lastCheckIn: "2026-06-01"
+        }),
+        makeStudent({
+          id: "student-2",
+          firstName: "Bree",
+          lastName: "Santos",
+          phone: "(262) 555-0102",
+          smsConsentUpdatedAt: undefined,
+          lastCheckIn: "2026-06-01"
+        })
+      ],
+      checkIns: [] satisfies StudentCheckIn[],
+      scheduledClasses: [] satisfies ScheduledClass[],
+      studioClasses: [] satisfies StudioClass[],
+      studioEvents: [] satisfies StudioEvent[],
+      messageLogs: [
+        { id: "message-ari", kind: "follow-up", recipientName: "Ari Nguyen", recipientPhone: "(262) 555-0101", body: "Ari has documented SMS consent.", status: "queued", createdAt: "2026-06-01T12:00:00.000Z" },
+        { id: "message-bree", kind: "follow-up", recipientName: "Bree Santos", recipientPhone: "(262) 555-0102", body: "Bree is missing SMS consent evidence.", status: "queued", createdAt: "2026-06-01T12:05:00.000Z" }
+      ] satisfies MessageLog[],
+      merchandiseItems: [] satisfies MerchandiseItem[]
+    });
+
+    expect(report.summary).toMatchObject({ queuedMessages: 1, staleQueuedMessages: 1 });
+    expect(report.priorityActions).toEqual([
+      expect.objectContaining({ id: "queued-texts", count: 1, detail: "Ari Nguyen" }),
+      expect.objectContaining({ id: "stale-queued-text-cleanup", count: 1, detail: "Bree Santos" })
     ]);
   });
 });

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { buildOperationsBackupSnapshot, type OperationsBackupInput } from "./operationsBackup";
 import { AppStateProvider, useAppState } from "./state";
+import serviceWorkerSource from "../public/cho-service-worker.js?raw";
 
 function stubMatchMedia(matches = false) {
   Object.defineProperty(window, "matchMedia", {
@@ -84,6 +85,54 @@ function renderLoggedInApp(path = "/", role: "staff" | "student" | "guardian" = 
       </AppStateProvider>
     </MemoryRouter>
   );
+}
+
+type ChoServiceWorkerTestEvent = {
+  data?: {
+    json?: () => unknown;
+    text?: () => string;
+  };
+  notification?: {
+    close: () => void;
+    data?: {
+      url?: string;
+      threadId?: string;
+    };
+  };
+  waitUntil: (promise: Promise<unknown>) => void;
+};
+
+type ChoServiceWorkerHandler = (event: ChoServiceWorkerTestEvent) => void;
+
+function loadChoServiceWorkerForTest(
+  scope = "https://chos.example/chos-martial-arts-prototype/",
+  workerNavigator: { setAppBadge?: (contents?: number) => Promise<void>; clearAppBadge?: () => Promise<void> } = {}
+) {
+  const listeners = new Map<string, ChoServiceWorkerHandler>();
+  const showNotification = vi.fn().mockResolvedValue(undefined);
+  const matchAll = vi.fn().mockResolvedValue([]);
+  const openWindow = vi.fn().mockResolvedValue(undefined);
+  const selfMock = {
+    location: { origin: "https://chos.example" },
+    registration: { scope, showNotification },
+    clients: { matchAll, openWindow },
+    navigator: workerNavigator,
+    addEventListener: vi.fn((eventName: string, handler: ChoServiceWorkerHandler) => {
+      listeners.set(eventName, handler);
+    })
+  };
+
+  new Function("self", serviceWorkerSource)(selfMock);
+
+  return {
+    listeners,
+    showNotification,
+    navigator: workerNavigator,
+    clients: {
+      matchAll,
+      openWindow
+    }
+  };
 }
 
 function renderManagedStaffApp(path: string, account: Record<string, unknown>) {
@@ -192,7 +241,8 @@ const completeStudentSafetyFields = {
   guardianEmail: "family@example.com",
   emergencyContactName: "Emergency Contact",
   emergencyContactRelationship: "Parent",
-  emergencyContactPhone: "(262) 555-0200"
+  emergencyContactPhone: "(262) 555-0200",
+  smsConsentUpdatedAt: "2026-05-01T10:00:00.000Z"
 };
 
 function dateKeyOffset(days: number) {
@@ -201,7 +251,12 @@ function dateKeyOffset(days: number) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function makeOperationsBackupInput(overrides: Partial<OperationsBackupInput> = {}): OperationsBackupInput {
+type OperationsBackupInputOverrides = Omit<Partial<OperationsBackupInput>, "automationRuns" | "messagingSetup"> & {
+  automationRuns?: readonly Record<string, unknown>[];
+  messagingSetup?: readonly Record<string, unknown>[];
+};
+
+function makeOperationsBackupInput(overrides: OperationsBackupInputOverrides = {}): OperationsBackupInput {
   return {
     accounts: [],
     accountRoles: [],
@@ -211,8 +266,11 @@ function makeOperationsBackupInput(overrides: Partial<OperationsBackupInput> = {
     studioClasses: [],
     scheduledClasses: [],
     messageCampaigns: [],
+    scheduledTextCampaigns: [],
     messageLogs: [],
+    automationRuns: [],
     directMessages: [],
+    messagingSetup: [],
     studioEvents: [],
     merchandiseItems: [],
     checkIns: [],
@@ -225,7 +283,7 @@ function makeOperationsBackupInput(overrides: Partial<OperationsBackupInput> = {
     contacts: [],
     leadReviews: [],
     ...overrides
-  };
+  } as unknown as OperationsBackupInput;
 }
 
 function CheckInDoubleCallHarness({ studentId, todayKey }: { studentId: string; todayKey: string }) {
@@ -4413,6 +4471,149 @@ describe("post-login operations app", () => {
     ]));
   });
 
+  it("lets students enable device notifications for unread app messages", async () => {
+    const showNotification = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { ready: Promise.resolve({ showNotification }) }
+    });
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: class NotificationMock {
+        static permission = "granted";
+        static requestPermission = vi.fn().mockResolvedValue("granted");
+      }
+    });
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-staff-to-talia",
+        threadId: "direct-staff-seed__student-talia-brooks-seed",
+        senderId: "direct-staff-seed",
+        senderName: "Cho's Manager",
+        recipientId: "student-talia-brooks-seed",
+        recipientName: "Talia Brooks",
+        body: "Your private lesson notes are ready.",
+        createdAt: "2026-06-02T18:00:00.000Z",
+        status: "sent"
+      }
+    ]));
+
+    renderLoggedInApp("/", "student");
+
+    const actionRow = screen.getByLabelText("Student reference action row");
+    fireEvent.click(within(actionRow).getByRole("tab", { name: "Messages" }));
+    const feedPanel = await screen.findByRole("tabpanel", { name: "Messages and event notifications" });
+
+    fireEvent.click(within(feedPanel).getByRole("button", { name: "Enable Message Notifications" }));
+
+    await waitFor(() => {
+      expect(showNotification).toHaveBeenCalledWith("New message from Cho's Manager", expect.objectContaining({
+        body: "Your private lesson notes are ready.",
+        tag: "chos-student-direct-staff-seed__student-talia-brooks-seed",
+        data: expect.objectContaining({ url: expect.stringContaining("/") })
+      }));
+    });
+    expect(await screen.findByText("Device notifications enabled for your app messages.")).toBeInTheDocument();
+
+    fireEvent.click(within(feedPanel).getByRole("button", { name: "Send Student Test Notification" }));
+
+    await waitFor(() => {
+      expect(showNotification).toHaveBeenCalledWith("Cho's student test notification", expect.objectContaining({
+        body: "Device notifications are ready for messages in your Profile feed.",
+        tag: "chos-student-test-notification"
+      }));
+    });
+    expect(await screen.findByText("Student device notification sent.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.homeMessageNotifications.student123-chos.prototype.v1") ?? "{}")).toEqual(expect.objectContaining({
+      browserNotificationsEnabled: true,
+      browserPermission: "granted",
+      lastBrowserNotifiedDirectMessageAt: "2026-06-02T18:00:00.000Z"
+    }));
+  });
+
+  it("lets students connect and sync a private web push subscription", async () => {
+    const pushSubscription = {
+      endpoint: "https://push.example.test/subscriptions/student-device",
+      expirationTime: null,
+      toJSON: () => ({
+        endpoint: "https://push.example.test/subscriptions/student-device",
+        expirationTime: null,
+        keys: {
+          p256dh: "student-public-device-key",
+          auth: "student-device-auth-secret"
+        }
+      })
+    };
+    const subscribe = vi.fn().mockResolvedValue(pushSubscription);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: vi.fn().mockResolvedValue(JSON.stringify({ synced: true }))
+    });
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { ready: Promise.resolve({ pushManager: { subscribe } }) }
+    });
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: class NotificationMock {
+        static permission = "granted";
+        static requestPermission = vi.fn().mockResolvedValue("granted");
+      }
+    });
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock
+    });
+
+    renderLoggedInApp("/", "student");
+
+    const actionRow = screen.getByLabelText("Student reference action row");
+    fireEvent.click(within(actionRow).getByRole("tab", { name: "Messages" }));
+    const feedPanel = await screen.findByRole("tabpanel", { name: "Messages and event notifications" });
+
+    fireEvent.change(within(feedPanel).getByLabelText("Student Web Push public key"), {
+      target: { value: "BEl6PDiRfYyIRLr1YWkN2v6k3cGv2GvZcK2nXrjZ4g6rPQu4xNfQb3-V6X0c0fPKHM8xojN6F0fJgQI3PNe7RDs" }
+    });
+    fireEvent.click(within(feedPanel).getByRole("button", { name: "Connect Student Device" }));
+
+    expect(await screen.findByText("Student push subscription ready for private server sync.")).toBeInTheDocument();
+    expect(subscribe).toHaveBeenCalledWith(expect.objectContaining({
+      userVisibleOnly: true,
+      applicationServerKey: expect.any(Uint8Array)
+    }));
+    expect(JSON.parse(window.localStorage.getItem("chos.homeMessageNotifications.student123-chos.prototype.v1") ?? "{}")).toEqual(expect.objectContaining({
+      browserNotificationsEnabled: true,
+      browserPermission: "granted",
+      pushPublicKey: "BEl6PDiRfYyIRLr1YWkN2v6k3cGv2GvZcK2nXrjZ4g6rPQu4xNfQb3-V6X0c0fPKHM8xojN6F0fJgQI3PNe7RDs",
+      pushSubscriptionEndpoint: "https://push.example.test/subscriptions/student-device",
+      pushSubscriptionJson: expect.stringContaining("https://push.example.test/subscriptions/student-device"),
+      pushSubscribedAt: expect.any(String)
+    }));
+
+    fireEvent.change(within(feedPanel).getByLabelText("Student private push server URL"), { target: { value: "https://push.cho.example/api/push/subscriptions" } });
+    fireEvent.click(within(feedPanel).getByRole("button", { name: "Sync Student Push Subscription" }));
+
+    expect(await screen.findByText("Student push subscription synced to private server.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("https://push.cho.example/api/push/subscriptions", expect.objectContaining({
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" }
+    }));
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody).toEqual(expect.objectContaining({
+      schemaVersion: "chos-web-push-subscription.v1",
+      provider: "web-push",
+      deliveryMode: "server-push",
+      requestedBy: expect.objectContaining({
+        email: "student123@chos.prototype",
+        role: "student"
+      }),
+      notificationUrl: expect.stringContaining("/"),
+      subscription: expect.objectContaining({ endpoint: "https://push.example.test/subscriptions/student-device" })
+    }));
+    expect(JSON.stringify(requestBody)).not.toMatch(/VAPID_PRIVATE|privateKey|TWILIO_AUTH_TOKEN|authToken|password/i);
+  });
+
   it("shows a yellow belt journey for a child-created student account after tutorial handoff", async () => {
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
     window.localStorage.setItem(
@@ -4577,6 +4778,149 @@ describe("post-login operations app", () => {
     expect(JSON.parse(window.localStorage.getItem("chos.childAccounts.v1") ?? "[]")).toEqual(expect.arrayContaining([
       expect.objectContaining({ parentEmail: "parent123@chos.prototype", name: "Kai Bennett", username: "kai-cho.child", password: "Dragon123", age: "7", beltSlug: "yellow" })
     ]));
+  });
+
+  it("lets parents enable device notifications for unread family app messages", async () => {
+    const showNotification = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { ready: Promise.resolve({ showNotification }) }
+    });
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: class NotificationMock {
+        static permission = "granted";
+        static requestPermission = vi.fn().mockResolvedValue("granted");
+      }
+    });
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-staff-to-mina-parent",
+        threadId: "direct-staff-seed__parent-child-mina-cho",
+        senderId: "direct-staff-seed",
+        senderName: "Cho's Manager",
+        recipientId: "parent-child-mina-cho",
+        recipientName: "Mina Cho Family",
+        body: "Mina's testing checklist is ready for review.",
+        createdAt: "2026-06-02T19:00:00.000Z",
+        status: "sent"
+      }
+    ]));
+
+    renderLoggedInApp("/", "guardian");
+
+    const parentTools = screen.getByLabelText("Parent student tools");
+    fireEvent.click(within(parentTools).getByRole("button", { name: "Messages" }));
+    const messagesView = screen.getByLabelText("Parent messages view");
+
+    fireEvent.click(within(messagesView).getByRole("button", { name: "Enable Parent Message Notifications" }));
+
+    await waitFor(() => {
+      expect(showNotification).toHaveBeenCalledWith("New family message from Cho's Manager", expect.objectContaining({
+        body: "Mina's testing checklist is ready for review.",
+        tag: "chos-parent-direct-staff-seed__parent-child-mina-cho",
+        data: expect.objectContaining({ url: expect.stringContaining("/") })
+      }));
+    });
+    expect(await screen.findByText("Device notifications enabled for parent app messages.")).toBeInTheDocument();
+
+    fireEvent.click(within(messagesView).getByRole("button", { name: "Send Parent Test Notification" }));
+
+    await waitFor(() => {
+      expect(showNotification).toHaveBeenCalledWith("Cho's parent test notification", expect.objectContaining({
+        body: "Device notifications are ready for messages in your Parent Profile.",
+        tag: "chos-parent-test-notification"
+      }));
+    });
+    expect(await screen.findByText("Parent device notification sent.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.homeMessageNotifications.parent123-chos.prototype.v1") ?? "{}")).toEqual(expect.objectContaining({
+      browserNotificationsEnabled: true,
+      browserPermission: "granted",
+      lastBrowserNotifiedDirectMessageAt: "2026-06-02T19:00:00.000Z"
+    }));
+  });
+
+  it("lets parents connect and sync a private web push subscription", async () => {
+    const pushSubscription = {
+      endpoint: "https://push.example.test/subscriptions/parent-device",
+      expirationTime: null,
+      toJSON: () => ({
+        endpoint: "https://push.example.test/subscriptions/parent-device",
+        expirationTime: null,
+        keys: {
+          p256dh: "parent-public-device-key",
+          auth: "parent-device-auth-secret"
+        }
+      })
+    };
+    const subscribe = vi.fn().mockResolvedValue(pushSubscription);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: vi.fn().mockResolvedValue(JSON.stringify({ synced: true }))
+    });
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { ready: Promise.resolve({ pushManager: { subscribe } }) }
+    });
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: class NotificationMock {
+        static permission = "granted";
+        static requestPermission = vi.fn().mockResolvedValue("granted");
+      }
+    });
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock
+    });
+
+    renderLoggedInApp("/", "guardian");
+
+    const parentTools = screen.getByLabelText("Parent student tools");
+    fireEvent.click(within(parentTools).getByRole("button", { name: "Messages" }));
+    const messagesView = screen.getByLabelText("Parent messages view");
+
+    fireEvent.change(within(messagesView).getByLabelText("Parent Web Push public key"), {
+      target: { value: "BEl6PDiRfYyIRLr1YWkN2v6k3cGv2GvZcK2nXrjZ4g6rPQu4xNfQb3-V6X0c0fPKHM8xojN6F0fJgQI3PNe7RDs" }
+    });
+    fireEvent.click(within(messagesView).getByRole("button", { name: "Connect Parent Device" }));
+
+    expect(await screen.findByText("Parent push subscription ready for private server sync.")).toBeInTheDocument();
+    expect(subscribe).toHaveBeenCalledWith(expect.objectContaining({
+      userVisibleOnly: true,
+      applicationServerKey: expect.any(Uint8Array)
+    }));
+    expect(JSON.parse(window.localStorage.getItem("chos.homeMessageNotifications.parent123-chos.prototype.v1") ?? "{}")).toEqual(expect.objectContaining({
+      browserNotificationsEnabled: true,
+      browserPermission: "granted",
+      pushPublicKey: "BEl6PDiRfYyIRLr1YWkN2v6k3cGv2GvZcK2nXrjZ4g6rPQu4xNfQb3-V6X0c0fPKHM8xojN6F0fJgQI3PNe7RDs",
+      pushSubscriptionEndpoint: "https://push.example.test/subscriptions/parent-device",
+      pushSubscriptionJson: expect.stringContaining("https://push.example.test/subscriptions/parent-device"),
+      pushSubscribedAt: expect.any(String)
+    }));
+
+    fireEvent.change(within(messagesView).getByLabelText("Parent private push server URL"), { target: { value: "https://push.cho.example/api/push/subscriptions" } });
+    fireEvent.click(within(messagesView).getByRole("button", { name: "Sync Parent Push Subscription" }));
+
+    expect(await screen.findByText("Parent push subscription synced to private server.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("https://push.cho.example/api/push/subscriptions", expect.objectContaining({
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" }
+    }));
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody).toEqual(expect.objectContaining({
+      schemaVersion: "chos-web-push-subscription.v1",
+      provider: "web-push",
+      deliveryMode: "server-push",
+      requestedBy: expect.objectContaining({
+        email: "parent123@chos.prototype",
+        role: "guardian"
+      }),
+      notificationUrl: expect.stringContaining("/"),
+      subscription: expect.objectContaining({ endpoint: "https://push.example.test/subscriptions/parent-device" })
+    }));
+    expect(JSON.stringify(requestBody)).not.toMatch(/VAPID_PRIVATE|privateKey|TWILIO_AUTH_TOKEN|authToken|password/i);
   });
 
   it("warns parents when a child username collides with a managed login", async () => {
@@ -6634,6 +6978,7 @@ describe("post-login operations app", () => {
         emergencyContactRelationship: "Parent",
         emergencyContactPhone: "",
         lastCheckIn: todayKey,
+        smsConsentUpdatedAt: "2026-05-21T10:00:00.000Z",
         joinedAt: "2026-05-01"
       },
       {
@@ -6654,6 +6999,7 @@ describe("post-login operations app", () => {
         emergencyContactRelationship: "Uncle",
         emergencyContactPhone: "(262) 555-0201",
         lastCheckIn: todayKey,
+        smsConsentUpdatedAt: "2026-05-21T10:00:00.000Z",
         joinedAt: "2026-05-01"
       },
       {
@@ -6826,6 +7172,34 @@ describe("post-login operations app", () => {
     });
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    window.localStorage.setItem("chos.operations.twilioRelayEndpoint.v1", "https://relay.example.test/api/messages/twilio");
+    window.localStorage.setItem("chos.operations.pushServerEndpoint.v1", "https://push.example.test/api/push/subscriptions");
+    window.localStorage.setItem("chos.operations.twilioLaunchProfile.v1", JSON.stringify({
+      messagingServiceSid: "MG1234567890abcdef",
+      smsSender: "+12625550100",
+      inboundWebhookUrl: "https://relay.example.test/api/messages/inbound",
+      statusCallbackBaseUrl: "https://relay.example.test/api/messages/status",
+      relayHealthCheckUrl: "https://relay.example.test/api/messages/health",
+      managerAuthMode: "server-session",
+      senderType: "10dlc",
+      a2pBrandStatus: "approved",
+      a2pCampaignStatus: "approved",
+      tollFreeVerificationStatus: "not-used",
+      complianceNotes: "A2P approved for studio outreach.",
+      savedAt: "2026-06-03T10:15:00.000Z"
+    }));
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({
+      browserNotificationsEnabled: true,
+      pushPublicKey: "BO_PUBLIC_WEB_PUSH_KEY",
+      pushSubscriptionEndpoint: "https://fcm.googleapis.com/fcm/send/device-1",
+      pushSubscriptionJson: JSON.stringify({
+        endpoint: "https://fcm.googleapis.com/fcm/send/device-1",
+        keys: {
+          p256dh: "raw-device-p256dh",
+          auth: "raw-device-auth"
+        }
+      })
+    }));
 
     try {
       renderLoggedInApp("/reports");
@@ -6835,7 +7209,7 @@ describe("post-login operations app", () => {
       expect(within(backupPanel).getByText("20 students")).toBeInTheDocument();
       expect(within(backupPanel).getByText("2 merchandise items")).toBeInTheDocument();
       expect(within(backupPanel).getByText("2 child accounts")).toBeInTheDocument();
-      expect(within(backupPanel).getByText("Saved account passwords are not included in the export.")).toBeInTheDocument();
+      expect(within(backupPanel).getByText("Saved account passwords, Twilio credentials, VAPID private keys, and raw PushSubscription key material are not included in the export.")).toBeInTheDocument();
 
       fireEvent.click(within(backupPanel).getByRole("button", { name: "Export operations backup" }));
 
@@ -6852,9 +7226,26 @@ describe("post-login operations app", () => {
         data: {
           students: expect.arrayContaining([expect.objectContaining({ firstName: "Talia", lastName: "Brooks" })]),
           merchandiseItems: expect.arrayContaining([expect.objectContaining({ name: "Youth Boxing Gloves" })]),
-          childAccounts: expect.arrayContaining([expect.objectContaining({ username: "mina-cho.child" })])
+          childAccounts: expect.arrayContaining([expect.objectContaining({ username: "mina-cho.child" })]),
+          messagingSetup: [
+            expect.objectContaining({
+              id: "production-messaging",
+              twilioRelayEndpoint: "https://relay.example.test/api/messages/twilio",
+              pushServerEndpoint: "https://push.example.test/api/push/subscriptions",
+              webPushPublicKey: "BO_PUBLIC_WEB_PUSH_KEY",
+              twilioLaunchProfile: expect.objectContaining({
+                messagingServiceSid: "MG1234567890abcdef",
+                smsSender: "+12625550100",
+                managerAuthMode: "server-session",
+                senderType: "10dlc",
+                a2pBrandStatus: "approved",
+                a2pCampaignStatus: "approved"
+              })
+            })
+          ]
         }
       });
+      expect(JSON.stringify(backup.data.messagingSetup)).not.toMatch(/pushSubscriptionJson|pushSubscriptionEndpoint|raw-device-p256dh|raw-device-auth|fcm\.googleapis/i);
       expect(clickAnchor).toHaveBeenCalledTimes(1);
       expect(createdAnchor).toHaveAttribute("download", expect.stringMatching(/^chos-operations-backup-\d{4}-\d{2}-\d{2}\.json$/));
       expect(revokeObjectURL).toHaveBeenCalledWith("blob:operations-backup");
@@ -6921,6 +7312,79 @@ describe("post-login operations app", () => {
       expect.objectContaining({ id: "merch-restored", name: "Restored Gloves", stock: 6 })
     ]);
     expect(input.value).toBe("");
+  });
+
+  it("restores portable messaging setup from operations backups without replacing current push subscription keys", async () => {
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({
+      browserNotificationsEnabled: true,
+      pushPublicKey: "BO_OLD_PUBLIC_WEB_PUSH_KEY",
+      pushSubscriptionEndpoint: "https://fcm.googleapis.com/fcm/send/current-device",
+      pushSubscriptionJson: JSON.stringify({
+        endpoint: "https://fcm.googleapis.com/fcm/send/current-device",
+        keys: {
+          p256dh: "current-device-p256dh",
+          auth: "current-device-auth"
+        }
+      })
+    }));
+    const backup = buildOperationsBackupSnapshot(
+      makeOperationsBackupInput({
+        messagingSetup: [
+          {
+            id: "production-messaging",
+            twilioRelayEndpoint: "https://relay.example.test/api/messages/twilio",
+            pushServerEndpoint: "https://push.example.test/api/push/subscriptions",
+            webPushPublicKey: "BO_RESTORED_PUBLIC_WEB_PUSH_KEY",
+            pushSubscriptionEndpoint: "https://fcm.googleapis.com/fcm/send/backup-device",
+            pushSubscriptionJson: JSON.stringify({
+              endpoint: "https://fcm.googleapis.com/fcm/send/backup-device",
+              keys: {
+                p256dh: "backup-device-p256dh",
+                auth: "backup-device-auth"
+              }
+            }),
+            twilioLaunchProfile: {
+              messagingServiceSid: "MG1234567890abcdef",
+              smsSender: "+12625550100",
+              inboundWebhookUrl: "https://relay.example.test/api/messages/inbound",
+              statusCallbackBaseUrl: "https://relay.example.test/api/messages/status",
+              relayHealthCheckUrl: "https://relay.example.test/api/messages/health",
+              managerAuthMode: "server-session",
+              senderType: "10dlc",
+              a2pBrandStatus: "approved",
+              a2pCampaignStatus: "approved",
+              tollFreeVerificationStatus: "not-used",
+              complianceNotes: "A2P approved for studio outreach.",
+              savedAt: "2026-06-03T10:15:00.000Z"
+            }
+          }
+        ]
+      }),
+      "2026-06-03T12:00:00.000Z"
+    );
+    renderLoggedInApp("/reports");
+
+    const backupPanel = screen.getByLabelText("Operations data backup");
+    const input = within(backupPanel).getByLabelText("Import operations backup") as HTMLInputElement;
+    const file = new File([JSON.stringify(backup)], "chos-operations-backup-messaging-setup.json", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText("Operations backup restored: 1 record across 1 section.")).toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.operations.twilioRelayEndpoint.v1")).toBe("https://relay.example.test/api/messages/twilio");
+    expect(window.localStorage.getItem("chos.operations.pushServerEndpoint.v1")).toBe("https://push.example.test/api/push/subscriptions");
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.twilioLaunchProfile.v1") ?? "{}")).toEqual(expect.objectContaining({
+      messagingServiceSid: "MG1234567890abcdef",
+      smsSender: "+12625550100",
+      managerAuthMode: "server-session",
+      senderType: "10dlc"
+    }));
+    const notificationSettings = JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.v1") ?? "{}");
+    expect(notificationSettings).toEqual(expect.objectContaining({
+      pushPublicKey: "BO_RESTORED_PUBLIC_WEB_PUSH_KEY",
+      pushSubscriptionEndpoint: "https://fcm.googleapis.com/fcm/send/current-device",
+      pushSubscriptionJson: expect.stringContaining("current-device-p256dh")
+    }));
+    expect(JSON.stringify(notificationSettings)).not.toMatch(/backup-device-p256dh|backup-device-auth|fcm\.googleapis\.com\/fcm\/send\/backup-device/i);
   });
 
   it("uses restored student data for same-action outreach after importing a backup", async () => {
@@ -10285,6 +10749,34 @@ describe("post-login operations app", () => {
     expect(screen.getAllByText(/missed 3 classes/i).length).toBeGreaterThan(0);
   });
 
+  it("does not queue missed-class follow-up texts without SMS consent evidence", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 3,
+        lastContactedAt: dateKeyOffset(-10),
+        joinedAt: "2026-01-01",
+        smsConsentUpdatedAt: undefined
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.click(screen.getByRole("button", { name: "Send Missed-Class Follow-Ups" }));
+
+    expect(await screen.findByText("No missed-class follow-ups needed.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+  });
+
   it("lets staff send every queued text from message settings", async () => {
     renderLoggedInApp("/messages");
 
@@ -10296,6 +10788,2630 @@ describe("post-login operations app", () => {
     expect(await screen.findByText("2 queued texts sent.")).toBeInTheDocument();
     expect(screen.queryByText("queued")).not.toBeInTheDocument();
     expect(screen.getAllByText("sent").length).toBeGreaterThan(1);
+  });
+
+  it("shows unread app-message notifications and lets staff mark them seen from message settings", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-ari-inbound",
+        threadId: "direct-staff-seed__student-ari",
+        senderId: "student-ari",
+        senderName: "Ari Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Can I get the testing schedule?",
+        createdAt: "2026-06-02T15:00:00.000Z",
+        status: "sent"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({ lastSeenDirectMessageAt: "2026-06-01T10:00:00.000Z" }));
+
+    renderLoggedInApp("/messages");
+
+    expect(screen.getByRole("heading", { name: "Notification Center" })).toBeInTheDocument();
+    expect(screen.getByText("1 unread app message")).toBeInTheDocument();
+    expect(screen.getByText("Can I get the testing schedule?")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark app messages seen" }));
+
+    expect(await screen.findByText("App message notifications marked seen.")).toBeInTheDocument();
+    expect(screen.getByText("0 unread app messages")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.v1") ?? "{}")).toEqual(expect.objectContaining({
+      lastSeenDirectMessageAt: "2026-06-02T15:00:00.000Z"
+    }));
+  });
+
+  it("keeps operations notification settings scoped to the active staff account", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-ari-inbound",
+        threadId: "direct-staff-seed__student-ari",
+        senderId: "student-ari",
+        senderName: "Ari Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Can I get the testing schedule?",
+        createdAt: "2026-06-02T15:00:00.000Z",
+        status: "sent"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({
+      browserNotificationsEnabled: true,
+      browserPermission: "granted",
+      lastSeenDirectMessageAt: "2026-06-03T10:00:00.000Z",
+      pushPublicKey: "manager-public-key",
+      pushSubscriptionEndpoint: "https://push.example.test/subscriptions/manager-device",
+      pushSubscriptionJson: JSON.stringify({
+        endpoint: "https://push.example.test/subscriptions/manager-device",
+        expirationTime: null
+      }),
+      pushSubscribedAt: "2026-06-03T10:00:00.000Z"
+    }));
+
+    renderManagedStaffApp("/messages", {
+      id: "staff-jordan",
+      displayName: "Jordan Lee",
+      username: "jordan.staff",
+      password: "StaffPass123",
+      role: "staff",
+      status: "active",
+      access: ["messages"],
+      createdAt: "2026-06-01T10:00:00.000Z"
+    });
+
+    expect(screen.getByText("1 unread app message")).toBeInTheDocument();
+    expect(screen.getByText("Paste a public VAPID key from the private push server before connecting this device.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark app messages seen" }));
+
+    expect(await screen.findByText("App message notifications marked seen.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.jordan.staff.v1") ?? "{}")).toEqual(expect.objectContaining({
+      lastSeenDirectMessageAt: "2026-06-02T15:00:00.000Z"
+    }));
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.v1") ?? "{}")).toEqual(expect.objectContaining({
+      lastSeenDirectMessageAt: "2026-06-03T10:00:00.000Z",
+      pushSubscriptionEndpoint: "https://push.example.test/subscriptions/manager-device"
+    }));
+  });
+
+  it("syncs the installed app badge with unread app messages when badging is supported", async () => {
+    const setAppBadge = vi.fn().mockResolvedValue(undefined);
+    const clearAppBadge = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "setAppBadge", {
+      configurable: true,
+      value: setAppBadge
+    });
+    Object.defineProperty(navigator, "clearAppBadge", {
+      configurable: true,
+      value: clearAppBadge
+    });
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-ari-inbound",
+        threadId: "direct-staff-seed__student-ari",
+        senderId: "student-ari",
+        senderName: "Ari Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Can I get the testing schedule?",
+        createdAt: "2026-06-02T15:00:00.000Z",
+        status: "sent"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({ lastSeenDirectMessageAt: "2026-06-01T10:00:00.000Z" }));
+
+    renderLoggedInApp("/messages");
+
+    await waitFor(() => {
+      expect(setAppBadge).toHaveBeenCalledWith(1);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark app messages seen" }));
+
+    await waitFor(() => {
+      expect(clearAppBadge).toHaveBeenCalled();
+    });
+  });
+
+  it("normalizes service-worker push notification URLs to the app scope", async () => {
+    const worker = loadChoServiceWorkerForTest();
+    const pushHandler = worker.listeners.get("push");
+    if (!pushHandler) throw new Error("Expected Cho service worker to register a push handler.");
+    const waitUntilPromises: Promise<unknown>[] = [];
+
+    pushHandler({
+      data: {
+        json: () => ({
+          title: "Belt test posted",
+          body: "Open the messages page for the latest update.",
+          url: "messages",
+          tag: "thread-belt-test",
+          threadId: "direct-staff-seed__student-ari"
+        })
+      },
+      waitUntil: (promise) => {
+        waitUntilPromises.push(promise);
+      }
+    });
+
+    await Promise.all(waitUntilPromises);
+
+    expect(worker.showNotification).toHaveBeenCalledWith("Belt test posted", expect.objectContaining({
+      body: "Open the messages page for the latest update.",
+      tag: "thread-belt-test",
+      data: {
+        url: "https://chos.example/chos-martial-arts-prototype/messages",
+        threadId: "direct-staff-seed__student-ari"
+      }
+    }));
+  });
+
+  it("keeps service-worker notification clicks inside the app scope", async () => {
+    const worker = loadChoServiceWorkerForTest();
+    const clickHandler = worker.listeners.get("notificationclick");
+    if (!clickHandler) throw new Error("Expected Cho service worker to register a notification click handler.");
+    const close = vi.fn();
+    const waitUntilPromises: Promise<unknown>[] = [];
+
+    clickHandler({
+      notification: {
+        close,
+        data: {
+          url: "https://example.invalid/phishing"
+        }
+      },
+      waitUntil: (promise) => {
+        waitUntilPromises.push(promise);
+      }
+    });
+
+    await Promise.all(waitUntilPromises);
+
+    expect(close).toHaveBeenCalled();
+    expect(worker.clients.openWindow).toHaveBeenCalledWith("https://chos.example/chos-martial-arts-prototype/messages");
+  });
+
+  it("sets the service-worker app badge from push unread counts", async () => {
+    const setAppBadge = vi.fn().mockResolvedValue(undefined);
+    const worker = loadChoServiceWorkerForTest("https://chos.example/chos-martial-arts-prototype/", { setAppBadge });
+    const pushHandler = worker.listeners.get("push");
+    if (!pushHandler) throw new Error("Expected Cho service worker to register a push handler.");
+    const waitUntilPromises: Promise<unknown>[] = [];
+
+    pushHandler({
+      data: {
+        json: () => ({
+          body: "Ari sent a new message.",
+          unreadCount: 4
+        })
+      },
+      waitUntil: (promise) => {
+        waitUntilPromises.push(promise);
+      }
+    });
+
+    await Promise.all(waitUntilPromises);
+
+    expect(setAppBadge).toHaveBeenCalledWith(4);
+    expect(worker.showNotification).toHaveBeenCalledWith("New Cho's message", expect.objectContaining({
+      body: "Ari sent a new message."
+    }));
+  });
+
+  it("clears the service-worker app badge from zero unread push counts", async () => {
+    const clearAppBadge = vi.fn().mockResolvedValue(undefined);
+    const worker = loadChoServiceWorkerForTest("https://chos.example/chos-martial-arts-prototype/", { clearAppBadge });
+    const pushHandler = worker.listeners.get("push");
+    if (!pushHandler) throw new Error("Expected Cho service worker to register a push handler.");
+    const waitUntilPromises: Promise<unknown>[] = [];
+
+    pushHandler({
+      data: {
+        json: () => ({
+          body: "Messages are marked seen.",
+          unreadCount: 0
+        })
+      },
+      waitUntil: (promise) => {
+        waitUntilPromises.push(promise);
+      }
+    });
+
+    await Promise.all(waitUntilPromises);
+
+    expect(clearAppBadge).toHaveBeenCalled();
+    expect(worker.showNotification).toHaveBeenCalledWith("New Cho's message", expect.objectContaining({
+      body: "Messages are marked seen."
+    }));
+  });
+
+  it("captures and exports a web push subscription for private device notification delivery", async () => {
+    const pushSubscription = {
+      endpoint: "https://push.example.test/subscriptions/device-1",
+      expirationTime: null,
+      toJSON: () => ({
+        endpoint: "https://push.example.test/subscriptions/device-1",
+        expirationTime: null,
+        keys: {
+          p256dh: "public-device-key",
+          auth: "device-auth-secret"
+        }
+      })
+    };
+    const subscribe = vi.fn().mockResolvedValue(pushSubscription);
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { ready: Promise.resolve({ pushManager: { subscribe } }) }
+    });
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: class NotificationMock {
+        static permission = "granted";
+        static requestPermission = vi.fn().mockResolvedValue("granted");
+      }
+    });
+    const clickAnchor = vi.fn();
+    let pushBlob: Blob | undefined;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      pushBlob = blob;
+      return "blob:push-subscription";
+    });
+    const revokeObjectURL = vi.fn();
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const originalCreateElement = document.createElement.bind(document);
+    let createdAnchor: HTMLAnchorElement | undefined;
+    const createElementSpy = vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName.toLowerCase() === "a") {
+        createdAnchor = element as HTMLAnchorElement;
+        Object.defineProperty(element, "click", { configurable: true, value: clickAnchor });
+      }
+      return element;
+    });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+
+    try {
+      renderLoggedInApp("/messages");
+
+      fireEvent.change(screen.getByLabelText("Web Push public key"), {
+        target: { value: "BEl6PDiRfYyIRLr1YWkN2v6k3cGv2GvZcK2nXrjZ4g6rPQu4xNfQb3-V6X0c0fPKHM8xojN6F0fJgQI3PNe7RDs" }
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Connect This Device" }));
+
+      expect(await screen.findByText("Device push subscription ready for private server sync.")).toBeInTheDocument();
+      expect(subscribe).toHaveBeenCalledWith(expect.objectContaining({
+        userVisibleOnly: true,
+        applicationServerKey: expect.any(Uint8Array)
+      }));
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.v1") ?? "{}")).toEqual(expect.objectContaining({
+        pushPublicKey: "BEl6PDiRfYyIRLr1YWkN2v6k3cGv2GvZcK2nXrjZ4g6rPQu4xNfQb3-V6X0c0fPKHM8xojN6F0fJgQI3PNe7RDs",
+        pushSubscriptionEndpoint: "https://push.example.test/subscriptions/device-1",
+        pushSubscriptionJson: expect.stringContaining("https://push.example.test/subscriptions/device-1"),
+        pushSubscribedAt: expect.any(String)
+      }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Export Push Subscription JSON" }));
+
+      expect(await screen.findByText("Device push subscription exported.")).toBeInTheDocument();
+      if (!pushBlob) throw new Error("Expected push subscription export to create a Blob.");
+      const payload = JSON.parse(await pushBlob.text());
+      expect(payload).toEqual(expect.objectContaining({
+        schemaVersion: "chos-web-push-subscription.v1",
+        provider: "web-push",
+        deliveryMode: "server-push",
+        requestedBy: expect.objectContaining({ email: "manager123@chos.prototype" }),
+        subscription: expect.objectContaining({ endpoint: "https://push.example.test/subscriptions/device-1" })
+      }));
+      expect(JSON.stringify(payload)).not.toMatch(/VAPID_PRIVATE|privateKey|TWILIO_AUTH_TOKEN|authToken/i);
+      expect(createdAnchor).toHaveAttribute("download", expect.stringMatching(/^chos-web-push-subscription-\d{4}-\d{2}-\d{2}\.json$/));
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:push-subscription");
+    } finally {
+      createElementSpy.mockRestore();
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectURL });
+      } else {
+        delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: originalRevokeObjectURL });
+      } else {
+        delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+      }
+    }
+  });
+
+  it("posts a web push subscription to a private push server without exposing secrets", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: vi.fn().mockResolvedValue(JSON.stringify({ synced: true }))
+    });
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock
+    });
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({
+      browserNotificationsEnabled: true,
+      browserPermission: "granted",
+      pushPublicKey: "BEl6PDiRfYyIRLr1YWkN2v6k3cGv2GvZcK2nXrjZ4g6rPQu4xNfQb3-V6X0c0fPKHM8xojN6F0fJgQI3PNe7RDs",
+      pushSubscriptionEndpoint: "https://push.example.test/subscriptions/device-1",
+      pushSubscriptionJson: JSON.stringify({
+        endpoint: "https://push.example.test/subscriptions/device-1",
+        expirationTime: null,
+        keys: {
+          p256dh: "public-device-key",
+          auth: "device-auth-secret"
+        }
+      }),
+      pushSubscribedAt: "2026-06-03T10:00:00.000Z"
+    }));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Private push server URL"), { target: { value: "https://push.cho.example/api/push/subscriptions" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sync Push Subscription" }));
+
+    expect(await screen.findByText("Device push subscription synced to private server.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("https://push.cho.example/api/push/subscriptions", expect.objectContaining({
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" }
+    }));
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody).toEqual(expect.objectContaining({
+      schemaVersion: "chos-web-push-subscription.v1",
+      provider: "web-push",
+      deliveryMode: "server-push",
+      requestedBy: expect.objectContaining({ email: "manager123@chos.prototype" }),
+      subscription: expect.objectContaining({ endpoint: "https://push.example.test/subscriptions/device-1" })
+    }));
+    expect(JSON.stringify(requestBody)).not.toMatch(/VAPID_PRIVATE|privateKey|TWILIO_AUTH_TOKEN|authToken|password/i);
+  });
+
+  it("shows a device notification for the newest unread app message when browser alerts are enabled", async () => {
+    const showNotification = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { ready: Promise.resolve({ showNotification }) }
+    });
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: class NotificationMock {
+        static permission = "granted";
+        static requestPermission = vi.fn().mockResolvedValue("granted");
+      }
+    });
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-ari-inbound",
+        threadId: "direct-staff-seed__student-ari",
+        senderId: "student-ari",
+        senderName: "Ari Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Can I get the testing schedule?",
+        createdAt: "2026-06-02T15:00:00.000Z",
+        status: "sent"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({
+      browserNotificationsEnabled: true,
+      browserPermission: "granted",
+      lastSeenDirectMessageAt: "2026-06-01T10:00:00.000Z",
+      lastBrowserNotifiedAt: "2026-06-01T10:00:00.000Z"
+    }));
+
+    renderLoggedInApp("/messages");
+
+    await waitFor(() => {
+      expect(showNotification).toHaveBeenCalledWith("New message from Ari Nguyen", expect.objectContaining({
+        body: "Can I get the testing schedule?",
+        tag: "chos-direct-staff-seed__student-ari"
+      }));
+    });
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.v1") ?? "{}")).toEqual(expect.objectContaining({
+      lastBrowserNotifiedAt: "2026-06-02T15:00:00.000Z"
+    }));
+  });
+
+  it("lets managers send a test device notification from message settings", async () => {
+    const showNotification = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { ready: Promise.resolve({ showNotification }) }
+    });
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: class NotificationMock {
+        static permission = "granted";
+        static requestPermission = vi.fn().mockResolvedValue("granted");
+      }
+    });
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({
+      browserNotificationsEnabled: true,
+      browserPermission: "granted"
+    }));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.click(screen.getByRole("button", { name: "Send Test Notification" }));
+
+    await waitFor(() => {
+      expect(showNotification).toHaveBeenCalledWith("Cho's test notification", expect.objectContaining({
+        body: "Device notifications are ready for app messages.",
+        tag: "chos-test-notification",
+        data: expect.objectContaining({ url: expect.stringContaining("/messages") })
+      }));
+    });
+    expect(await screen.findByText("Test device notification sent.")).toBeInTheDocument();
+  });
+
+  it("shows live Twilio readiness before managers export relay texts", () => {
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: class NotificationMock {
+        static permission = "granted";
+        static requestPermission = vi.fn().mockResolvedValue("granted");
+      }
+    });
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 6,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01",
+        studentSmsOptOutAt: "2026-06-01T10:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "marketing",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        recipientRole: "student",
+        recipientId: "student-ari",
+        body: "Family night registration is open.",
+        status: "queued",
+        createdAt: "2026-06-02T10:00:00.000Z",
+        deliveryChannel: "sms",
+        deliveryProvider: "twilio",
+        deliveryMode: "prototype",
+        deliveryStatus: "queued"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({
+      browserNotificationsEnabled: true,
+      browserPermission: "granted"
+    }));
+
+    renderLoggedInApp("/messages");
+
+    const checklist = screen.getByLabelText("Twilio live readiness checklist");
+    expect(within(checklist).getByRole("heading", { name: "Live Twilio Readiness" })).toBeInTheDocument();
+    expect(within(checklist).getByText("Server relay required")).toBeInTheDocument();
+    expect(within(checklist).getByText("Account SID + auth pair + sender option required")).toBeInTheDocument();
+    expect(within(checklist).getByText("1 relay-ready queued text")).toBeInTheDocument();
+    expect(within(checklist).getByText("1 SMS opt-out record active")).toBeInTheDocument();
+    expect(within(checklist).getByText("Device notifications enabled")).toBeInTheDocument();
+    expect(within(checklist).getByText("Push subscription not connected")).toBeInTheDocument();
+    expect(within(checklist).getByText("Relay result import ready")).toBeInTheDocument();
+    expect(within(checklist).getByText("Status callback import ready")).toBeInTheDocument();
+    expect(within(checklist).getByText("Inbound webhook import ready")).toBeInTheDocument();
+    expect(within(checklist).getByText("Webhook signature helper ready")).toBeInTheDocument();
+    expect(within(checklist).getByText("Private relay must enforce X-Twilio-Signature before webhook persistence")).toBeInTheDocument();
+  });
+
+  it("exports a credential-free production messaging integration manifest", async () => {
+    const clickAnchor = vi.fn();
+    let manifestBlob: Blob | undefined;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      manifestBlob = blob;
+      return "blob:messaging-manifest";
+    });
+    const revokeObjectURL = vi.fn();
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const originalCreateElement = document.createElement.bind(document);
+    let createdAnchor: HTMLAnchorElement | undefined;
+    const createElementSpy = vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName.toLowerCase() === "a") {
+        createdAnchor = element as HTMLAnchorElement;
+        Object.defineProperty(element, "click", { configurable: true, value: clickAnchor });
+      }
+      return element;
+    });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({
+      browserNotificationsEnabled: true,
+      browserPermission: "granted",
+      pushPublicKey: "BEl6PDiRfYyIRLr1YWkN2v6k3cGv2GvZcK2nXrjZ4g6rPQu4xNfQb3-V6X0c0fPKHM8xojN6F0fJgQI3PNe7RDs",
+      pushSubscriptionEndpoint: "https://push.example.test/subscriptions/device-1",
+      pushSubscriptionJson: JSON.stringify({
+        endpoint: "https://push.example.test/subscriptions/device-1",
+        expirationTime: null,
+        keys: {
+          p256dh: "public-device-key",
+          auth: "device-auth-secret"
+        }
+      }),
+      pushSubscribedAt: "2026-06-03T10:00:00.000Z"
+    }));
+
+    try {
+      renderLoggedInApp("/messages");
+
+      fireEvent.change(screen.getByLabelText("Private Twilio relay URL"), { target: { value: "https://relay.cho.example/api/messages/send" } });
+      fireEvent.change(screen.getByLabelText("Private push server URL"), { target: { value: "https://push.cho.example/api/push/subscriptions" } });
+      fireEvent.click(screen.getByRole("button", { name: "Export Integration Manifest" }));
+
+      expect(await screen.findByText("Production messaging integration manifest exported.")).toBeInTheDocument();
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      if (!manifestBlob) throw new Error("Expected production integration manifest to create a Blob.");
+      const manifest = JSON.parse(await manifestBlob.text());
+      expect(manifest).toEqual(expect.objectContaining({
+        schemaVersion: "chos-production-messaging-integration.v1",
+        requestedBy: expect.objectContaining({ email: "manager123@chos.prototype" }),
+        twilio: expect.objectContaining({
+          relayEndpoint: "https://relay.cho.example/api/messages/send",
+          relayPayloadSchemaVersion: "chos-twilio-relay.v1",
+          requiredServerEnv: ["TWILIO_ACCOUNT_SID"],
+          authServerEnv: {
+            productionRecommended: ["TWILIO_API_KEY", "TWILIO_API_KEY_SECRET"],
+            localFallback: ["TWILIO_AUTH_TOKEN"]
+          },
+          senderServerEnv: {
+            recommended: ["TWILIO_MESSAGING_SERVICE_SID"],
+            fallback: ["TWILIO_FROM_NUMBER"]
+          },
+          serverContract: expect.objectContaining({
+            module: "src/twilioRelayContract.ts",
+            payloadValidator: "validateTwilioRelayPayloadForServer",
+            consentEvidenceValidator: "validateTwilioRelayConsentEvidenceForServer",
+            healthResponseValidator: "validateTwilioRelayHealthResponseForBrowser",
+            messageRequestBuilder: "buildTwilioMessageRequest",
+            relayExecutionPlanner: "buildTwilioRelayExecutionPlan",
+            relayDispatchPlanner: "buildTwilioRelayDispatchPlan",
+            sendPolicyPlanner: "buildTwilioRelaySendPolicyPlan",
+            providerResponseResultBuilder: "buildTwilioRelayResultFromProviderResponse",
+            providerMessageResponseNormalizer: "normalizeTwilioMessageCreateResponseForServer",
+            basicAuthHeaderBuilder: "buildTwilioBasicAuthHeader"
+          }),
+          webhooks: expect.objectContaining({
+            inboundPath: "/api/messages/inbound",
+            statusCallbackPathTemplate: "/api/messages/status/{messageId}",
+            signatureHeader: "X-Twilio-Signature",
+            requireSignatureVerification: true,
+            serverContract: expect.objectContaining({
+              module: "src/twilioRelayContract.ts",
+              signatureValidator: "validateTwilioFormWebhookSignature",
+              statusCallbackNormalizer: "normalizeTwilioStatusCallbackForServer",
+              inboundSmsNormalizer: "normalizeTwilioInboundSmsWebhookForServer",
+              inboundConsentUpdatePlanner: "buildTwilioInboundConsentUpdatePlanForServer"
+            })
+          })
+        }),
+        serverAdapterContract: expect.objectContaining({
+          module: "src/messagingServerContract.ts",
+          healthResponseBuilder: "buildChoMessagingServerHealthResponse",
+          requestGateValidator: "validateChoMessagingServerRequestGate",
+          relayPlanBuilder: "buildChoMessagingServerRelayPlan",
+          pushSubscriptionSyncPlanner: "buildChoMessagingServerPushSubscriptionSyncPlan",
+          twilioWebhookPlanner: "buildChoMessagingServerTwilioWebhookPlan"
+        }),
+        webPush: expect.objectContaining({
+          subscriptionSyncEndpoint: "https://push.cho.example/api/push/subscriptions",
+          subscriptionSchemaVersion: "chos-web-push-subscription.v1",
+          notificationPayloadSchemaVersion: "chos-web-push-notification.v1",
+          serverContract: expect.objectContaining({
+            module: "src/webPushContract.ts",
+            subscriptionValidator: "validateWebPushSubscriptionPayloadForServer",
+            notificationPayloadBuilder: "buildChoWebPushNotificationPayload",
+            deliveryPlanner: "buildChoWebPushDeliveryPlan",
+            providerResponseResultBuilder: "buildChoWebPushResultFromProviderResponse",
+            deliveryReconciliationPlanner: "buildChoWebPushDeliveryReconciliationPlan",
+            supportedAccountRoles: ["staff", "student", "guardian"]
+          }),
+          publicKeyConfigured: true,
+          subscriptionEndpoint: "https://push.example.test/subscriptions/device-1",
+          notificationUrl: expect.stringContaining("/messages")
+        }),
+        auth: expect.objectContaining({
+          browserCredentialMode: "include",
+          managerAuthenticationRequired: true,
+          storeSecretsOnServerOnly: true,
+          serverContract: expect.objectContaining({
+            module: "src/messagingServerContract.ts",
+            requestGateValidator: "validateChoMessagingServerRequestGate"
+          })
+        })
+      }));
+      expect(JSON.stringify(manifest)).not.toMatch(/staff-pass|private-key-value|twilio-auth-token-value|account-password/i);
+      expect(createdAnchor).toHaveAttribute("download", expect.stringMatching(/^chos-production-messaging-integration-\d{4}-\d{2}-\d{2}\.json$/));
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:messaging-manifest");
+    } finally {
+      createElementSpy.mockRestore();
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectURL });
+      } else {
+        delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: originalRevokeObjectURL });
+      } else {
+        delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+      }
+    }
+  });
+
+  it("saves a credential-free Twilio launch profile and includes it in the production manifest", async () => {
+    const clickAnchor = vi.fn();
+    let manifestBlob: Blob | undefined;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      manifestBlob = blob;
+      return "blob:twilio-launch-profile";
+    });
+    const revokeObjectURL = vi.fn();
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const originalCreateElement = document.createElement.bind(document);
+    let createdAnchor: HTMLAnchorElement | undefined;
+    const createElementSpy = vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName.toLowerCase() === "a") {
+        createdAnchor = element as HTMLAnchorElement;
+        Object.defineProperty(element, "click", { configurable: true, value: clickAnchor });
+      }
+      return element;
+    });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+
+    try {
+      renderLoggedInApp("/messages");
+
+      expect(screen.getByRole("heading", { name: "Twilio Account Launch Profile" })).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Twilio Messaging Service SID"), { target: { value: "test-messaging-service-sid" } });
+      fireEvent.change(screen.getByLabelText("Twilio SMS sender"), { target: { value: "+12625550100" } });
+      fireEvent.change(screen.getByLabelText("Inbound webhook URL"), { target: { value: "https://relay.cho.example/api/messages/inbound" } });
+      fireEvent.change(screen.getByLabelText("Status callback base URL"), { target: { value: "https://relay.cho.example" } });
+      fireEvent.change(screen.getByLabelText("Relay health check URL"), { target: { value: "https://relay.cho.example/api/health/twilio" } });
+      fireEvent.change(screen.getByLabelText("Manager auth mode"), { target: { value: "same-site-cookie" } });
+      fireEvent.change(screen.getByLabelText("Messaging compliance sender type"), { target: { value: "10dlc" } });
+      fireEvent.change(screen.getByLabelText("A2P brand registration status"), { target: { value: "approved" } });
+      fireEvent.change(screen.getByLabelText("A2P campaign registration status"), { target: { value: "approved" } });
+      fireEvent.change(screen.getByLabelText("Toll-free verification status"), { target: { value: "not-used" } });
+      fireEvent.change(screen.getByLabelText("Messaging compliance notes"), { target: { value: "Low-volume mixed campaign approved for family updates and promotions." } });
+      fireEvent.click(screen.getByRole("button", { name: "Save Launch Profile" }));
+
+      expect(await screen.findByText("Twilio launch profile saved.")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.operations.twilioLaunchProfile.v1") ?? "{}")).toEqual(expect.objectContaining({
+        messagingServiceSid: "test-messaging-service-sid",
+        smsSender: "+12625550100",
+        inboundWebhookUrl: "https://relay.cho.example/api/messages/inbound",
+        statusCallbackBaseUrl: "https://relay.cho.example",
+        relayHealthCheckUrl: "https://relay.cho.example/api/health/twilio",
+        managerAuthMode: "same-site-cookie",
+        senderType: "10dlc",
+        a2pBrandStatus: "approved",
+        a2pCampaignStatus: "approved",
+        tollFreeVerificationStatus: "not-used",
+        complianceNotes: "Low-volume mixed campaign approved for family updates and promotions."
+      }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Export Integration Manifest" }));
+
+      expect(await screen.findByText("Production messaging integration manifest exported.")).toBeInTheDocument();
+      if (!manifestBlob) throw new Error("Expected production integration manifest to create a Blob.");
+      const manifest = JSON.parse(await manifestBlob.text());
+      expect(manifest.twilio.accountProfile).toEqual(expect.objectContaining({
+        messagingServiceSidConfigured: true,
+        messagingServiceSid: "test-messaging-service-sid",
+        smsSender: "+12625550100",
+        inboundWebhookUrl: "https://relay.cho.example/api/messages/inbound",
+        statusCallbackBaseUrl: "https://relay.cho.example",
+        relayHealthCheckUrl: "https://relay.cho.example/api/health/twilio",
+        managerAuthMode: "same-site-cookie"
+      }));
+      expect(manifest.twilio.complianceProfile).toEqual(expect.objectContaining({
+        senderType: "10dlc",
+        a2pBrandStatus: "approved",
+        a2pCampaignStatus: "approved",
+        tollFreeVerificationStatus: "not-used",
+        complianceNotes: "Low-volume mixed campaign approved for family updates and promotions.",
+        requiresA2p10DlcForUsLongCode: true,
+        readyForUsProductionTraffic: true
+      }));
+      expect(manifest.twilio.serverResponsibilities).toEqual(expect.arrayContaining([
+        "Confirm A2P 10DLC brand and campaign approval or verified toll-free/short-code sender status before live US traffic."
+      ]));
+      expect(JSON.stringify(manifest)).not.toMatch(/twilio-auth-token-value|account-password|staff-pass|private-key-value|ACsecret|SKsecret/i);
+      expect(clickAnchor).toHaveBeenCalledTimes(1);
+      expect(createdAnchor).toHaveAttribute("download", expect.stringMatching(/^chos-production-messaging-integration-\d{4}-\d{2}-\d{2}\.json$/));
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:twilio-launch-profile");
+    } finally {
+      createElementSpy.mockRestore();
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectURL });
+      } else {
+        delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: originalRevokeObjectURL });
+      } else {
+        delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+      }
+    }
+  });
+
+  it("checks the private Twilio relay health endpoint with manager credentials", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        status: "ready",
+        checkedAt: "2026-06-03T15:00:00.000Z",
+        readinessChecks: {
+          managerAuth: true,
+          twilioCredentials: true,
+          senderConfigured: true,
+          complianceReady: true,
+          webhookSignatureValidation: true,
+          relayCanSend: true
+        }
+      })
+    });
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock
+    });
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Relay health check URL"), { target: { value: "https://relay.cho.example/api/health/twilio" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check Relay Health" }));
+
+    expect(await screen.findByText("Twilio relay health verified.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("https://relay.cho.example/api/health/twilio", expect.objectContaining({
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" }
+    }));
+    expect(screen.getByText("Relay health: ready")).toBeInTheDocument();
+    const healthChecks = screen.getByLabelText("Twilio relay health readiness checks");
+    expect(within(healthChecks).getByText("Manager auth")).toBeInTheDocument();
+    expect(within(healthChecks).getByText("Twilio credentials")).toBeInTheDocument();
+    expect(within(healthChecks).getByText("Sender configured")).toBeInTheDocument();
+    expect(within(healthChecks).getByText("Compliance ready")).toBeInTheDocument();
+    expect(within(healthChecks).getByText("Webhook signatures")).toBeInTheDocument();
+    expect(within(healthChecks).getByText("Relay can send")).toBeInTheDocument();
+    expect(within(healthChecks).getAllByText("Ready")).toHaveLength(6);
+  });
+
+  it("rejects Twilio relay health responses that leak credential-shaped fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        status: "ready",
+        readinessChecks: {
+          managerAuth: true,
+          twilioCredentials: true,
+          senderConfigured: true,
+          complianceReady: true,
+          webhookSignatureValidation: true,
+          relayCanSend: true
+        },
+        TWILIO_AUTH_TOKEN: "twilio-auth-token-value"
+      })
+    });
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock
+    });
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Relay health check URL"), { target: { value: "https://relay.cho.example/api/health/twilio" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check Relay Health" }));
+
+    expect(await screen.findByText("Twilio relay health response included secret-like fields.")).toBeInTheDocument();
+    expect(screen.getByText("Relay health: unsafe response")).toBeInTheDocument();
+    expect(screen.queryByText("Twilio relay health verified.")).not.toBeInTheDocument();
+    expect(screen.queryByText("twilio-auth-token-value")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Twilio relay health readiness checks")).not.toBeInTheDocument();
+  });
+
+  it("rejects weak Twilio relay health responses without readiness checks", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        status: "ready"
+      })
+    });
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock
+    });
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Relay health check URL"), { target: { value: "https://relay.cho.example/api/health/twilio" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check Relay Health" }));
+
+    expect(await screen.findByText("Twilio relay health response needs readiness checks.")).toBeInTheDocument();
+    expect(screen.getByText("Relay health: invalid response")).toBeInTheDocument();
+    expect(screen.queryByText("Twilio relay health verified.")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Twilio relay health readiness checks")).not.toBeInTheDocument();
+  });
+
+  it("exports a credential-free text automation manifest for the private schedule runner", async () => {
+    const scheduledFor = dateKeyOffset(1);
+    const clickAnchor = vi.fn();
+    let manifestBlob: Blob | undefined;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      manifestBlob = blob;
+      return "blob:text-automation-manifest";
+    });
+    const revokeObjectURL = vi.fn();
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const originalCreateElement = document.createElement.bind(document);
+    let createdAnchor: HTMLAnchorElement | undefined;
+    const createElementSpy = vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName.toLowerCase() === "a") {
+        createdAnchor = element as HTMLAnchorElement;
+        Object.defineProperty(element, "click", { configurable: true, value: clickAnchor });
+      }
+      return element;
+    });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    window.localStorage.setItem("chos.operations.scheduledCampaigns.v1", JSON.stringify([
+      {
+        id: "scheduled-family-sale",
+        title: "Family sale",
+        body: "Family gear sale starts tomorrow at 5 PM. Reply STOP to opt out.",
+        audience: "parents",
+        scheduledFor,
+        scheduledTime: "17:00",
+        status: "scheduled",
+        createdAt: "2026-06-02T10:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.automationRuns.v1", JSON.stringify([
+      {
+        id: "automation-run-manifest",
+        ranAt: "2026-06-03T10:00:00.000Z",
+        status: "queued",
+        totalQueued: 2,
+        deliveryProvider: "twilio",
+        deliveryChannel: "sms",
+        deliveryMode: "prototype",
+        relayPayloadSchemaVersion: "chos-twilio-relay.v1",
+        breakdown: [
+          { key: "eventReminders", label: "Event reminders", queued: 1 },
+          { key: "scheduledPromotions", label: "Scheduled promotions", queued: 1 }
+        ]
+      }
+    ]));
+
+    try {
+      renderLoggedInApp("/messages");
+
+      fireEvent.change(screen.getByLabelText("Private Twilio relay URL"), { target: { value: "https://relay.cho.example/api/messages/send" } });
+      fireEvent.change(screen.getByLabelText("Private push server URL"), { target: { value: "https://push.cho.example/api/push/subscriptions" } });
+      fireEvent.click(screen.getByRole("button", { name: "Export Automation Manifest" }));
+
+      expect(await screen.findByText("Text automation manifest exported.")).toBeInTheDocument();
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      if (!manifestBlob) throw new Error("Expected text automation manifest to create a Blob.");
+      const manifest = JSON.parse(await manifestBlob.text());
+      expect(manifest).toEqual(expect.objectContaining({
+        schemaVersion: "chos-text-automation-manifest.v1",
+        requestedBy: expect.objectContaining({ email: "manager123@chos.prototype" }),
+        automationRun: expect.objectContaining({
+          runEndpointPath: "/api/messages/automations/run",
+          executionPlanner: "buildTextAutomationExecutionPlan",
+          serverContractModule: "src/textAutomationContract.ts",
+          serverAdapterContract: expect.objectContaining({
+            module: "src/messagingServerContract.ts",
+            requestGateValidator: "validateChoMessagingServerRequestGate"
+          }),
+          recommendedCron: "*/15 * * * *",
+          browserCredentialMode: "include",
+          managerAuthenticationRequired: true,
+          dryRunRecommended: true
+        }),
+        relay: expect.objectContaining({
+          relayEndpoint: "https://relay.cho.example/api/messages/send",
+          relayPayloadSchemaVersion: "chos-twilio-relay.v1",
+          requiredServerEnv: ["TWILIO_ACCOUNT_SID"],
+          authServerEnv: {
+            productionRecommended: ["TWILIO_API_KEY", "TWILIO_API_KEY_SECRET"],
+            localFallback: ["TWILIO_AUTH_TOKEN"]
+          },
+          senderServerEnv: {
+            recommended: ["TWILIO_MESSAGING_SERVICE_SID"],
+            fallback: ["TWILIO_FROM_NUMBER"]
+          },
+          serverContract: expect.objectContaining({
+            module: "src/twilioRelayContract.ts",
+            payloadValidator: "validateTwilioRelayPayloadForServer",
+            consentEvidenceValidator: "validateTwilioRelayConsentEvidenceForServer",
+            healthResponseValidator: "validateTwilioRelayHealthResponseForBrowser",
+            messageRequestBuilder: "buildTwilioMessageRequest",
+            relayExecutionPlanner: "buildTwilioRelayExecutionPlan",
+            relayDispatchPlanner: "buildTwilioRelayDispatchPlan",
+            sendPolicyPlanner: "buildTwilioRelaySendPolicyPlan",
+            providerResponseResultBuilder: "buildTwilioRelayResultFromProviderResponse",
+            providerMessageResponseNormalizer: "normalizeTwilioMessageCreateResponseForServer",
+            basicAuthHeaderBuilder: "buildTwilioBasicAuthHeader"
+          })
+        }),
+        webPush: expect.objectContaining({
+          subscriptionSyncEndpoint: "https://push.cho.example/api/push/subscriptions",
+          subscriptionSchemaVersion: "chos-web-push-subscription.v1",
+          notificationPayloadSchemaVersion: "chos-web-push-notification.v1",
+          serverContract: expect.objectContaining({
+            module: "src/webPushContract.ts",
+            subscriptionValidator: "validateWebPushSubscriptionPayloadForServer",
+            notificationPayloadBuilder: "buildChoWebPushNotificationPayload",
+            deliveryPlanner: "buildChoWebPushDeliveryPlan",
+            providerResponseResultBuilder: "buildChoWebPushResultFromProviderResponse",
+            deliveryReconciliationPlanner: "buildChoWebPushDeliveryReconciliationPlan",
+            supportedAccountRoles: ["staff", "student", "guardian"]
+          }),
+          notificationUrl: expect.stringContaining("/messages")
+        }),
+        scheduledPromotions: [
+          expect.objectContaining({
+            id: "scheduled-family-sale",
+            title: "Family sale",
+            audience: "parents",
+            scheduledFor,
+            scheduledTime: "17:00",
+            status: "scheduled"
+          })
+        ],
+        recentAutomationRuns: [
+          expect.objectContaining({
+            id: "automation-run-manifest",
+            status: "queued",
+            totalQueued: 2,
+            deliveryProvider: "twilio",
+            relayPayloadSchemaVersion: "chos-twilio-relay.v1",
+            breakdown: expect.arrayContaining([
+              expect.objectContaining({ key: "eventReminders", queued: 1 }),
+              expect.objectContaining({ key: "scheduledPromotions", queued: 1 })
+            ])
+          })
+        ],
+        deliveryGuards: expect.objectContaining({
+          enforceSmsOptOutServerSide: true,
+          enforceRateLimitsServerSide: true,
+          validateTwilioRelayPayloadServerSide: true,
+          storeSecretsOnServerOnly: true
+        })
+      }));
+      expect(manifest.automations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ key: "eventReminders", provider: "twilio" }),
+        expect.objectContaining({ key: "scheduledPromotions", provider: "twilio" }),
+        expect.objectContaining({ key: "missedClassFollowUps", provider: "twilio" })
+      ]));
+      expect(JSON.stringify(manifest)).not.toMatch(/staff-pass|private-key-value|twilio-auth-token-value|account-password|p256dh|authSecret/i);
+      expect(clickAnchor).toHaveBeenCalledTimes(1);
+      expect(createdAnchor).toHaveAttribute("download", expect.stringMatching(/^chos-text-automation-manifest-\d{4}-\d{2}-\d{2}\.json$/));
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:text-automation-manifest");
+    } finally {
+      createElementSpy.mockRestore();
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectURL });
+      } else {
+        delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: originalRevokeObjectURL });
+      } else {
+        delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+      }
+    }
+  });
+
+  it("queues automated family event reminder texts from message settings", async () => {
+    const todayKey = dateKeyOffset(0);
+    const eventDate = dateKeyOffset(3);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-1101",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        lastContactedAt: dateKeyOffset(-4),
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        guardianName: "Terry Miles",
+        guardianPhone: "(262) 555-1103",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([
+      { id: "event-family-night", title: "Family Night", date: eventDate, time: "6:30 PM", details: "Bring uniforms and water.", audience: "families" },
+      { id: "event-past", title: "Past Seminar", date: dateKeyOffset(-1), time: "12:00 PM", details: "Past event.", audience: "families" }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.click(screen.getByRole("button", { name: "Queue Event Reminders" }));
+
+    expect(await screen.findByText("1 event reminder text queued.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        kind: "reminder",
+        recipientName: "Mina Nguyen",
+        recipientRole: "parent",
+        deliveryProvider: "twilio",
+        deliveryMode: "prototype",
+        deliveryStatus: "queued",
+        body: expect.stringContaining(`Family Night is scheduled for ${eventDate} at 6:30 PM`)
+      })
+    ]);
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "student-ari", lastContactedAt: todayKey })
+    ]));
+
+    fireEvent.click(screen.getByRole("button", { name: "Queue Event Reminders" }));
+    expect(await screen.findByText("No event reminders needed.")).toBeInTheDocument();
+  });
+
+  it("queues scheduled promotional texts only when the automation date is due", async () => {
+    const todayKey = dateKeyOffset(0);
+    const tomorrowKey = dateKeyOffset(1);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-1101",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        lastContactedAt: todayKey,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.campaigns.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.scheduledCampaigns.v1", JSON.stringify([]));
+
+    renderLoggedInApp("/messages");
+
+    expect(screen.getByRole("heading", { name: "Promotion Automation" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Promotion audience"), { target: { value: "parents" } });
+    fireEvent.change(screen.getByLabelText("Promotion send date"), { target: { value: tomorrowKey } });
+    fireEvent.change(screen.getByLabelText("Promotion send time"), { target: { value: "00:00" } });
+    fireEvent.change(screen.getByLabelText("Scheduled promotion message"), { target: { value: "Tomorrow family gear sale starts at 5 PM." } });
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Promotion" }));
+
+    expect(await screen.findByText(`Promotion scheduled for ${tomorrowKey} at 12:00 AM.`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run Text Automations" }));
+
+    expect(await screen.findByText("No automated texts are due.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+
+    fireEvent.change(screen.getByLabelText("Promotion audience"), { target: { value: "parents" } });
+    fireEvent.change(screen.getByLabelText("Promotion send date"), { target: { value: todayKey } });
+    fireEvent.change(screen.getByLabelText("Promotion send time"), { target: { value: "00:00" } });
+    fireEvent.change(screen.getByLabelText("Scheduled promotion message"), { target: { value: "Tonight family gear sale starts at 5 PM." } });
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Promotion" }));
+
+    expect(await screen.findByText(`Promotion scheduled for ${todayKey} at 12:00 AM.`)).toBeInTheDocument();
+    expect(screen.getByText("2 scheduled promotions")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run Text Automations" }));
+
+    expect(await screen.findByText("1 automated text queued.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        kind: "marketing",
+        recipientName: "Mina Nguyen",
+        recipientRole: "parent",
+        body: "Tonight family gear sale starts at 5 PM.",
+        status: "queued",
+        deliveryProvider: "twilio",
+        deliveryMode: "prototype",
+        deliveryStatus: "queued"
+      })
+    ]);
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.scheduledCampaigns.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ body: "Tomorrow family gear sale starts at 5 PM.", scheduledTime: "00:00", status: "scheduled" }),
+      expect.objectContaining({ body: "Tonight family gear sale starts at 5 PM.", scheduledTime: "00:00", status: "queued", queuedAt: expect.any(String) })
+    ]));
+  });
+
+  it("records a manager-visible audit entry when text automations queue Twilio-ready work", async () => {
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-1101",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        lastContactedAt: todayKey,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.campaigns.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.scheduledCampaigns.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.automationRuns.v1", JSON.stringify([]));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Promotion audience"), { target: { value: "parents" } });
+    fireEvent.change(screen.getByLabelText("Promotion send date"), { target: { value: todayKey } });
+    fireEvent.change(screen.getByLabelText("Promotion send time"), { target: { value: "00:00" } });
+    fireEvent.change(screen.getByLabelText("Scheduled promotion message"), { target: { value: "Tonight family gear sale starts at 5 PM." } });
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Promotion" }));
+    expect(await screen.findByText(`Promotion scheduled for ${todayKey} at 12:00 AM.`)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run Text Automations" }));
+
+    expect(await screen.findByText("1 automated text queued.")).toBeInTheDocument();
+    const auditRuns = JSON.parse(window.localStorage.getItem("chos.operations.automationRuns.v1") ?? "[]");
+    expect(auditRuns).toEqual([
+      expect.objectContaining({
+        status: "queued",
+        totalQueued: 1,
+        deliveryProvider: "twilio",
+        deliveryChannel: "sms",
+        deliveryMode: "prototype",
+        relayPayloadSchemaVersion: "chos-twilio-relay.v1",
+        breakdown: expect.arrayContaining([
+          expect.objectContaining({ key: "scheduledPromotions", label: "Scheduled promotions", queued: 1 }),
+          expect.objectContaining({ key: "eventReminders", label: "Event reminders", queued: 0 })
+        ])
+      })
+    ]);
+    const history = screen.getByLabelText("Text automation run history");
+    expect(within(history).getByRole("heading", { name: "Automation Run History" })).toBeInTheDocument();
+    expect(within(history).getByText("1 queued")).toBeInTheDocument();
+    expect(within(history).getByText("Scheduled promotions: 1")).toBeInTheDocument();
+  });
+
+  it("records no-op automation runs so managers can audit empty scheduler checks", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.scheduledCampaigns.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.automationRuns.v1", JSON.stringify([]));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.click(screen.getByRole("button", { name: "Run Text Automations" }));
+
+    expect(await screen.findByText("No automated texts are due.")).toBeInTheDocument();
+    const auditRuns = JSON.parse(window.localStorage.getItem("chos.operations.automationRuns.v1") ?? "[]");
+    expect(auditRuns).toEqual([
+      expect.objectContaining({
+        status: "no-due-texts",
+        totalQueued: 0,
+        deliveryProvider: "twilio",
+        deliveryChannel: "sms",
+        relayPayloadSchemaVersion: "chos-twilio-relay.v1"
+      })
+    ]);
+    const history = screen.getByLabelText("Text automation run history");
+    expect(within(history).getByText("No due texts")).toBeInTheDocument();
+    expect(within(history).getByText("0 queued")).toBeInTheDocument();
+  });
+
+  it("waits until the scheduled promotion send time before queueing automation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 5, 3, 14, 0, 0));
+    const todayKey = dateKeyOffset(0);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-1101",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        lastContactedAt: todayKey,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.campaigns.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.scheduledCampaigns.v1", JSON.stringify([]));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Promotion audience"), { target: { value: "parents" } });
+    fireEvent.change(screen.getByLabelText("Promotion send date"), { target: { value: todayKey } });
+    fireEvent.change(screen.getByLabelText("Promotion send time"), { target: { value: "15:30" } });
+    fireEvent.change(screen.getByLabelText("Scheduled promotion message"), { target: { value: "Later family gear sale starts at 3:30 PM. Reply STOP to opt out." } });
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Promotion" }));
+
+    expect(screen.getByText(`Promotion scheduled for ${todayKey} at 3:30 PM.`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run Text Automations" }));
+
+    expect(screen.getByText("No automated texts are due.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([]);
+
+    fireEvent.change(screen.getByLabelText("Promotion send time"), { target: { value: "13:00" } });
+    fireEvent.change(screen.getByLabelText("Scheduled promotion message"), { target: { value: "Earlier family gear sale starts at 1 PM. Reply STOP to opt out." } });
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Promotion" }));
+
+    expect(screen.getByText(`Promotion scheduled for ${todayKey} at 1:00 PM.`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run Text Automations" }));
+
+    expect(screen.getByText("1 automated text queued.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        recipientName: "Mina Nguyen",
+        body: "Earlier family gear sale starts at 1 PM. Reply STOP to opt out.",
+        status: "queued"
+      })
+    ]);
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.scheduledCampaigns.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ body: "Later family gear sale starts at 3:30 PM. Reply STOP to opt out.", scheduledTime: "15:30", status: "scheduled" }),
+      expect.objectContaining({ body: "Earlier family gear sale starts at 1 PM. Reply STOP to opt out.", scheduledTime: "13:00", status: "queued", queuedAt: expect.any(String) })
+    ]));
+  });
+
+  it("queues Twilio-ready text blasts for staff, parents, and students from the selected audience", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-1101",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        guardianName: "Leo Santos",
+        guardianPhone: "(262) 555-1102",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 6,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        guardianName: "Terry Miles",
+        guardianPhone: "(262) 555-1103",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "staff-kim",
+        displayName: "Coach Kim",
+        username: "coach.kim",
+        password: "staff-pass",
+        role: "staff",
+        status: "active",
+        phone: "(262) 555-2101",
+        smsConsentUpdatedAt: "2026-05-21T10:00:00.000Z",
+        access: ["messages"],
+        createdAt: "2026-05-01T10:00:00.000Z"
+      },
+      {
+        id: "staff-inactive",
+        displayName: "Inactive Coach",
+        username: "inactive.coach",
+        password: "staff-pass",
+        role: "staff",
+        status: "inactive",
+        phone: "(262) 555-2102",
+        access: ["messages"],
+        createdAt: "2026-05-01T10:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.campaigns.v1", JSON.stringify([]));
+
+    renderLoggedInApp("/messages");
+
+    expect(screen.getByRole("heading", { name: "Twilio Delivery Setup" })).toBeInTheDocument();
+    expect(screen.getByText("Server relay required")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Audience"), { target: { value: "everyone" } });
+    fireEvent.change(screen.getByLabelText("Marketing message"), { target: { value: "June family night is open for registration." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send Marketing Blast" }));
+
+    expect(await screen.findByText("Text blast queued for 5 contacts.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientName: "Ari Nguyen", recipientRole: "student", deliveryChannel: "sms", deliveryProvider: "twilio", deliveryMode: "prototype", deliveryStatus: "queued" }),
+      expect.objectContaining({ recipientName: "Mina Nguyen", recipientRole: "parent", deliveryChannel: "sms", deliveryProvider: "twilio", deliveryMode: "prototype", deliveryStatus: "queued" }),
+      expect.objectContaining({ recipientName: "Coach Kim", recipientRole: "staff", deliveryChannel: "sms", deliveryProvider: "twilio", deliveryMode: "prototype", deliveryStatus: "queued" })
+    ]));
+
+    fireEvent.click(screen.getByRole("button", { name: "Send Queued Texts" }));
+
+    expect(await screen.findByText("5 queued texts sent.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientName: "Coach Kim", status: "sent", deliveryStatus: "sent", sentAt: expect.any(String) })
+    ]));
+  });
+
+  it("previews the selected Twilio audience before queueing a mass text", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-1101",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        guardianName: "Leo Santos",
+        guardianPhone: "(262) 555-1102",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 6,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01",
+        studentSmsOptOutAt: "2026-06-01T10:00:00.000Z"
+      },
+      {
+        id: "student-cora",
+        firstName: "Cora",
+        lastName: "Miles",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0103",
+        email: "cora@example.com",
+        guardianName: "Terry Miles",
+        guardianPhone: "(262) 555-1103",
+        status: "Inactive",
+        beltRank: "Orange",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "staff-kim",
+        displayName: "Coach Kim",
+        username: "coach.kim",
+        password: "staff-pass",
+        role: "staff",
+        status: "active",
+        phone: "(262) 555-2101",
+        smsConsentUpdatedAt: "2026-05-21T10:00:00.000Z",
+        access: ["messages"],
+        createdAt: "2026-05-01T10:00:00.000Z"
+      }
+    ]));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Audience"), { target: { value: "everyone" } });
+
+    const preview = screen.getByLabelText("Selected text audience delivery preview");
+    expect(within(preview).getByText("Delivery preview: 4 contacts ready")).toBeInTheDocument();
+    expect(within(preview).getByText("Students 1")).toBeInTheDocument();
+    expect(within(preview).getByText("Parents 2")).toBeInTheDocument();
+    expect(within(preview).getByText("Staff 1")).toBeInTheDocument();
+    expect(within(preview).getByText("Inactive contacts, missing phones, duplicate phones, SMS opt-outs, and missing SMS consent evidence are excluded before queueing.")).toBeInTheDocument();
+  });
+
+  it("excludes contacts without SMS consent evidence from mass text previews and queues", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-1101",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01",
+        smsConsentUpdatedAt: "2026-05-20T10:00:00.000Z"
+      },
+      {
+        id: "student-bree",
+        firstName: "Bree",
+        lastName: "Santos",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "bree@example.com",
+        guardianName: "Leo Santos",
+        guardianPhone: "(262) 555-1102",
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 6,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01",
+        smsConsentUpdatedAt: undefined
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "staff-kim",
+        displayName: "Coach Kim",
+        username: "coach.kim",
+        password: "staff-pass",
+        role: "staff",
+        status: "active",
+        phone: "(262) 555-2101",
+        smsConsentUpdatedAt: "2026-05-21T10:00:00.000Z",
+        access: ["messages"],
+        createdAt: "2026-05-01T10:00:00.000Z"
+      },
+      {
+        id: "staff-lee",
+        displayName: "Coach Lee",
+        username: "coach.lee",
+        password: "staff-pass",
+        role: "staff",
+        status: "active",
+        phone: "(262) 555-2102",
+        access: ["messages"],
+        createdAt: "2026-05-01T10:00:00.000Z"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Audience"), { target: { value: "everyone" } });
+
+    const preview = screen.getByLabelText("Selected text audience delivery preview");
+    expect(within(preview).getByText("Delivery preview: 3 contacts ready")).toBeInTheDocument();
+    expect(within(preview).getByText("Students 1")).toBeInTheDocument();
+    expect(within(preview).getByText("Parents 1")).toBeInTheDocument();
+    expect(within(preview).getByText("Staff 1")).toBeInTheDocument();
+    expect(within(preview).getByText("Inactive contacts, missing phones, duplicate phones, SMS opt-outs, and missing SMS consent evidence are excluded before queueing.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Marketing message"), { target: { value: "June family night registration is open. Reply STOP to opt out." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send Marketing Blast" }));
+
+    expect(await screen.findByText("Text blast queued for 3 contacts.")).toBeInTheDocument();
+    const queuedMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]");
+    expect(queuedMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientName: "Ari Nguyen", recipientRole: "student" }),
+      expect.objectContaining({ recipientName: "Mina Nguyen", recipientRole: "parent" }),
+      expect.objectContaining({ recipientName: "Coach Kim", recipientRole: "staff" })
+    ]));
+    expect(queuedMessages).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientName: "Bree Santos" }),
+      expect.objectContaining({ recipientName: "Leo Santos" }),
+      expect.objectContaining({ recipientName: "Coach Lee" })
+    ]));
+  });
+
+  it("shows SMS segment preflight for marketing and scheduled promotion messages", async () => {
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Marketing message"), { target: { value: "A".repeat(161) } });
+
+    expect(screen.getByText("SMS preflight: GSM-7 encoding, 161 units, 2 SMS segments.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Scheduled promotion message"), { target: { value: `${"A".repeat(70)}${String.fromCharCode(0x6f22)}` } });
+
+    expect(screen.getByText("SMS preflight: UCS-2 encoding, 71 characters, 2 SMS segments.")).toBeInTheDocument();
+  });
+
+  it("shows SMS opt-out language preflight for marketing and scheduled promotion messages", async () => {
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Marketing message"), { target: { value: "June family night registration is open." } });
+
+    expect(screen.getAllByText("Compliance preflight: add opt-out language such as Reply STOP to opt out.").length).toBeGreaterThan(0);
+
+    fireEvent.change(screen.getByLabelText("Marketing message"), { target: { value: "June family night registration is open. Reply STOP to opt out." } });
+    fireEvent.change(screen.getByLabelText("Scheduled promotion message"), { target: { value: "Family gear sale starts tonight. Reply STOP to opt out." } });
+
+    expect(screen.getAllByText("Compliance preflight: opt-out language detected.").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("exports a Twilio relay payload for deliverable queued texts without exposing credentials", async () => {
+    const clickAnchor = vi.fn();
+    let relayBlob: Blob | undefined;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      relayBlob = blob;
+      return "blob:twilio-relay";
+    });
+    const revokeObjectURL = vi.fn();
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const originalCreateElement = document.createElement.bind(document);
+    let createdAnchor: HTMLAnchorElement | undefined;
+    const createElementSpy = vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName.toLowerCase() === "a") {
+        createdAnchor = element as HTMLAnchorElement;
+        Object.defineProperty(element, "click", { configurable: true, value: clickAnchor });
+      }
+      return element;
+    });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+
+    try {
+      window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+        {
+          id: "student-ari",
+          firstName: "Ari",
+          lastName: "Nguyen",
+          ...completeStudentSafetyFields,
+          phone: "(262) 555-0101",
+          email: "ari@example.com",
+          guardianName: "Mina Nguyen",
+          guardianPhone: "(262) 555-1101",
+          status: "Active",
+          beltRank: "Yellow",
+          classesAttended: 12,
+          missedClassCount: 0,
+          joinedAt: "2026-01-01"
+        },
+        {
+          id: "student-cora",
+          firstName: "Cora",
+          lastName: "Miles",
+          ...completeStudentSafetyFields,
+          phone: "(262) 555-0103",
+          email: "cora@example.com",
+          status: "Inactive",
+          beltRank: "Orange",
+          classesAttended: 18,
+          missedClassCount: 0,
+          joinedAt: "2026-01-01"
+        }
+      ]));
+      window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+        {
+          id: "staff-kim",
+          displayName: "Coach Kim",
+          username: "coach.kim",
+          password: "staff-pass",
+          role: "staff",
+          status: "active",
+          phone: "1 (262) 555-2101",
+          smsConsentUpdatedAt: "2026-05-21T10:00:00.000Z",
+          access: ["messages"],
+          createdAt: "2026-05-01T10:00:00.000Z"
+        }
+      ]));
+      window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+        {
+          id: "message-ari",
+          kind: "marketing",
+          recipientName: "Ari Nguyen",
+          recipientPhone: "(262) 555-0101",
+          recipientRole: "student",
+          recipientId: "student-ari",
+          body: "Family night registration is open. Reply STOP to opt out.",
+          status: "queued",
+          createdAt: "2026-06-02T10:00:00.000Z",
+          deliveryChannel: "sms",
+          deliveryProvider: "twilio",
+          deliveryMode: "prototype",
+          deliveryStatus: "queued"
+        },
+        {
+          id: "message-parent",
+          kind: "marketing",
+          recipientName: "Mina Nguyen",
+          recipientPhone: "(262) 555-1101",
+          recipientRole: "parent",
+          recipientId: "parent-student-ari",
+          body: "Family night registration is open. Reply STOP to opt out.",
+          status: "queued",
+          createdAt: "2026-06-02T10:05:00.000Z",
+          deliveryChannel: "sms",
+          deliveryProvider: "twilio",
+          deliveryMode: "prototype",
+          deliveryStatus: "queued"
+        },
+        {
+          id: "message-staff",
+          kind: "marketing",
+          recipientName: "Coach Kim",
+          recipientPhone: "1 (262) 555-2101",
+          recipientRole: "staff",
+          recipientId: "staff-kim",
+          body: "Family night staffing reminder. Reply STOP to opt out.",
+          status: "queued",
+          createdAt: "2026-06-02T10:10:00.000Z",
+          deliveryChannel: "sms",
+          deliveryProvider: "twilio",
+          deliveryMode: "prototype",
+          deliveryStatus: "queued"
+        },
+        {
+          id: "message-stale",
+          kind: "marketing",
+          recipientName: "Cora Miles",
+          recipientPhone: "(262) 555-0103",
+          recipientRole: "student",
+          recipientId: "student-cora",
+          body: "Inactive students should not be exported.",
+          status: "queued",
+          createdAt: "2026-06-02T10:15:00.000Z",
+          deliveryChannel: "sms",
+          deliveryProvider: "twilio",
+          deliveryMode: "prototype",
+          deliveryStatus: "queued"
+        }
+      ]));
+
+      renderLoggedInApp("/messages");
+
+      fireEvent.click(screen.getByRole("button", { name: "Export Twilio Relay JSON" }));
+
+      expect(await screen.findByText("3 Twilio relay messages exported.")).toBeInTheDocument();
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      if (!relayBlob) throw new Error("Expected Twilio relay export to create a Blob.");
+      const payload = JSON.parse(await relayBlob.text());
+      expect(payload).toEqual(expect.objectContaining({
+        schemaVersion: "chos-twilio-relay.v1",
+        provider: "twilio",
+        deliveryMode: "server-relay",
+        requestedBy: expect.objectContaining({ email: "manager123@chos.prototype" }),
+        messages: [
+          expect.objectContaining({ id: "message-ari", to: "+12625550101", recipientRole: "student", body: "Family night registration is open. Reply STOP to opt out.", smsEncoding: "GSM-7", smsUnitCount: 57, smsSegmentCount: 1, optOutLanguageDetected: true, idempotencyKey: "chos-message-ari-12625550101" }),
+          expect.objectContaining({ id: "message-parent", to: "+12625551101", recipientRole: "parent" }),
+          expect.objectContaining({ id: "message-staff", to: "+12625552101", recipientRole: "staff" })
+        ]
+      }));
+      expect(JSON.stringify(payload)).not.toMatch(/TWILIO_AUTH_TOKEN|authToken|password|staff-pass/i);
+      expect(JSON.stringify(payload)).not.toContain("message-stale");
+      expect(clickAnchor).toHaveBeenCalledTimes(1);
+      expect(createdAnchor).toHaveAttribute("download", expect.stringMatching(/^chos-twilio-relay-queue-\d{4}-\d{2}-\d{2}\.json$/));
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:twilio-relay");
+    } finally {
+      createElementSpy.mockRestore();
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectURL });
+      } else {
+        delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: originalRevokeObjectURL });
+      } else {
+        delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+      }
+    }
+  });
+
+  it("applies Twilio relay results to sent, scheduled, and failed delivery logs", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-1101",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "marketing",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        recipientRole: "student",
+        recipientId: "student-ari",
+        body: "Family night registration is open. Reply STOP to opt out.",
+        status: "queued",
+        createdAt: "2026-06-02T10:00:00.000Z",
+        deliveryChannel: "sms",
+        deliveryProvider: "twilio",
+        deliveryMode: "prototype",
+        deliveryStatus: "queued"
+      },
+      {
+        id: "message-parent",
+        kind: "marketing",
+        recipientName: "Mina Nguyen",
+        recipientPhone: "(262) 555-1101",
+        recipientRole: "parent",
+        recipientId: "parent-student-ari",
+        body: "Family night registration is open.",
+        status: "queued",
+        createdAt: "2026-06-02T10:05:00.000Z",
+        deliveryChannel: "sms",
+        deliveryProvider: "twilio",
+        deliveryMode: "prototype",
+        deliveryStatus: "queued"
+      },
+      {
+        id: "message-scheduled",
+        kind: "marketing",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        recipientRole: "student",
+        recipientId: "student-ari",
+        body: "Saturday demo team reminder. Reply STOP to opt out.",
+        status: "queued",
+        createdAt: "2026-06-02T10:10:00.000Z",
+        deliveryChannel: "sms",
+        deliveryProvider: "twilio",
+        deliveryMode: "prototype",
+        deliveryStatus: "queued"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.twilioLaunchProfile.v1", JSON.stringify({
+      messagingServiceSid: "test-messaging-service-sid",
+      smsSender: "+12625550100",
+      inboundWebhookUrl: "https://relay.cho.example/api/messages/inbound",
+      statusCallbackBaseUrl: "https://relay.cho.example",
+      relayHealthCheckUrl: "https://relay.cho.example/api/health/twilio",
+      managerAuthMode: "same-site-cookie",
+      senderType: "10dlc",
+      a2pBrandStatus: "approved",
+      a2pCampaignStatus: "approved",
+      tollFreeVerificationStatus: "not-used",
+      complianceNotes: "Approved sender profile for relay payload validation test."
+    }));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Twilio relay results JSON"), {
+      target: {
+        value: JSON.stringify({
+          results: [
+            {
+              id: "message-ari",
+              deliveryStatus: "sent",
+              deliveryProviderMessageId: "test-message-sid-1"
+            },
+            {
+              id: "message-parent",
+              deliveryStatus: "failed",
+              deliveryProviderMessageId: "test-message-sid-2",
+              errorCode: "30007",
+              errorMessage: "Carrier violation."
+            },
+            {
+              id: "message-scheduled",
+              deliveryStatus: "scheduled",
+              deliveryProviderMessageId: "test-message-sid-4"
+            },
+            {
+              id: "message-missing",
+              deliveryStatus: "sent",
+              deliveryProviderMessageId: "test-message-sid-3"
+            }
+          ]
+        })
+      }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply Twilio Results" }));
+
+    expect(await screen.findByText("3 Twilio relay results applied.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        id: "message-ari",
+        status: "sent",
+        sentAt: expect.any(String),
+        deliveryMode: "live",
+        deliveryStatus: "sent",
+        deliveryProviderMessageId: "test-message-sid-1",
+        deliveryDetail: "Twilio status: sent."
+      }),
+      expect.objectContaining({
+        id: "message-parent",
+        status: "failed",
+        deliveryMode: "live",
+        deliveryStatus: "failed",
+        deliveryProviderMessageId: "test-message-sid-2",
+        deliveryDetail: "Twilio status: failed. Error 30007: Carrier violation."
+      }),
+      expect.objectContaining({
+        id: "message-scheduled",
+        status: "sent",
+        sentAt: expect.any(String),
+        deliveryMode: "live",
+        deliveryStatus: "scheduled",
+        deliveryProviderMessageId: "test-message-sid-4",
+        deliveryDetail: "Twilio status: scheduled."
+      })
+    ]);
+  });
+
+  it("applies Twilio status callbacks to existing live delivery logs", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "marketing",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        recipientRole: "student",
+        recipientId: "student-ari",
+        body: "Family night registration is open.",
+        status: "sent",
+        sentAt: "2026-06-02T10:05:00.000Z",
+        createdAt: "2026-06-02T10:00:00.000Z",
+        deliveryChannel: "sms",
+        deliveryProvider: "twilio",
+        deliveryMode: "live",
+        deliveryStatus: "sent",
+        deliveryProviderMessageId: "test-message-sid-1"
+      }
+    ]));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Twilio status callback JSON"), {
+      target: {
+        value: JSON.stringify({
+          messageId: "message-ari",
+          MessageSid: "test-message-sid-1",
+          MessageStatus: "delivered",
+          RawDlrDoneDate: "2606031430"
+        })
+      }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply Twilio Status" }));
+
+    expect(await screen.findByText("1 Twilio status callback applied.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        id: "message-ari",
+        status: "sent",
+        sentAt: "2026-06-02T10:05:00.000Z",
+        deliveryMode: "live",
+        deliveryStatus: "delivered",
+        deliveryProviderMessageId: "test-message-sid-1",
+        deliveryDetail: "Twilio status: delivered."
+      })
+    ]);
+  });
+
+  it("blocks non-compliant marketing payloads before posting to the private Twilio relay", async () => {
+    const fetchMock = vi.fn();
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock
+    });
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "marketing",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        recipientRole: "student",
+        recipientId: "student-ari",
+        body: "Family night registration is open.",
+        status: "queued",
+        createdAt: "2026-06-02T10:00:00.000Z",
+        deliveryChannel: "sms",
+        deliveryProvider: "twilio",
+        deliveryMode: "prototype",
+        deliveryStatus: "queued"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.twilioLaunchProfile.v1", JSON.stringify({
+      messagingServiceSid: "test-messaging-service-sid",
+      smsSender: "+12625550100",
+      inboundWebhookUrl: "https://relay.cho.example/api/messages/inbound",
+      statusCallbackBaseUrl: "https://relay.cho.example",
+      relayHealthCheckUrl: "https://relay.cho.example/api/health/twilio",
+      managerAuthMode: "same-site-cookie",
+      senderType: "10dlc",
+      a2pBrandStatus: "approved",
+      a2pCampaignStatus: "approved",
+      tollFreeVerificationStatus: "not-used",
+      complianceNotes: "Approved sender profile for relay payload validation test."
+    }));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Private Twilio relay URL"), { target: { value: "https://relay.cho.example/api/messages/send" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Twilio Relay" }));
+
+    expect(await screen.findByText("Twilio relay payload needs review before live send.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks live Twilio relay sends until sender compliance is verified", async () => {
+    const fetchMock = vi.fn();
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock
+    });
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "marketing",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        recipientRole: "student",
+        recipientId: "student-ari",
+        body: "Family night registration is open. Reply STOP to opt out.",
+        status: "queued",
+        createdAt: "2026-06-02T10:00:00.000Z",
+        deliveryChannel: "sms",
+        deliveryProvider: "twilio",
+        deliveryMode: "prototype",
+        deliveryStatus: "queued"
+      }
+    ]));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Private Twilio relay URL"), { target: { value: "https://relay.cho.example/api/messages/send" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Twilio Relay" }));
+
+    expect(await screen.findByText("Verify sender compliance before live Twilio relay sends.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("posts deliverable queued texts to a private Twilio relay and applies the response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: vi.fn().mockResolvedValue(JSON.stringify({
+        results: [
+          {
+            id: "message-ari",
+            deliveryStatus: "sent",
+            deliveryProviderMessageId: "SMPRIVATE1111111111111111111111111111"
+          }
+        ]
+      }))
+    });
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock
+    });
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+      {
+        id: "message-ari",
+        kind: "marketing",
+        recipientName: "Ari Nguyen",
+        recipientPhone: "(262) 555-0101",
+        recipientRole: "student",
+        recipientId: "student-ari",
+        body: "Family night registration is open. Reply STOP to opt out.",
+        status: "queued",
+        createdAt: "2026-06-02T10:00:00.000Z",
+        deliveryChannel: "sms",
+        deliveryProvider: "twilio",
+        deliveryMode: "prototype",
+        deliveryStatus: "queued"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.twilioLaunchProfile.v1", JSON.stringify({
+      messagingServiceSid: "test-messaging-service-sid",
+      smsSender: "+12625550100",
+      inboundWebhookUrl: "https://relay.cho.example/api/messages/inbound",
+      statusCallbackBaseUrl: "https://relay.cho.example",
+      relayHealthCheckUrl: "https://relay.cho.example/api/health/twilio",
+      managerAuthMode: "same-site-cookie",
+      senderType: "10dlc",
+      a2pBrandStatus: "approved",
+      a2pCampaignStatus: "approved",
+      tollFreeVerificationStatus: "not-used",
+      complianceNotes: "Approved for live test relay sends."
+    }));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Private Twilio relay URL"), { target: { value: "https://relay.cho.example/api/messages/send" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Twilio Relay" }));
+
+    expect(await screen.findByText("1 Twilio relay result applied.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("https://relay.cho.example/api/messages/send", expect.objectContaining({
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" }
+    }));
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody).toEqual(expect.objectContaining({
+      schemaVersion: "chos-twilio-relay.v1",
+      provider: "twilio",
+      deliveryMode: "server-relay",
+      messages: [
+        expect.objectContaining({ id: "message-ari", to: "+12625550101", body: "Family night registration is open. Reply STOP to opt out." })
+      ]
+    }));
+    expect(JSON.stringify(requestBody)).not.toMatch(/TWILIO_AUTH_TOKEN|authToken|password/i);
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        id: "message-ari",
+        status: "sent",
+        deliveryMode: "live",
+        deliveryStatus: "sent",
+        deliveryProviderMessageId: "SMPRIVATE1111111111111111111111111111"
+      })
+    ]);
+  });
+
+  it("suppresses opted-out SMS contacts from blasts and Twilio relay exports", async () => {
+    const clickAnchor = vi.fn();
+    let relayBlob: Blob | undefined;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      relayBlob = blob;
+      return "blob:twilio-optout-relay";
+    });
+    const revokeObjectURL = vi.fn();
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const originalCreateElement = document.createElement.bind(document);
+    let createdAnchor: HTMLAnchorElement | undefined;
+    const createElementSpy = vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName.toLowerCase() === "a") {
+        createdAnchor = element as HTMLAnchorElement;
+        Object.defineProperty(element, "click", { configurable: true, value: clickAnchor });
+      }
+      return element;
+    });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+
+    try {
+      window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+        {
+          id: "student-ari",
+          firstName: "Ari",
+          lastName: "Nguyen",
+          ...completeStudentSafetyFields,
+          phone: "(262) 555-0101",
+          email: "ari@example.com",
+          guardianName: "Mina Nguyen",
+          guardianPhone: "(262) 555-1101",
+          status: "Active",
+          beltRank: "Yellow",
+          classesAttended: 12,
+          missedClassCount: 0,
+          joinedAt: "2026-01-01",
+          studentSmsOptOutAt: "2026-06-01T10:00:00.000Z"
+        },
+        {
+          id: "student-bree",
+          firstName: "Bree",
+          lastName: "Santos",
+          ...completeStudentSafetyFields,
+          phone: "(262) 555-0102",
+          email: "bree@example.com",
+          guardianName: "Leo Santos",
+          guardianPhone: "(262) 555-1102",
+          status: "Active",
+          beltRank: "White",
+          classesAttended: 6,
+          missedClassCount: 0,
+          joinedAt: "2026-01-01",
+          guardianSmsOptOutAt: "2026-06-01T11:00:00.000Z"
+        }
+      ]));
+      window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+        {
+          id: "staff-kim",
+          displayName: "Coach Kim",
+          username: "coach.kim",
+          password: "staff-pass",
+          role: "staff",
+          status: "active",
+          phone: "(262) 555-2101",
+          smsOptOutAt: "2026-06-01T12:00:00.000Z",
+          access: ["messages"],
+          createdAt: "2026-05-01T10:00:00.000Z"
+        }
+      ]));
+      window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([
+        {
+          id: "message-ari",
+          kind: "marketing",
+          recipientName: "Ari Nguyen",
+          recipientPhone: "(262) 555-0101",
+          recipientRole: "student",
+          recipientId: "student-ari",
+          body: "Opted-out student should not be sent.",
+          status: "queued",
+          createdAt: "2026-06-02T10:00:00.000Z"
+        },
+        {
+          id: "message-bree-parent",
+          kind: "marketing",
+          recipientName: "Leo Santos",
+          recipientPhone: "(262) 555-1102",
+          recipientRole: "parent",
+          recipientId: "parent-student-bree",
+          body: "Opted-out guardian should not be sent.",
+          status: "queued",
+          createdAt: "2026-06-02T10:05:00.000Z"
+        },
+        {
+          id: "message-kim",
+          kind: "marketing",
+          recipientName: "Coach Kim",
+          recipientPhone: "(262) 555-2101",
+          recipientRole: "staff",
+          recipientId: "staff-kim",
+          body: "Opted-out staff should not be sent.",
+          status: "queued",
+          createdAt: "2026-06-02T10:10:00.000Z"
+        },
+        {
+          id: "message-bree",
+          kind: "marketing",
+          recipientName: "Bree Santos",
+          recipientPhone: "(262) 555-0102",
+          recipientRole: "student",
+          recipientId: "student-bree",
+          body: "Deliverable student should be sent. Reply STOP to opt out.",
+          status: "queued",
+          createdAt: "2026-06-02T10:15:00.000Z"
+        }
+      ]));
+
+      renderLoggedInApp("/messages");
+
+      expect(screen.getByText("3 SMS opt-out records active.")).toBeInTheDocument();
+      expect(screen.getByText("1 text waiting to be sent.")).toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("Audience"), { target: { value: "everyone" } });
+      fireEvent.change(screen.getByLabelText("Marketing message"), { target: { value: "June family night registration is open. Reply STOP to opt out." } });
+      fireEvent.click(screen.getByRole("button", { name: "Send Marketing Blast" }));
+
+      expect(await screen.findByText("Text blast queued for 2 contacts.")).toBeInTheDocument();
+      const marketingMessages = JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")
+        .filter((message: { body: string }) => message.body === "June family night registration is open. Reply STOP to opt out.");
+      expect(marketingMessages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ recipientName: "Mina Nguyen", recipientRole: "parent" }),
+        expect.objectContaining({ recipientName: "Bree Santos", recipientRole: "student" })
+      ]));
+      expect(marketingMessages).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ recipientName: "Ari Nguyen" }),
+        expect.objectContaining({ recipientName: "Leo Santos" }),
+        expect.objectContaining({ recipientName: "Coach Kim" })
+      ]));
+
+      fireEvent.click(screen.getByRole("button", { name: "Export Twilio Relay JSON" }));
+
+      expect(await screen.findByText("3 Twilio relay messages exported.")).toBeInTheDocument();
+      if (!relayBlob) throw new Error("Expected Twilio relay export to create a Blob.");
+      const payload = JSON.parse(await relayBlob.text());
+      expect(payload.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "message-bree", to: "+12625550102" })
+      ]));
+      expect(payload.messages).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "message-ari" }),
+        expect.objectContaining({ id: "message-bree-parent" }),
+        expect.objectContaining({ id: "message-kim" }),
+        expect.objectContaining({ to: "+12625550101" }),
+        expect.objectContaining({ to: "+12625551102" }),
+        expect.objectContaining({ to: "+12625552101" })
+      ]));
+      expect(clickAnchor).toHaveBeenCalledTimes(1);
+      expect(createdAnchor).toHaveAttribute("download", expect.stringMatching(/^chos-twilio-relay-queue-\d{4}-\d{2}-\d{2}\.json$/));
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:twilio-optout-relay");
+    } finally {
+      createElementSpy.mockRestore();
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectURL });
+      } else {
+        delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: originalRevokeObjectURL });
+      } else {
+        delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+      }
+    }
+  });
+
+  it("exports SMS consent evidence for student, parent, and staff contacts without credentials", async () => {
+    const clickAnchor = vi.fn();
+    let consentBlob: Blob | undefined;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      consentBlob = blob;
+      return "blob:twilio-consent-evidence";
+    });
+    const revokeObjectURL = vi.fn();
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const originalCreateElement = document.createElement.bind(document);
+    let createdAnchor: HTMLAnchorElement | undefined;
+    const createElementSpy = vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName.toLowerCase() === "a") {
+        createdAnchor = element as HTMLAnchorElement;
+        Object.defineProperty(element, "click", { configurable: true, value: clickAnchor });
+      }
+      return element;
+    });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+
+    try {
+      window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+        {
+          id: "student-ari",
+          firstName: "Ari",
+          lastName: "Nguyen",
+          ...completeStudentSafetyFields,
+          phone: "(262) 555-0101",
+          email: "ari@example.com",
+          guardianName: "Mina Nguyen",
+          guardianPhone: "(262) 555-1101",
+          status: "Active",
+          beltRank: "Yellow",
+          classesAttended: 12,
+          missedClassCount: 0,
+          joinedAt: "2026-01-01",
+          smsConsentUpdatedAt: "2026-06-01T10:00:00.000Z"
+        },
+        {
+          id: "student-bree",
+          firstName: "Bree",
+          lastName: "Santos",
+          ...completeStudentSafetyFields,
+          phone: "(262) 555-0102",
+          email: "bree@example.com",
+          guardianName: "Leo Santos",
+          guardianPhone: "(262) 555-1102",
+          status: "Active",
+          beltRank: "White",
+          classesAttended: 6,
+          missedClassCount: 0,
+          joinedAt: "2026-01-01",
+          guardianSmsOptOutAt: "2026-06-02T11:00:00.000Z",
+          smsConsentUpdatedAt: "2026-06-02T11:00:00.000Z"
+        }
+      ]));
+      window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+        {
+          id: "staff-kim",
+          displayName: "Coach Kim",
+          username: "coach.kim",
+          password: "staff-pass",
+          role: "staff",
+          status: "active",
+          phone: "(262) 555-2101",
+          smsConsentUpdatedAt: "2026-06-03T09:00:00.000Z",
+          access: ["messages"],
+          createdAt: "2026-05-01T10:00:00.000Z"
+        }
+      ]));
+
+      renderLoggedInApp("/messages");
+
+      fireEvent.click(screen.getByRole("button", { name: "Export Consent Evidence" }));
+
+      expect(await screen.findByText("5 SMS consent records exported.")).toBeInTheDocument();
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      if (!consentBlob) throw new Error("Expected consent evidence export to create a Blob.");
+      const payload = JSON.parse(await consentBlob.text());
+      expect(payload).toEqual(expect.objectContaining({
+        schemaVersion: "chos-sms-consent-evidence.v1",
+        provider: "twilio",
+        requestedBy: expect.objectContaining({ email: "manager123@chos.prototype" })
+      }));
+      expect(payload.contacts).toEqual(expect.arrayContaining([
+        expect.objectContaining({ contactId: "student-ari", role: "student", phone: "+12625550101", consentStatus: "opt-in", consentUpdatedAt: "2026-06-01T10:00:00.000Z" }),
+        expect.objectContaining({ contactId: "parent-student-ari", role: "parent", phone: "+12625551101", consentStatus: "opt-in", consentUpdatedAt: "2026-06-01T10:00:00.000Z" }),
+        expect.objectContaining({ contactId: "student-bree", role: "student", phone: "+12625550102", consentStatus: "opt-in", consentUpdatedAt: "2026-06-02T11:00:00.000Z" }),
+        expect.objectContaining({ contactId: "parent-student-bree", role: "parent", phone: "+12625551102", consentStatus: "opt-out", consentUpdatedAt: "2026-06-02T11:00:00.000Z" }),
+        expect.objectContaining({ contactId: "staff-kim", role: "staff", phone: "+12625552101", consentStatus: "opt-in", consentUpdatedAt: "2026-06-03T09:00:00.000Z" })
+      ]));
+      expect(JSON.stringify(payload)).not.toMatch(/staff-pass|TWILIO_AUTH_TOKEN|twilio-auth-token-value|private-key-value|account-password/i);
+      expect(createdAnchor).toHaveAttribute("download", expect.stringMatching(/^chos-sms-consent-evidence-\d{4}-\d{2}-\d{2}\.json$/));
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:twilio-consent-evidence");
+    } finally {
+      createElementSpy.mockRestore();
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectURL });
+      } else {
+        delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: originalRevokeObjectURL });
+      } else {
+        delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+      }
+    }
+  });
+
+  it("imports inbound Twilio SMS replies and handles STOP opt-outs", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        guardianName: "Mina Nguyen",
+        guardianPhone: "(262) 555-1101",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({ lastSeenDirectMessageAt: "2026-06-01T10:00:00.000Z" }));
+
+    renderLoggedInApp("/messages");
+
+    fireEvent.change(screen.getByLabelText("Twilio inbound webhook JSON"), {
+      target: {
+        value: JSON.stringify({
+          From: "+12625551101",
+          Body: "Can Ari join the 6 PM class?",
+          MessageSid: "SMINBOUND1111111111111111111111111111"
+        })
+      }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply Twilio Inbound" }));
+
+    expect(await screen.findByText("1 inbound SMS imported.")).toBeInTheDocument();
+    expect(screen.getByText("1 unread app message")).toBeInTheDocument();
+    expect(screen.getByText("Can Ari join the 6 PM class?")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        id: "twilio-SMINBOUND1111111111111111111111111111",
+        threadId: "direct-staff-seed__parent-student-ari",
+        senderId: "parent-student-ari",
+        senderName: "Mina Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Can Ari join the 6 PM class?",
+        status: "sent"
+      })
+    ]);
+
+    fireEvent.change(screen.getByLabelText("Twilio inbound webhook JSON"), {
+      target: {
+        value: JSON.stringify({
+          From: "+12625550101",
+          Body: "STOP",
+          MessageSid: "SMSTOP111111111111111111111111111111"
+        })
+      }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply Twilio Inbound" }));
+
+    expect(await screen.findByText("1 SMS opt-out update applied.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.students.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        id: "student-ari",
+        studentSmsOptOutAt: expect.any(String)
+      })
+    ]);
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.directMessages.v1") ?? "[]")).toHaveLength(1);
   });
 
   it("sends only queued texts for current students and removes stale queued recipients", async () => {

@@ -1,6 +1,7 @@
 import {
   Award,
   BarChart3,
+  Bell,
   BookOpen,
   Camera,
   CalendarDays,
@@ -22,7 +23,9 @@ import {
   ShoppingCart,
   Search,
   Send,
+  Server,
   Sparkles,
+  Smartphone,
   Sun,
   Target,
   Trash2,
@@ -32,7 +35,7 @@ import {
   Video,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent as ReactChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent as ReactChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import classesLauncherIcon from "./assets/manager-icons/Classes.webp";
 import dashboardLauncherIcon from "./assets/manager-icons/Dashboard.webp";
@@ -46,7 +49,7 @@ import reportsLauncherIcon from "./assets/manager-icons/Reports.webp";
 import schedulingLauncherIcon from "./assets/manager-icons/Scheduling.webp";
 import studentsLauncherIcon from "./assets/manager-icons/Students.webp";
 import { beltReadinessItems } from "./data";
-import { buildOperationsBackupSnapshot, makeOperationsBackupFilename } from "./operationsBackup";
+import { buildOperationsBackupSnapshot, makeOperationsBackupFilename, type ProductionMessagingSetupBackup } from "./operationsBackup";
 import { buildReportsCommandCenter, getMerchandiseReorderPoint, getMerchandiseTargetStock, isMissedClassFollowUpDue, isQueuedMessageDeliverable, type ReportsAttendanceGapCandidate, type ReportsCelebrationCandidate, type ReportsClassReminderCandidate, type ReportsDirectMessageReplyCandidate, type ReportsNewStudentCheckInCandidate, type ReportsPriorityAction, type ReportsProfileUpdateCandidate } from "./operationsReports";
 import { publicAsset } from "./appAssets";
 import {
@@ -100,8 +103,9 @@ import {
   type VisualColorKey,
   type VisualThemeColors
 } from "./theme";
-import type { AccountRole, BeltRank, ChildAccount, ClassWeekday, DirectMessage, ManagedAccount, ManagerAccessKey, MerchandiseItem, MessageLog, ScheduledClass, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TrainingVideo, TrainingVideoFolder } from "./types";
-import { downloadTextFile, formatMoney, validateEmail } from "./utils";
+import { validateTwilioRelayHealthResponseForBrowser, validateTwilioRelayPayloadForServer, type TwilioRelayHealthReadinessChecks } from "./twilioRelayContract";
+import type { AccountRole, BeltRank, ChildAccount, ClassWeekday, DirectMessage, ManagedAccount, ManagerAccessKey, MerchandiseItem, MessageCampaign, MessageLog, MessageNotificationSettings, ScheduledClass, ScheduledTextCampaign, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TextAutomationRun, TrainingVideo, TrainingVideoFolder } from "./types";
+import { downloadTextFile, formatMoney, smsOptOutPreflightText, smsSegmentPreflightText, validateEmail } from "./utils";
 
 const beltOptions = beltRanks.map((beltRank) => beltRank.name);
 const weekdayOptions: { value: ClassWeekday; label: string; short: string }[] = [
@@ -245,6 +249,486 @@ function messageKindLabel(kind: MessageLog["kind"]) {
   if (kind === "marketing") return "Marketing blast";
   if (kind === "welcome") return "Welcome text";
   return "Class reminder";
+}
+
+function messageAudienceLabel(audience: MessageCampaign["audience"]) {
+  if (audience === "parents") return "parents";
+  if (audience === "staff") return "staff";
+  if (audience === "everyone") return "contacts";
+  return "students";
+}
+
+function scheduledPromotionStatusLabel(status: ScheduledTextCampaign["status"]) {
+  if (status === "queued") return "Queued";
+  if (status === "canceled") return "Canceled";
+  return "Scheduled";
+}
+
+function scheduledPromotionWhenLabel(campaign: Pick<ScheduledTextCampaign, "scheduledFor" | "scheduledTime">) {
+  return campaign.scheduledTime ? `${campaign.scheduledFor} at ${formatClockTime(campaign.scheduledTime)}` : campaign.scheduledFor;
+}
+
+function automationRunStatusLabel(run: Pick<TextAutomationRun, "status" | "totalQueued">) {
+  if (run.status === "no-due-texts") return "No due texts";
+  return `${run.totalQueued} queued`;
+}
+
+function automationRunBreakdownSummary(run: Pick<TextAutomationRun, "breakdown">) {
+  const activeBreakdown = run.breakdown.filter((item) => item.queued > 0);
+  return activeBreakdown.length
+    ? activeBreakdown.map((item) => `${item.label}: ${item.queued}`).join(" · ")
+    : "No automation categories queued texts";
+}
+
+const twilioRequiredServerEnvVars = ["TWILIO_ACCOUNT_SID"];
+const twilioAuthServerEnv = {
+  productionRecommended: ["TWILIO_API_KEY", "TWILIO_API_KEY_SECRET"],
+  localFallback: ["TWILIO_AUTH_TOKEN"]
+};
+const twilioSenderServerEnv = {
+  recommended: ["TWILIO_MESSAGING_SERVICE_SID"],
+  fallback: ["TWILIO_FROM_NUMBER"]
+};
+const twilioServerEnvLabels = [
+  "TWILIO_ACCOUNT_SID",
+  "TWILIO_API_KEY + TWILIO_API_KEY_SECRET",
+  "TWILIO_AUTH_TOKEN fallback",
+  "TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER"
+];
+const twilioServerReadinessLabel = "Account SID + auth pair + sender option required";
+const twilioRelayServerContract = {
+  module: "src/twilioRelayContract.ts",
+  payloadValidator: "validateTwilioRelayPayloadForServer",
+  consentEvidenceValidator: "validateTwilioRelayConsentEvidenceForServer",
+  healthResponseValidator: "validateTwilioRelayHealthResponseForBrowser",
+  messageRequestBuilder: "buildTwilioMessageRequest",
+  relayExecutionPlanner: "buildTwilioRelayExecutionPlan",
+  relayDispatchPlanner: "buildTwilioRelayDispatchPlan",
+  sendPolicyPlanner: "buildTwilioRelaySendPolicyPlan",
+  providerResponseResultBuilder: "buildTwilioRelayResultFromProviderResponse",
+  providerMessageResponseNormalizer: "normalizeTwilioMessageCreateResponseForServer",
+  basicAuthHeaderBuilder: "buildTwilioBasicAuthHeader"
+};
+const twilioWebhookServerContract = {
+  module: "src/twilioRelayContract.ts",
+  signatureValidator: "validateTwilioFormWebhookSignature",
+  statusCallbackNormalizer: "normalizeTwilioStatusCallbackForServer",
+  inboundSmsNormalizer: "normalizeTwilioInboundSmsWebhookForServer",
+  inboundConsentUpdatePlanner: "buildTwilioInboundConsentUpdatePlanForServer"
+};
+const webPushRequiredServerEnvVars = ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"];
+const webPushServerContract = {
+  module: "src/webPushContract.ts",
+  subscriptionValidator: "validateWebPushSubscriptionPayloadForServer",
+  notificationPayloadBuilder: "buildChoWebPushNotificationPayload",
+  deliveryPlanner: "buildChoWebPushDeliveryPlan",
+  providerResponseResultBuilder: "buildChoWebPushResultFromProviderResponse",
+  deliveryReconciliationPlanner: "buildChoWebPushDeliveryReconciliationPlan",
+  supportedAccountRoles: ["staff", "student", "guardian"]
+};
+const messagingServerAdapterContract = {
+  module: "src/messagingServerContract.ts",
+  healthResponseBuilder: "buildChoMessagingServerHealthResponse",
+  requestGateValidator: "validateChoMessagingServerRequestGate",
+  relayPlanBuilder: "buildChoMessagingServerRelayPlan",
+  pushSubscriptionSyncPlanner: "buildChoMessagingServerPushSubscriptionSyncPlan",
+  twilioWebhookPlanner: "buildChoMessagingServerTwilioWebhookPlan"
+};
+const twilioRelayHealthCheckLabels: { key: keyof TwilioRelayHealthReadinessChecks; label: string }[] = [
+  { key: "managerAuth", label: "Manager auth" },
+  { key: "twilioCredentials", label: "Twilio credentials" },
+  { key: "senderConfigured", label: "Sender configured" },
+  { key: "complianceReady", label: "Compliance ready" },
+  { key: "webhookSignatureValidation", label: "Webhook signatures" },
+  { key: "relayCanSend", label: "Relay can send" }
+];
+
+function activeSmsOptOutCount(students: readonly StudentRecord[], managedAccounts: readonly ManagedAccount[]) {
+  return (
+    students.reduce((count, student) => count + (student.studentSmsOptOutAt?.trim() ? 1 : 0) + (student.guardianSmsOptOutAt?.trim() ? 1 : 0), 0) +
+    managedAccounts.filter((account) => account.smsOptOutAt?.trim()).length
+  );
+}
+
+function isActiveOperationsStudent(student: Pick<StudentRecord, "status">) {
+  return (student.status?.trim() || "Active").toLowerCase() !== "inactive";
+}
+
+function normalizeConsentPhone(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("+")) return trimmed.replace(/[^\d+]/g, "");
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return trimmed;
+}
+
+function smsConsentStatus(optOutAt?: string, consentUpdatedAt?: string) {
+  if (optOutAt?.trim()) return "opt-out";
+  if (consentUpdatedAt?.trim()) return "opt-in";
+  return "unknown";
+}
+
+function smsConsentUpdatedAt(optOutAt?: string, consentUpdatedAt?: string) {
+  return optOutAt?.trim() || consentUpdatedAt?.trim() || null;
+}
+
+function getBrowserNotificationPermission() {
+  if (typeof window === "undefined" || !("Notification" in window)) return "unsupported" as const;
+  return window.Notification.permission;
+}
+
+async function showDirectMessageBrowserNotification(title: string, options: NotificationOptions) {
+  if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      if (typeof registration.showNotification === "function") {
+        await registration.showNotification(title, options);
+        return true;
+      }
+    } catch {
+      // Fall back to the page-level Notification constructor below.
+    }
+  }
+  if (typeof window !== "undefined" && "Notification" in window && window.Notification.permission === "granted") {
+    new window.Notification(title, options);
+    return true;
+  }
+  return false;
+}
+
+type AppBadgeNavigator = Navigator & {
+  setAppBadge?: (contents?: number) => Promise<void>;
+  clearAppBadge?: () => Promise<void>;
+};
+
+async function syncMessageAppBadge(unreadCount: number) {
+  if (typeof navigator === "undefined") return false;
+  const badgeNavigator = navigator as AppBadgeNavigator;
+  try {
+    if (unreadCount > 0 && typeof badgeNavigator.setAppBadge === "function") {
+      await badgeNavigator.setAppBadge(unreadCount);
+      return true;
+    }
+    if (unreadCount <= 0 && typeof badgeNavigator.clearAppBadge === "function") {
+      await badgeNavigator.clearAppBadge();
+      return true;
+    }
+  } catch {
+    // Badging is optional; unsupported installed-app contexts should not break messages.
+  }
+  return false;
+}
+
+function webPushPublicKeyToBytes(publicKey: string) {
+  const cleanKey = publicKey.trim();
+  if (!cleanKey || typeof window === "undefined" || typeof window.atob !== "function") return undefined;
+  try {
+    const base64 = `${cleanKey}${"=".repeat((4 - (cleanKey.length % 4)) % 4)}`.replace(/-/g, "+").replace(/_/g, "/");
+    const rawKey = window.atob(base64);
+    const output = new Uint8Array(rawKey.length);
+    for (let index = 0; index < rawKey.length; index += 1) {
+      output[index] = rawKey.charCodeAt(index);
+    }
+    return output;
+  } catch {
+    return undefined;
+  }
+}
+
+function pushSubscriptionToJson(subscription: PushSubscription) {
+  if (typeof subscription.toJSON === "function") {
+    return JSON.stringify(subscription.toJSON());
+  }
+  return JSON.stringify({
+    endpoint: subscription.endpoint,
+    expirationTime: subscription.expirationTime ?? null
+  });
+}
+
+function parsePushSubscriptionJson(rawSubscription?: string) {
+  if (!rawSubscription?.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(rawSubscription) as unknown;
+    return parsed && typeof parsed === "object" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function cleanNotificationSettingString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function getPushSubscriptionEndpoint(subscription: PushSubscription, subscriptionJson: string) {
+  const parsedSubscription = parsePushSubscriptionJson(subscriptionJson) as { endpoint?: unknown } | undefined;
+  return typeof parsedSubscription?.endpoint === "string" ? parsedSubscription.endpoint : subscription.endpoint;
+}
+
+function buildWebPushSubscriptionSettings(publicKey: string, subscription: PushSubscription): Partial<MessageNotificationSettings> {
+  const subscriptionJson = pushSubscriptionToJson(subscription);
+  return {
+    browserNotificationsEnabled: true,
+    browserPermission: "granted",
+    pushPublicKey: publicKey.trim(),
+    pushSubscriptionEndpoint: getPushSubscriptionEndpoint(subscription, subscriptionJson),
+    pushSubscriptionJson: subscriptionJson,
+    pushSubscribedAt: new Date().toISOString()
+  };
+}
+
+function buildWebPushSubscriptionPayload(
+  settings: MessageNotificationSettings,
+  session: { email: string } | null | undefined,
+  accountRole: AccountRole | undefined,
+  notificationUrl: string
+) {
+  const subscription = parsePushSubscriptionJson(settings.pushSubscriptionJson);
+  if (!subscription || !settings.pushSubscriptionEndpoint?.trim()) return undefined;
+  return {
+    schemaVersion: "chos-web-push-subscription.v1",
+    provider: "web-push",
+    deliveryMode: "server-push",
+    generatedAt: new Date().toISOString(),
+    requestedBy: session
+      ? {
+          email: session.email,
+          role: accountRole
+        }
+      : undefined,
+    notificationUrl,
+    pushSubscribedAt: settings.pushSubscribedAt,
+    subscription
+  };
+}
+
+function messagesNotificationUrl() {
+  if (typeof window === "undefined") return "messages";
+  return new URL(`${import.meta.env.BASE_URL}messages`, window.location.origin).toString();
+}
+
+function appHomeNotificationUrl() {
+  if (typeof window === "undefined") return "/";
+  return new URL(import.meta.env.BASE_URL, window.location.origin).toString();
+}
+
+function sessionNotificationScope(email?: string) {
+  const keyEmail = email
+    ?.trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return keyEmail || "guest";
+}
+
+const homeMessageNotificationStoragePrefix = "chos.homeMessageNotifications";
+
+function homeMessageNotificationStorageKey(email?: string) {
+  return `${homeMessageNotificationStoragePrefix}.${sessionNotificationScope(email)}.v1`;
+}
+
+function readHomeMessageNotificationSettings(email?: string): MessageNotificationSettings {
+  if (typeof window === "undefined") return { browserNotificationsEnabled: false };
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(homeMessageNotificationStorageKey(email)) ?? "null") as Partial<MessageNotificationSettings> | null;
+    return {
+      browserNotificationsEnabled: Boolean(parsed?.browserNotificationsEnabled),
+      browserPermission: parsed?.browserPermission,
+      lastBrowserNotifiedDirectMessageAt: typeof parsed?.lastBrowserNotifiedDirectMessageAt === "string" ? parsed.lastBrowserNotifiedDirectMessageAt : undefined,
+      pushPublicKey: cleanNotificationSettingString(parsed?.pushPublicKey),
+      pushSubscriptionEndpoint: cleanNotificationSettingString(parsed?.pushSubscriptionEndpoint),
+      pushSubscriptionJson: cleanNotificationSettingString(parsed?.pushSubscriptionJson),
+      pushSubscribedAt: cleanNotificationSettingString(parsed?.pushSubscribedAt),
+      updatedAt: typeof parsed?.updatedAt === "string" ? parsed.updatedAt : undefined
+    };
+  } catch {
+    return { browserNotificationsEnabled: false };
+  }
+}
+
+function writeHomeMessageNotificationSettings(email: string | undefined, settings: MessageNotificationSettings) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(homeMessageNotificationStorageKey(email), JSON.stringify(settings));
+  } catch {
+    // Device notification preferences are optional; blocked storage should not break the Profile feed.
+  }
+}
+
+const twilioRelayEndpointStorageKey = "chos.operations.twilioRelayEndpoint.v1";
+const pushServerEndpointStorageKey = "chos.operations.pushServerEndpoint.v1";
+const twilioLaunchProfileStorageKey = "chos.operations.twilioLaunchProfile.v1";
+
+type TwilioComplianceSenderType = "not-set" | "10dlc" | "toll-free" | "short-code";
+type TwilioComplianceStatus = "not-started" | "pending" | "approved" | "rejected" | "not-used";
+
+type TwilioLaunchProfile = {
+  messagingServiceSid: string;
+  smsSender: string;
+  inboundWebhookUrl: string;
+  statusCallbackBaseUrl: string;
+  relayHealthCheckUrl: string;
+  managerAuthMode: "same-site-cookie" | "server-session" | "oauth-proxy";
+  senderType: TwilioComplianceSenderType;
+  a2pBrandStatus: TwilioComplianceStatus;
+  a2pCampaignStatus: TwilioComplianceStatus;
+  tollFreeVerificationStatus: TwilioComplianceStatus;
+  complianceNotes: string;
+  savedAt?: string;
+};
+
+const defaultTwilioLaunchProfile: TwilioLaunchProfile = {
+  messagingServiceSid: "",
+  smsSender: "",
+  inboundWebhookUrl: "",
+  statusCallbackBaseUrl: "",
+  relayHealthCheckUrl: "",
+  managerAuthMode: "same-site-cookie",
+  senderType: "not-set",
+  a2pBrandStatus: "not-started",
+  a2pCampaignStatus: "not-started",
+  tollFreeVerificationStatus: "not-started",
+  complianceNotes: ""
+};
+
+function normalizeTwilioComplianceSenderType(value?: string): TwilioComplianceSenderType {
+  if (value === "10dlc" || value === "toll-free" || value === "short-code") return value;
+  return "not-set";
+}
+
+function normalizeTwilioComplianceStatus(value?: string): TwilioComplianceStatus {
+  if (value === "pending" || value === "approved" || value === "rejected" || value === "not-used") return value;
+  return "not-started";
+}
+
+function sanitizeTwilioLaunchProfile(profile: TwilioLaunchProfile): TwilioLaunchProfile {
+  return {
+    messagingServiceSid: profile.messagingServiceSid.trim(),
+    smsSender: profile.smsSender.trim(),
+    inboundWebhookUrl: profile.inboundWebhookUrl.trim(),
+    statusCallbackBaseUrl: profile.statusCallbackBaseUrl.trim(),
+    relayHealthCheckUrl: profile.relayHealthCheckUrl.trim(),
+    managerAuthMode: profile.managerAuthMode,
+    senderType: normalizeTwilioComplianceSenderType(profile.senderType),
+    a2pBrandStatus: normalizeTwilioComplianceStatus(profile.a2pBrandStatus),
+    a2pCampaignStatus: normalizeTwilioComplianceStatus(profile.a2pCampaignStatus),
+    tollFreeVerificationStatus: normalizeTwilioComplianceStatus(profile.tollFreeVerificationStatus),
+    complianceNotes: profile.complianceNotes.trim(),
+    ...(profile.savedAt?.trim() ? { savedAt: profile.savedAt.trim() } : {})
+  };
+}
+
+function twilioComplianceReady(profile: TwilioLaunchProfile) {
+  if (profile.senderType === "10dlc") return profile.a2pBrandStatus === "approved" && profile.a2pCampaignStatus === "approved";
+  if (profile.senderType === "toll-free") return profile.tollFreeVerificationStatus === "approved";
+  if (profile.senderType === "short-code") return profile.a2pBrandStatus === "not-used" && profile.a2pCampaignStatus === "not-used";
+  return false;
+}
+
+function buildTwilioComplianceProfile(profile: TwilioLaunchProfile) {
+  return {
+    senderType: profile.senderType,
+    a2pBrandStatus: profile.a2pBrandStatus,
+    a2pCampaignStatus: profile.a2pCampaignStatus,
+    tollFreeVerificationStatus: profile.tollFreeVerificationStatus,
+    complianceNotes: profile.complianceNotes.trim() || null,
+    requiresA2p10DlcForUsLongCode: profile.senderType === "10dlc",
+    readyForUsProductionTraffic: twilioComplianceReady(profile),
+    credentialValuesExcluded: true
+  };
+}
+
+function readTwilioLaunchProfile() {
+  if (typeof window === "undefined") return defaultTwilioLaunchProfile;
+  try {
+    const rawProfile = window.localStorage.getItem(twilioLaunchProfileStorageKey);
+    if (!rawProfile) return defaultTwilioLaunchProfile;
+    const parsed = JSON.parse(rawProfile) as Partial<TwilioLaunchProfile>;
+    const managerAuthMode = parsed.managerAuthMode === "server-session" || parsed.managerAuthMode === "oauth-proxy" ? parsed.managerAuthMode : "same-site-cookie";
+    return sanitizeTwilioLaunchProfile({
+      messagingServiceSid: parsed.messagingServiceSid ?? "",
+      smsSender: parsed.smsSender ?? "",
+      inboundWebhookUrl: parsed.inboundWebhookUrl ?? "",
+      statusCallbackBaseUrl: parsed.statusCallbackBaseUrl ?? "",
+      relayHealthCheckUrl: parsed.relayHealthCheckUrl ?? "",
+      managerAuthMode,
+      senderType: normalizeTwilioComplianceSenderType(parsed.senderType),
+      a2pBrandStatus: normalizeTwilioComplianceStatus(parsed.a2pBrandStatus),
+      a2pCampaignStatus: normalizeTwilioComplianceStatus(parsed.a2pCampaignStatus),
+      tollFreeVerificationStatus: normalizeTwilioComplianceStatus(parsed.tollFreeVerificationStatus),
+      complianceNotes: parsed.complianceNotes ?? "",
+      savedAt: parsed.savedAt
+    });
+  } catch {
+    return defaultTwilioLaunchProfile;
+  }
+}
+
+function writeTwilioLaunchProfile(profile: TwilioLaunchProfile) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(twilioLaunchProfileStorageKey, JSON.stringify(sanitizeTwilioLaunchProfile(profile)));
+  } catch {
+    // Launch profile persistence is optional; blocked storage should not break messaging.
+  }
+}
+
+function readTwilioRelayEndpoint() {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem(twilioRelayEndpointStorageKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeTwilioRelayEndpoint(value: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const endpoint = value.trim();
+    if (endpoint) {
+      window.localStorage.setItem(twilioRelayEndpointStorageKey, endpoint);
+    } else {
+      window.localStorage.removeItem(twilioRelayEndpointStorageKey);
+    }
+  } catch {
+    // Relay URL persistence is optional; blocked storage should not break messaging.
+  }
+}
+
+function readPushServerEndpoint() {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem(pushServerEndpointStorageKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writePushServerEndpoint(value: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const endpoint = value.trim();
+    if (endpoint) {
+      window.localStorage.setItem(pushServerEndpointStorageKey, endpoint);
+    } else {
+      window.localStorage.removeItem(pushServerEndpointStorageKey);
+    }
+  } catch {
+    // Push server URL persistence is optional; blocked storage should not break notifications.
+  }
+}
+
+function buildProductionMessagingSetupBackupInput(settings: MessageNotificationSettings): ProductionMessagingSetupBackup[] {
+  return [
+    {
+      id: "production-messaging",
+      twilioRelayEndpoint: readTwilioRelayEndpoint(),
+      pushServerEndpoint: readPushServerEndpoint(),
+      webPushPublicKey: settings.pushPublicKey ?? "",
+      twilioLaunchProfile: readTwilioLaunchProfile()
+    }
+  ];
 }
 
 const visualColorControls: { key: VisualColorKey; label: string; helper: string }[] = [
@@ -2645,6 +3129,43 @@ function buildStudentDirectMessageFeedThreads(
     });
 }
 
+function buildParentDirectMessageFeedThreads(
+  directMessages: readonly DirectMessage[],
+  selectedChild: ChildAccount | undefined
+) {
+  if (!selectedChild) return [];
+  const parentParticipantId = `parent-${selectedChild.id}`;
+  return latestDirectMessagesByThread(directMessages)
+    .flatMap((message): ManagerHomeThread[] => {
+      const parentIsSender = message.senderId === parentParticipantId;
+      const parentIsRecipient = message.recipientId === parentParticipantId;
+      if (!parentIsSender && !parentIsRecipient) return [];
+      const staffParticipantId = parentIsSender ? message.recipientId : message.senderId;
+      if (!isStaffDirectParticipant(staffParticipantId)) return [];
+      const timestamp = formatDirectMessageTimestamp(message.createdAt);
+      const senderName = message.senderName.trim() || (parentIsSender ? `${selectedChild.name} Family` : "Cho's Manager");
+      const replyRecipientName = (parentIsSender ? message.recipientName : message.senderName).trim() || "Cho's Manager";
+      return [{
+        id: message.threadId,
+        kind: "message",
+        sender: senderName,
+        title: `App message from ${senderName}`,
+        preview: composeMessagePreview(message.body),
+        body: message.body.trim(),
+        sentDate: timestamp.sentDate,
+        sentTime: timestamp.sentTime,
+        sentDateTime: timestamp.sentDateTime,
+        avatar: messagesLauncherIcon,
+        accent: "#7be4ff",
+        unread: parentIsRecipient,
+        source: "direct",
+        audienceLabel: `${selectedChild.name} family app message`,
+        replyRecipientId: staffParticipantId,
+        replyRecipientName
+      }];
+    });
+}
+
 function buildHomeAgendaItems(weekDays: Date[], scheduledClasses: ScheduledClass[], studioClasses: StudioClass[], studioEvents: StudioEvent[]) {
   return weekDays
     .flatMap<ManagerHomeAgendaItem>((day) => {
@@ -3301,6 +3822,61 @@ function StudentReferenceBeltJourney({ beltRank, classesAttended }: { beltRank: 
   );
 }
 
+function HomeProfilePushSubscriptionControls({
+  accountLabel,
+  isPushSubscribing,
+  isPushSubscriptionSyncing,
+  onConnectDevicePush,
+  onPushServerEndpointChange,
+  onSyncPushSubscription,
+  onWebPushPublicKeyChange,
+  pushServerEndpoint,
+  pushSubscriptionReady,
+  webPushPublicKey
+}: {
+  accountLabel: "Student" | "Parent";
+  isPushSubscribing: boolean;
+  isPushSubscriptionSyncing: boolean;
+  onConnectDevicePush: () => void;
+  onPushServerEndpointChange: (value: string) => void;
+  onSyncPushSubscription: () => void;
+  onWebPushPublicKeyChange: (value: string) => void;
+  pushServerEndpoint: string;
+  pushSubscriptionReady: boolean;
+  webPushPublicKey: string;
+}) {
+  return (
+    <div className="student-device-push-setup" aria-label={`${accountLabel} push subscription setup`}>
+      <label>
+        {accountLabel} Web Push public key
+        <input
+          value={webPushPublicKey}
+          onChange={(event) => onWebPushPublicKeyChange(event.target.value)}
+          placeholder="Public VAPID key"
+        />
+      </label>
+      <label>
+        {accountLabel} private push server URL
+        <input
+          type="url"
+          value={pushServerEndpoint}
+          onChange={(event) => onPushServerEndpointChange(event.target.value)}
+          placeholder="https://push.example.com/api/push/subscriptions"
+        />
+      </label>
+      <div className="student-device-push-actions">
+        <button type="button" className="student-device-alert-button" onClick={onConnectDevicePush} disabled={!webPushPublicKey.trim() || isPushSubscribing}>
+          <Bell size={16} aria-hidden="true" /> {isPushSubscribing ? `Connecting ${accountLabel} Device...` : `Connect ${accountLabel} Device`}
+        </button>
+        <button type="button" className="student-device-alert-button" onClick={onSyncPushSubscription} disabled={!pushSubscriptionReady || !pushServerEndpoint.trim() || isPushSubscriptionSyncing}>
+          <Server size={16} aria-hidden="true" /> {isPushSubscriptionSyncing ? `Syncing ${accountLabel} Push Subscription...` : `Sync ${accountLabel} Push Subscription`}
+        </button>
+        <span className="student-device-alert-status">Push: {pushSubscriptionReady ? "ready" : "not connected"}</span>
+      </div>
+    </div>
+  );
+}
+
 function StudentProfilePage() {
   const { currentChildAccount, directMessages, logout, scheduledClasses, sendDirectMessage, session, showToast, studioClasses, studioEvents, students } = useAppState();
   const today = useLiveCalendarDate();
@@ -3318,6 +3894,12 @@ function StudentProfilePage() {
   const [manualFeedThreads, setManualFeedThreads] = useState(() => studentHomeThreads);
   const [readDirectThreadIds, setReadDirectThreadIds] = useState<Set<string>>(() => new Set());
   const [hiddenDirectThreadIds] = useState<Set<string>>(() => new Set());
+  const [studentMessageNotificationSettings, setStudentMessageNotificationSettings] = useState(() => readHomeMessageNotificationSettings(session?.email));
+  const [studentNotificationPermission, setStudentNotificationPermission] = useState(() => getBrowserNotificationPermission());
+  const [studentWebPushPublicKey, setStudentWebPushPublicKey] = useState(() => studentMessageNotificationSettings.pushPublicKey ?? "");
+  const [studentPushServerEndpoint, setStudentPushServerEndpoint] = useState(() => readPushServerEndpoint());
+  const [isStudentPushSubscribing, setIsStudentPushSubscribing] = useState(false);
+  const [isStudentPushSubscriptionSyncing, setIsStudentPushSubscriptionSyncing] = useState(false);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isFeedSearchOpen, setIsFeedSearchOpen] = useState(false);
@@ -3333,8 +3915,15 @@ function StudentProfilePage() {
     () => sortHomeFeedThreads([...directFeedThreads, ...manualFeedThreads]),
     [directFeedThreads, manualFeedThreads]
   );
+  const latestUnreadStudentDirectThread = useMemo(
+    () => sortHomeFeedThreads(directFeedThreads).find((thread) => thread.source === "direct" && thread.unread),
+    [directFeedThreads]
+  );
   const messageCount = feedThreads.filter((thread) => thread.kind === "message").length;
   const eventCount = feedThreads.filter((thread) => thread.kind === "event").length;
+  const studentNotificationPermissionLabel = studentNotificationPermission === "unsupported" ? "Unavailable" : studentNotificationPermission;
+  const studentDeviceNotificationsReady = studentMessageNotificationSettings.browserNotificationsEnabled && studentNotificationPermission === "granted";
+  const studentPushSubscriptionReady = Boolean(studentMessageNotificationSettings.pushSubscriptionEndpoint?.trim());
   const visibleThreads = feedThreads.filter((thread) => {
     if (feedFilter !== "all" && thread.kind !== feedFilter) return false;
     const query = searchQuery.trim().toLowerCase();
@@ -3394,6 +3983,15 @@ function StudentProfilePage() {
   }, [currentChildAccount, selectedStudent, session?.email]);
 
   useEffect(() => {
+    setStudentMessageNotificationSettings(readHomeMessageNotificationSettings(session?.email));
+    setStudentNotificationPermission(getBrowserNotificationPermission());
+  }, [session?.email]);
+
+  useEffect(() => {
+    setStudentWebPushPublicKey(studentMessageNotificationSettings.pushPublicKey ?? "");
+  }, [studentMessageNotificationSettings.pushPublicKey]);
+
+  useEffect(() => {
     const defaultDateKey = findInitialHomeAgendaDate(today, scheduledClasses, studioClasses, studioEvents);
     const defaultWeekStart = weekDaysForDate(parseCalendarDate(defaultDateKey))[0];
     setHomeScheduleWeekStartKey(toDateKey(defaultWeekStart));
@@ -3403,6 +4001,49 @@ function StudentProfilePage() {
   useEffect(() => {
     if (isFeedSearchOpen) feedSearchInputRef.current?.focus();
   }, [isFeedSearchOpen]);
+
+  const updateStudentMessageNotificationSettings = useCallback(
+    (settings: Partial<MessageNotificationSettings>) => {
+      setStudentMessageNotificationSettings((currentSettings) => {
+        const nextSettings: MessageNotificationSettings = {
+          ...currentSettings,
+          ...settings,
+          updatedAt: new Date().toISOString()
+        };
+        writeHomeMessageNotificationSettings(session?.email, nextSettings);
+        return nextSettings;
+      });
+    },
+    [session?.email]
+  );
+
+  useEffect(() => {
+    const thread = latestUnreadStudentDirectThread;
+    if (!studentDeviceNotificationsReady || !thread) return;
+    const lastNotifiedAt = studentMessageNotificationSettings.lastBrowserNotifiedDirectMessageAt?.trim() ?? "";
+    if (lastNotifiedAt && thread.sentDateTime <= lastNotifiedAt) return;
+    const notificationTitle = `New message from ${thread.sender.trim() || "Cho's staff"}`;
+    const notificationOptions: NotificationOptions = {
+      body: thread.body ?? thread.preview,
+      tag: `chos-student-${thread.id}`,
+      icon: publicAsset("682e95109aa21_chos-logo.png"),
+      badge: publicAsset("682e95109aa21_chos-logo.png"),
+      data: {
+        url: appHomeNotificationUrl(),
+        threadId: thread.id
+      }
+    };
+    void showDirectMessageBrowserNotification(notificationTitle, notificationOptions)
+      .then((sent) => {
+        if (sent) updateStudentMessageNotificationSettings({ lastBrowserNotifiedDirectMessageAt: thread.sentDateTime });
+      })
+      .catch(() => undefined);
+  }, [
+    latestUnreadStudentDirectThread,
+    studentDeviceNotificationsReady,
+    studentMessageNotificationSettings.lastBrowserNotifiedDirectMessageAt,
+    updateStudentMessageNotificationSettings
+  ]);
 
   const changeStudentProfilePhoto = (event: ReactChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -3470,6 +4111,120 @@ function StudentProfilePage() {
 
   const handleFeedSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") closeFeedSearch();
+  };
+
+  const enableStudentMessageNotifications = async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      updateStudentMessageNotificationSettings({
+        browserNotificationsEnabled: false,
+        browserPermission: "unsupported"
+      });
+      setStudentNotificationPermission("unsupported");
+      showToast("Device notifications are unavailable in this browser.");
+      return;
+    }
+    const permission = window.Notification.permission === "granted" ? "granted" : await window.Notification.requestPermission();
+    setStudentNotificationPermission(permission);
+    updateStudentMessageNotificationSettings({
+      browserNotificationsEnabled: permission === "granted",
+      browserPermission: permission
+    });
+    showToast(permission === "granted" ? "Device notifications enabled for your app messages." : "Device notifications were not enabled.");
+  };
+
+  const sendStudentTestNotification = async () => {
+    if (!studentDeviceNotificationsReady) {
+      showToast("Enable message notifications before sending a test.");
+      return;
+    }
+    const sent = await showDirectMessageBrowserNotification("Cho's student test notification", {
+      body: "Device notifications are ready for messages in your Profile feed.",
+      tag: "chos-student-test-notification",
+      icon: publicAsset("682e95109aa21_chos-logo.png"),
+      badge: publicAsset("682e95109aa21_chos-logo.png"),
+      data: {
+        url: appHomeNotificationUrl()
+      }
+    });
+    showToast(sent ? "Student device notification sent." : "Student device notification could not be shown.");
+  };
+
+  const updateStudentPushServerEndpoint = (value: string) => {
+    setStudentPushServerEndpoint(value);
+    writePushServerEndpoint(value);
+  };
+
+  const connectStudentDevicePush = async () => {
+    const applicationServerKey = webPushPublicKeyToBytes(studentWebPushPublicKey);
+    if (!applicationServerKey) {
+      showToast("Enter a valid student Web Push public key.");
+      return;
+    }
+    if (typeof window === "undefined" || !("Notification" in window) || !window.Notification.requestPermission || typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+      updateStudentMessageNotificationSettings({ browserPermission: "unsupported" });
+      setStudentNotificationPermission("unsupported");
+      showToast("Student Web Push subscriptions are unavailable in this browser.");
+      return;
+    }
+    setIsStudentPushSubscribing(true);
+    try {
+      const permission = window.Notification.permission === "granted" ? "granted" : await window.Notification.requestPermission();
+      setStudentNotificationPermission(permission);
+      if (permission !== "granted") {
+        updateStudentMessageNotificationSettings({
+          browserNotificationsEnabled: false,
+          browserPermission: permission
+        });
+        showToast("Student push notifications were not enabled.");
+        return;
+      }
+      const registration = await navigator.serviceWorker.ready;
+      if (!registration.pushManager || typeof registration.pushManager.subscribe !== "function") {
+        showToast("Student Web Push subscriptions are unavailable in this browser.");
+        return;
+      }
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey
+      });
+      updateStudentMessageNotificationSettings(buildWebPushSubscriptionSettings(studentWebPushPublicKey, subscription));
+      showToast("Student push subscription ready for private server sync.");
+    } catch {
+      showToast("Student push subscription failed.");
+    } finally {
+      setIsStudentPushSubscribing(false);
+    }
+  };
+
+  const syncStudentPushSubscription = async () => {
+    const endpoint = studentPushServerEndpoint.trim();
+    if (!endpoint) {
+      showToast("Enter a student private push server URL.");
+      return;
+    }
+    const payload = buildWebPushSubscriptionPayload(studentMessageNotificationSettings, session, "student", appHomeNotificationUrl());
+    if (!payload) {
+      showToast("Connect the student device to Web Push before syncing.");
+      return;
+    }
+    setIsStudentPushSubscriptionSyncing(true);
+    try {
+      const response = await window.fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        showToast(`Student push subscription sync failed with HTTP ${response.status}.`);
+        return;
+      }
+      showToast("Student push subscription synced to private server.");
+    } catch {
+      showToast("Student push subscription sync failed.");
+    } finally {
+      setIsStudentPushSubscriptionSyncing(false);
+    }
   };
 
   const toggleStudentHomeTheme = () => {
@@ -3701,6 +4456,27 @@ function StudentProfilePage() {
                     {eventCount} Event {eventCount === 1 ? "Notification" : "Notifications"}
                   </button>
                 </div>
+                <div className="student-device-alert-actions" aria-label="Student device message notification controls">
+                  <button type="button" className="student-device-alert-button" onClick={enableStudentMessageNotifications}>
+                    <Smartphone size={16} aria-hidden="true" /> Enable Message Notifications
+                  </button>
+                  <button type="button" className="student-device-alert-button" onClick={sendStudentTestNotification} disabled={!studentDeviceNotificationsReady}>
+                    <Bell size={16} aria-hidden="true" /> Send Student Test Notification
+                  </button>
+                  <span className="student-device-alert-status">Permission: {studentNotificationPermissionLabel}</span>
+                </div>
+                <HomeProfilePushSubscriptionControls
+                  accountLabel="Student"
+                  isPushSubscribing={isStudentPushSubscribing}
+                  isPushSubscriptionSyncing={isStudentPushSubscriptionSyncing}
+                  onConnectDevicePush={connectStudentDevicePush}
+                  onPushServerEndpointChange={updateStudentPushServerEndpoint}
+                  onSyncPushSubscription={syncStudentPushSubscription}
+                  onWebPushPublicKeyChange={setStudentWebPushPublicKey}
+                  pushServerEndpoint={studentPushServerEndpoint}
+                  pushSubscriptionReady={studentPushSubscriptionReady}
+                  webPushPublicKey={studentWebPushPublicKey}
+                />
               </div>
               <div className={`manager-home-search-shell${isFeedSearchOpen ? " is-open" : ""}`}>
                 {isFeedSearchOpen ? (
@@ -4928,12 +5704,40 @@ function LegacyStudentProfilePage() {
 
 function ParentProfileTabContent({
   activeTab,
+  directMessageThreads,
+  isParentPushSubscribing,
+  isParentPushSubscriptionSyncing,
+  onConnectParentDevicePush,
+  onEnableParentMessageNotifications,
+  onParentPushServerEndpointChange,
+  onParentWebPushPublicKeyChange,
+  onSendParentTestNotification,
+  onSyncParentPushSubscription,
+  parentDeviceNotificationsReady,
+  parentNotificationPermissionLabel,
+  parentPushServerEndpoint,
+  parentPushSubscriptionReady,
+  parentWebPushPublicKey,
   selectedChild,
   scheduledClasses,
   studioClasses,
   studioEvents
 }: {
   activeTab: ParentProfileTab;
+  directMessageThreads: ManagerHomeThread[];
+  isParentPushSubscribing: boolean;
+  isParentPushSubscriptionSyncing: boolean;
+  onConnectParentDevicePush: () => void;
+  onEnableParentMessageNotifications: () => void;
+  onParentPushServerEndpointChange: (value: string) => void;
+  onParentWebPushPublicKeyChange: (value: string) => void;
+  onSendParentTestNotification: () => void;
+  onSyncParentPushSubscription: () => void;
+  parentDeviceNotificationsReady: boolean;
+  parentNotificationPermissionLabel: string;
+  parentPushServerEndpoint: string;
+  parentPushSubscriptionReady: boolean;
+  parentWebPushPublicKey: string;
   selectedChild?: ChildAccount;
   scheduledClasses: ScheduledClass[];
   studioClasses: StudioClass[];
@@ -5013,14 +5817,36 @@ function ParentProfileTabContent({
 
   if (activeTab === "messages") {
     const messages = studentHomeThreads.filter((thread) => thread.kind === "message");
+    const visibleMessages = [...directMessageThreads, ...messages];
     return (
       <section className="parent-tool-panel" aria-label="Parent messages view">
         <header>
           <h2>Messages</h2>
           <p>Review staff and studio messages connected to {childName}&apos;s account.</p>
         </header>
+        <div className="parent-device-alert-actions" aria-label="Parent device message notification controls">
+          <button type="button" className="student-device-alert-button" onClick={onEnableParentMessageNotifications}>
+            <Smartphone size={16} aria-hidden="true" /> Enable Parent Message Notifications
+          </button>
+          <button type="button" className="student-device-alert-button" onClick={onSendParentTestNotification} disabled={!parentDeviceNotificationsReady}>
+            <Bell size={16} aria-hidden="true" /> Send Parent Test Notification
+          </button>
+          <span className="student-device-alert-status">Permission: {parentNotificationPermissionLabel}</span>
+        </div>
+        <HomeProfilePushSubscriptionControls
+          accountLabel="Parent"
+          isPushSubscribing={isParentPushSubscribing}
+          isPushSubscriptionSyncing={isParentPushSubscriptionSyncing}
+          onConnectDevicePush={onConnectParentDevicePush}
+          onPushServerEndpointChange={onParentPushServerEndpointChange}
+          onSyncPushSubscription={onSyncParentPushSubscription}
+          onWebPushPublicKeyChange={onParentWebPushPublicKeyChange}
+          pushServerEndpoint={parentPushServerEndpoint}
+          pushSubscriptionReady={parentPushSubscriptionReady}
+          webPushPublicKey={parentWebPushPublicKey}
+        />
         <div className="parent-message-list">
-          {messages.map((thread) => (
+          {visibleMessages.map((thread) => (
             <article className="parent-message-row" key={thread.id}>
               <img src={thread.avatar} alt="" draggable="false" />
               <div>
@@ -5282,13 +6108,19 @@ function ParentChildHandoffPrompt({
 }
 
 function ParentProfilePage() {
-  const { addChildAccount, childUsernameExists, guardianChildren, loginChildAccount, logout, scheduledClasses, session, showToast, studioClasses, studioEvents, updateChildAccount } = useAppState();
+  const { addChildAccount, childUsernameExists, directMessages, guardianChildren, loginChildAccount, logout, scheduledClasses, session, showToast, studioClasses, studioEvents, updateChildAccount } = useAppState();
   const [activeTab, setActiveTab] = useState<ParentProfileTab>("dashboard");
   const [selectedChildId, setSelectedChildId] = useState(() => guardianChildren[0]?.id ?? "");
   const [childModalMode, setChildModalMode] = useState<"add" | "edit" | null>(null);
   const [editingChildId, setEditingChildId] = useState("");
   const [childForm, setChildForm] = useState({ name: "", age: "", beltSlug: "white", username: "", password: "" });
   const [childHandoffId, setChildHandoffId] = useState("");
+  const [parentMessageNotificationSettings, setParentMessageNotificationSettings] = useState(() => readHomeMessageNotificationSettings(session?.email));
+  const [parentNotificationPermission, setParentNotificationPermission] = useState(() => getBrowserNotificationPermission());
+  const [parentWebPushPublicKey, setParentWebPushPublicKey] = useState(() => parentMessageNotificationSettings.pushPublicKey ?? "");
+  const [parentPushServerEndpoint, setParentPushServerEndpoint] = useState(() => readPushServerEndpoint());
+  const [isParentPushSubscribing, setIsParentPushSubscribing] = useState(false);
+  const [isParentPushSubscriptionSyncing, setIsParentPushSubscriptionSyncing] = useState(false);
   const [parentProfileOpen, setParentProfileOpen] = useState(false);
   const [parentTheme, setParentTheme] = useState<AppThemeMode>(() => readStoredAppTheme());
   const [tutorialStepId, setTutorialStepId] = useState<ParentTutorialStepId | null>(null);
@@ -5298,8 +6130,19 @@ function ParentProfilePage() {
   const selectedChild = guardianChildren.find((child) => child.id === selectedChildId) ?? guardianChildren[0];
   const childHandoff = guardianChildren.find((child) => child.id === childHandoffId);
   const tutorialFinishedChild = guardianChildren.find((child) => child.id === tutorialFinishedChildId);
-  const messageCount = studentHomeThreads.filter((thread) => thread.kind === "message").length;
+  const parentDirectMessageThreads = useMemo(
+    () => buildParentDirectMessageFeedThreads(directMessages, selectedChild),
+    [directMessages, selectedChild]
+  );
+  const latestUnreadParentDirectThread = useMemo(
+    () => sortHomeFeedThreads(parentDirectMessageThreads).find((thread) => thread.source === "direct" && thread.unread),
+    [parentDirectMessageThreads]
+  );
+  const messageCount = studentHomeThreads.filter((thread) => thread.kind === "message").length + parentDirectMessageThreads.length;
   const notificationCount = studentHomeThreads.filter((thread) => thread.kind === "event").length + studioEvents.length;
+  const parentNotificationPermissionLabel = parentNotificationPermission === "unsupported" ? "Unavailable" : parentNotificationPermission;
+  const parentDeviceNotificationsReady = parentMessageNotificationSettings.browserNotificationsEnabled && parentNotificationPermission === "granted";
+  const parentPushSubscriptionReady = Boolean(parentMessageNotificationSettings.pushSubscriptionEndpoint?.trim());
   const tutorialActive = tutorialStepId !== null;
   const parentColorPreview: ProfileColorPreviewData = {
     kind: "parent",
@@ -5336,6 +6179,58 @@ function ParentProfilePage() {
       setSelectedChildId(guardianChildren[0].id);
     }
   }, [guardianChildren, selectedChildId]);
+
+  const updateParentMessageNotificationSettings = useCallback(
+    (settings: Partial<MessageNotificationSettings>) => {
+      setParentMessageNotificationSettings((currentSettings) => {
+        const nextSettings: MessageNotificationSettings = {
+          ...currentSettings,
+          ...settings,
+          updatedAt: new Date().toISOString()
+        };
+        writeHomeMessageNotificationSettings(session?.email, nextSettings);
+        return nextSettings;
+      });
+    },
+    [session?.email]
+  );
+
+  useEffect(() => {
+    setParentMessageNotificationSettings(readHomeMessageNotificationSettings(session?.email));
+    setParentNotificationPermission(getBrowserNotificationPermission());
+  }, [session?.email]);
+
+  useEffect(() => {
+    setParentWebPushPublicKey(parentMessageNotificationSettings.pushPublicKey ?? "");
+  }, [parentMessageNotificationSettings.pushPublicKey]);
+
+  useEffect(() => {
+    const thread = latestUnreadParentDirectThread;
+    if (!parentDeviceNotificationsReady || !thread) return;
+    const lastNotifiedAt = parentMessageNotificationSettings.lastBrowserNotifiedDirectMessageAt?.trim() ?? "";
+    if (lastNotifiedAt && thread.sentDateTime <= lastNotifiedAt) return;
+    const notificationTitle = `New family message from ${thread.sender.trim() || "Cho's staff"}`;
+    const notificationOptions: NotificationOptions = {
+      body: thread.body ?? thread.preview,
+      tag: `chos-parent-${thread.id}`,
+      icon: publicAsset("682e95109aa21_chos-logo.png"),
+      badge: publicAsset("682e95109aa21_chos-logo.png"),
+      data: {
+        url: appHomeNotificationUrl(),
+        threadId: thread.id
+      }
+    };
+    void showDirectMessageBrowserNotification(notificationTitle, notificationOptions)
+      .then((sent) => {
+        if (sent) updateParentMessageNotificationSettings({ lastBrowserNotifiedDirectMessageAt: thread.sentDateTime });
+      })
+      .catch(() => undefined);
+  }, [
+    latestUnreadParentDirectThread,
+    parentDeviceNotificationsReady,
+    parentMessageNotificationSettings.lastBrowserNotifiedDirectMessageAt,
+    updateParentMessageNotificationSettings
+  ]);
 
   useEffect(() => {
     if (guardianChildren.length || tutorialActive || readParentTutorialCompletion(tutorialStorageKey)) return;
@@ -5460,6 +6355,120 @@ function ParentProfilePage() {
   const openParentProfileSettings = () => {
     setParentTheme(readStoredAppTheme());
     setParentProfileOpen(true);
+  };
+
+  const enableParentMessageNotifications = async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      updateParentMessageNotificationSettings({
+        browserNotificationsEnabled: false,
+        browserPermission: "unsupported"
+      });
+      setParentNotificationPermission("unsupported");
+      showToast("Device notifications are unavailable in this browser.");
+      return;
+    }
+    const permission = window.Notification.permission === "granted" ? "granted" : await window.Notification.requestPermission();
+    setParentNotificationPermission(permission);
+    updateParentMessageNotificationSettings({
+      browserNotificationsEnabled: permission === "granted",
+      browserPermission: permission
+    });
+    showToast(permission === "granted" ? "Device notifications enabled for parent app messages." : "Device notifications were not enabled.");
+  };
+
+  const sendParentTestNotification = async () => {
+    if (!parentDeviceNotificationsReady) {
+      showToast("Enable parent message notifications before sending a test.");
+      return;
+    }
+    const sent = await showDirectMessageBrowserNotification("Cho's parent test notification", {
+      body: "Device notifications are ready for messages in your Parent Profile.",
+      tag: "chos-parent-test-notification",
+      icon: publicAsset("682e95109aa21_chos-logo.png"),
+      badge: publicAsset("682e95109aa21_chos-logo.png"),
+      data: {
+        url: appHomeNotificationUrl()
+      }
+    });
+    showToast(sent ? "Parent device notification sent." : "Parent device notification could not be shown.");
+  };
+
+  const updateParentPushServerEndpoint = (value: string) => {
+    setParentPushServerEndpoint(value);
+    writePushServerEndpoint(value);
+  };
+
+  const connectParentDevicePush = async () => {
+    const applicationServerKey = webPushPublicKeyToBytes(parentWebPushPublicKey);
+    if (!applicationServerKey) {
+      showToast("Enter a valid parent Web Push public key.");
+      return;
+    }
+    if (typeof window === "undefined" || !("Notification" in window) || !window.Notification.requestPermission || typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+      updateParentMessageNotificationSettings({ browserPermission: "unsupported" });
+      setParentNotificationPermission("unsupported");
+      showToast("Parent Web Push subscriptions are unavailable in this browser.");
+      return;
+    }
+    setIsParentPushSubscribing(true);
+    try {
+      const permission = window.Notification.permission === "granted" ? "granted" : await window.Notification.requestPermission();
+      setParentNotificationPermission(permission);
+      if (permission !== "granted") {
+        updateParentMessageNotificationSettings({
+          browserNotificationsEnabled: false,
+          browserPermission: permission
+        });
+        showToast("Parent push notifications were not enabled.");
+        return;
+      }
+      const registration = await navigator.serviceWorker.ready;
+      if (!registration.pushManager || typeof registration.pushManager.subscribe !== "function") {
+        showToast("Parent Web Push subscriptions are unavailable in this browser.");
+        return;
+      }
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey
+      });
+      updateParentMessageNotificationSettings(buildWebPushSubscriptionSettings(parentWebPushPublicKey, subscription));
+      showToast("Parent push subscription ready for private server sync.");
+    } catch {
+      showToast("Parent push subscription failed.");
+    } finally {
+      setIsParentPushSubscribing(false);
+    }
+  };
+
+  const syncParentPushSubscription = async () => {
+    const endpoint = parentPushServerEndpoint.trim();
+    if (!endpoint) {
+      showToast("Enter a parent private push server URL.");
+      return;
+    }
+    const payload = buildWebPushSubscriptionPayload(parentMessageNotificationSettings, session, "guardian", appHomeNotificationUrl());
+    if (!payload) {
+      showToast("Connect the parent device to Web Push before syncing.");
+      return;
+    }
+    setIsParentPushSubscriptionSyncing(true);
+    try {
+      const response = await window.fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        showToast(`Parent push subscription sync failed with HTTP ${response.status}.`);
+        return;
+      }
+      showToast("Parent push subscription synced to private server.");
+    } catch {
+      showToast("Parent push subscription sync failed.");
+    } finally {
+      setIsParentPushSubscriptionSyncing(false);
+    }
   };
 
   const saveParentProfileSettings = (event: FormEvent<HTMLFormElement>) => {
@@ -5675,6 +6684,20 @@ function ParentProfilePage() {
 
           <ParentProfileTabContent
             activeTab={activeTab}
+            directMessageThreads={parentDirectMessageThreads}
+            isParentPushSubscribing={isParentPushSubscribing}
+            isParentPushSubscriptionSyncing={isParentPushSubscriptionSyncing}
+            onConnectParentDevicePush={connectParentDevicePush}
+            onEnableParentMessageNotifications={enableParentMessageNotifications}
+            onParentPushServerEndpointChange={updateParentPushServerEndpoint}
+            onParentWebPushPublicKeyChange={setParentWebPushPublicKey}
+            onSendParentTestNotification={sendParentTestNotification}
+            onSyncParentPushSubscription={syncParentPushSubscription}
+            parentDeviceNotificationsReady={parentDeviceNotificationsReady}
+            parentNotificationPermissionLabel={parentNotificationPermissionLabel}
+            parentPushServerEndpoint={parentPushServerEndpoint}
+            parentPushSubscriptionReady={parentPushSubscriptionReady}
+            parentWebPushPublicKey={parentWebPushPublicKey}
             selectedChild={selectedChild}
             scheduledClasses={scheduledClasses}
             studioClasses={studioClasses}
@@ -7869,11 +8892,13 @@ function ReportsPage() {
     merchandiseItems,
     messageCampaigns,
     messageLogs,
+    messageNotificationSettings,
     orders,
     restockLowInventory,
     reviewLeadFollowUps,
     restoreOperationsBackup,
     scheduledClasses,
+    scheduledTextCampaigns,
     sendBeltTestInvites,
     sendAttendanceGapCheckIns,
     sendClassReminders,
@@ -7889,6 +8914,7 @@ function ReportsPage() {
     studioClasses,
     studioEvents,
     students,
+    textAutomationRuns,
     studyGuideFolders,
     studyGuideMaterials,
     trainingVideoFolders,
@@ -7905,8 +8931,11 @@ function ReportsPage() {
     studioClasses,
     scheduledClasses,
     messageCampaigns,
+    scheduledTextCampaigns,
     messageLogs,
+    automationRuns: textAutomationRuns,
     directMessages,
+    messagingSetup: buildProductionMessagingSetupBackupInput(messageNotificationSettings),
     studioEvents,
     merchandiseItems,
     checkIns,
@@ -7929,13 +8958,14 @@ function ReportsPage() {
         studioClasses,
         studioEvents,
         messageLogs,
+        managedAccounts,
         directMessages,
         merchandiseItems,
         bookings,
         contacts,
         leadReviews
       }),
-    [bookings, checkIns, contacts, directMessages, leadReviews, merchandiseItems, messageLogs, scheduledClasses, studioClasses, studioEvents, students, today]
+    [bookings, checkIns, contacts, directMessages, leadReviews, managedAccounts, merchandiseItems, messageLogs, scheduledClasses, studioClasses, studioEvents, students, today]
   );
   const backupSnapshot = useMemo(
     () => buildOperationsBackupSnapshot(backupInput),
@@ -7950,13 +8980,16 @@ function ReportsPage() {
       leadReviews,
       managedAccounts,
       merchandiseItems,
+      messageNotificationSettings,
       messageCampaigns,
       messageLogs,
       orders,
       scheduledClasses,
+      scheduledTextCampaigns,
       studioClasses,
       studioEvents,
       students,
+      textAutomationRuns,
       studyGuideFolders,
       studyGuideMaterials,
       trainingVideoFolders,
@@ -8401,8 +9434,8 @@ function ReportsPage() {
             <span key={section.id}>{section.count} {section.shortLabel}</span>
           ))}
         </div>
-        <p className="operations-note">Saved account passwords are not included in the export.</p>
-        <p className="operations-note">Includes student records, account access, classes, schedules, messages, check-ins, merchandise, content libraries, orders, bookings, contacts, and lead reviews.</p>
+        <p className="operations-note">Saved account passwords, Twilio credentials, VAPID private keys, and raw PushSubscription key material are not included in the export.</p>
+        <p className="operations-note">Includes student records, account access, classes, schedules, messages, automation run history, check-ins, merchandise, content libraries, orders, bookings, contacts, lead reviews, and non-secret messaging setup.</p>
       </section>
     </OperationsPage>
   );
@@ -9438,9 +10471,10 @@ function SchedulePage() {
 
 function MessagePreview({ message, onSendQueuedText }: { message: MessageLog; onSendQueuedText?: (message: MessageLog) => void }) {
   const isQueued = message.status === "queued";
+  const statusLabel = isQueued ? "Queued" : message.status === "failed" ? "Failed" : "Sent";
 
   return (
-    <article className="message-preview" aria-label={`${isQueued ? "Queued" : "Sent"} text to ${message.recipientName}`}>
+    <article className="message-preview" aria-label={`${statusLabel} text to ${message.recipientName}`}>
       <div className="message-preview-head">
         <strong>{messageKindLabel(message.kind)}</strong>
         <span>{message.status}</span>
@@ -9457,16 +10491,135 @@ function MessagePreview({ message, onSendQueuedText }: { message: MessageLog; on
 }
 
 function MessagesPage() {
-  const { students, messageCampaigns, messageLogs, clearStaleQueuedTexts, sendMarketingBlast, sendMissedClassFollowUps, sendQueuedTexts, sendQueuedText, showToast } = useAppState();
+  const {
+    directMessages,
+    latestUnreadDirectMessage,
+    managedAccounts,
+    markMessageNotificationsSeen,
+    messageCampaigns,
+    messageLogs,
+    messageNotificationSettings,
+    scheduledTextCampaigns,
+    students,
+    applyTwilioInboundWebhook,
+    applyTwilioRelayResults,
+    applyTwilioStatusCallbacks,
+    buildTwilioRelayPayload,
+    cancelScheduledTextCampaign,
+    clearStaleQueuedTexts,
+    recordSmsOptOut,
+    runTextAutomations,
+    scheduleTextCampaign,
+    sendEventReminderTexts,
+    getTextAudiencePreview,
+    sendMarketingBlast,
+    sendMissedClassFollowUps,
+    sendQueuedTexts,
+    sendQueuedText,
+    showToast,
+    session,
+    textAutomationRuns,
+    accountRole,
+    unreadDirectMessageCount,
+    updateMessageNotificationSettings
+  } = useAppState();
   const [marketingMessage, setMarketingMessage] = useState("Monthly special: 10% off gloves and uniforms this week.");
+  const [marketingAudience, setMarketingAudience] = useState<MessageCampaign["audience"]>("all-students");
+  const [scheduledPromotionMessage, setScheduledPromotionMessage] = useState("Family gear sale starts tonight at 5 PM.");
+  const [scheduledPromotionAudience, setScheduledPromotionAudience] = useState<MessageCampaign["audience"]>("parents");
+  const [scheduledPromotionDate, setScheduledPromotionDate] = useState(() => toDateKey(new Date()));
+  const [scheduledPromotionTime, setScheduledPromotionTime] = useState("09:00");
+  const [browserPermission, setBrowserPermission] = useState(() => getBrowserNotificationPermission());
+  const [smsOptOutPhone, setSmsOptOutPhone] = useState("");
+  const [twilioInboundWebhookJson, setTwilioInboundWebhookJson] = useState("");
+  const [twilioStatusCallbackJson, setTwilioStatusCallbackJson] = useState("");
+  const [twilioRelayEndpoint, setTwilioRelayEndpoint] = useState(() => readTwilioRelayEndpoint());
+  const [twilioRelayResultsJson, setTwilioRelayResultsJson] = useState("");
+  const [isTwilioRelaySending, setIsTwilioRelaySending] = useState(false);
+  const [twilioLaunchProfile, setTwilioLaunchProfile] = useState<TwilioLaunchProfile>(() => readTwilioLaunchProfile());
+  const [twilioRelayHealthStatus, setTwilioRelayHealthStatus] = useState("not checked");
+  const [twilioRelayHealthChecks, setTwilioRelayHealthChecks] = useState<TwilioRelayHealthReadinessChecks | undefined>();
+  const [isTwilioRelayHealthChecking, setIsTwilioRelayHealthChecking] = useState(false);
+  const [webPushPublicKey, setWebPushPublicKey] = useState(() => messageNotificationSettings.pushPublicKey ?? "");
+  const [pushServerEndpoint, setPushServerEndpoint] = useState(() => readPushServerEndpoint());
+  const [isPushSubscribing, setIsPushSubscribing] = useState(false);
+  const [isPushSubscriptionSyncing, setIsPushSubscriptionSyncing] = useState(false);
   const today = toDateKey(useLiveCalendarDate());
   const missedCount = students.filter((student) => isMissedClassFollowUpDue(student, today)).length;
-  const queuedCount = messageLogs.filter((message) => message.status === "queued" && isQueuedMessageDeliverable(message, students)).length;
-  const staleQueuedCount = messageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, students)).length;
+  const queuedCount = messageLogs.filter((message) => message.status === "queued" && isQueuedMessageDeliverable(message, students, managedAccounts)).length;
+  const staleQueuedCount = messageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, students, managedAccounts)).length;
+  const smsOptOutCount = activeSmsOptOutCount(students, managedAccounts);
+  const notificationPermissionLabel = browserPermission === "unsupported" ? "Unavailable" : browserPermission;
+  const deviceNotificationsReady = messageNotificationSettings.browserNotificationsEnabled && browserPermission === "granted";
+  const relayReadyQueueLabel = `${queuedCount} relay-ready queued text${queuedCount === 1 ? "" : "s"}`;
+  const smsOptOutLabel = `${smsOptOutCount} SMS opt-out record${smsOptOutCount === 1 ? "" : "s"} active`;
+  const pushSubscriptionReady = Boolean(messageNotificationSettings.pushSubscriptionEndpoint?.trim());
+  const twilioComplianceProfile = buildTwilioComplianceProfile(twilioLaunchProfile);
+  const twilioComplianceLabel = twilioComplianceProfile.readyForUsProductionTraffic ? "Messaging compliance ready" : "Messaging compliance not verified";
+  const twilioComplianceDetail = twilioLaunchProfile.senderType === "not-set"
+    ? "Select the approved sender path before live US traffic"
+    : `${twilioLaunchProfile.senderType} sender path; A2P brand ${twilioLaunchProfile.a2pBrandStatus}, campaign ${twilioLaunchProfile.a2pCampaignStatus}, toll-free ${twilioLaunchProfile.tollFreeVerificationStatus}`;
+  const marketingSmsPreflight = smsSegmentPreflightText(marketingMessage);
+  const scheduledPromotionSmsPreflight = smsSegmentPreflightText(scheduledPromotionMessage);
+  const marketingOptOutPreflight = smsOptOutPreflightText(marketingMessage);
+  const scheduledPromotionOptOutPreflight = smsOptOutPreflightText(scheduledPromotionMessage);
+  const marketingAudiencePreview = getTextAudiencePreview(marketingAudience);
+  const activeScheduledPromotions = scheduledTextCampaigns.filter((campaign) => campaign.status === "scheduled");
+  const visibleScheduledPromotions = scheduledTextCampaigns.filter((campaign) => campaign.status !== "canceled").slice(0, 4);
+  const visibleTextAutomationRuns = textAutomationRuns.slice(0, 3);
+  const latestUnreadPreview = latestUnreadDirectMessage?.body.trim() || "No unread app replies are waiting.";
+  const latestUnreadSender = latestUnreadDirectMessage?.senderName.trim() || "No sender";
+
+  useEffect(() => {
+    setBrowserPermission(getBrowserNotificationPermission());
+  }, []);
+
+  useEffect(() => {
+    setWebPushPublicKey(messageNotificationSettings.pushPublicKey ?? "");
+  }, [messageNotificationSettings.pushPublicKey]);
+
+  useEffect(() => {
+    void syncMessageAppBadge(unreadDirectMessageCount);
+  }, [unreadDirectMessageCount]);
+
+  useEffect(() => {
+    const message = latestUnreadDirectMessage;
+    if (!messageNotificationSettings.browserNotificationsEnabled || browserPermission !== "granted" || !message) return;
+    if (messageNotificationSettings.lastBrowserNotifiedAt && message.createdAt <= messageNotificationSettings.lastBrowserNotifiedAt) return;
+    const notificationTitle = `New message from ${message.senderName.trim() || "Cho's contact"}`;
+    const notificationOptions: NotificationOptions = {
+      body: message.body.trim(),
+      tag: `chos-${message.threadId}`,
+      icon: publicAsset("682e95109aa21_chos-logo.png"),
+      badge: publicAsset("682e95109aa21_chos-logo.png"),
+      data: {
+        url: messagesNotificationUrl(),
+        threadId: message.threadId
+      }
+    };
+    updateMessageNotificationSettings({ lastBrowserNotifiedAt: message.createdAt, browserPermission: "granted" });
+    void showDirectMessageBrowserNotification(notificationTitle, notificationOptions).catch(() => undefined);
+  }, [
+    browserPermission,
+    latestUnreadDirectMessage,
+    messageNotificationSettings.browserNotificationsEnabled,
+    messageNotificationSettings.lastBrowserNotifiedAt,
+    updateMessageNotificationSettings
+  ]);
 
   const sendFollowUps = () => {
     const count = sendMissedClassFollowUps();
     showToast(count ? `${count} missed-class follow-up text${count === 1 ? "" : "s"} queued.` : "No missed-class follow-ups needed.");
+  };
+
+  const queueEventReminders = () => {
+    const count = sendEventReminderTexts();
+    showToast(count ? `${count} event reminder text${count === 1 ? "" : "s"} queued.` : "No event reminders needed.");
+  };
+
+  const runAutomations = () => {
+    const result = runTextAutomations();
+    showToast(result.totalQueued ? `${result.totalQueued} automated text${result.totalQueued === 1 ? "" : "s"} queued.` : "No automated texts are due.");
   };
 
   const sendMarketing = (event: FormEvent) => {
@@ -9475,8 +10628,45 @@ function MessagesPage() {
       showToast("Enter a marketing message.");
       return;
     }
-    const count = sendMarketingBlast(marketingMessage);
-    showToast(count ? `Marketing blast queued for ${count} student${count === 1 ? "" : "s"}.` : "No current student phone numbers are available.");
+    const count = sendMarketingBlast(marketingMessage, marketingAudience);
+    if (count) {
+      showToast(marketingAudience === "all-students" ? `Marketing blast queued for ${count} student${count === 1 ? "" : "s"}.` : `Text blast queued for ${count} ${messageAudienceLabel(marketingAudience)}.`);
+      return;
+    }
+    showToast(marketingAudience === "all-students" ? "No current student phone numbers are available." : `No ${messageAudienceLabel(marketingAudience)} phone numbers are available.`);
+  };
+
+  const schedulePromotion = (event: FormEvent) => {
+    event.preventDefault();
+    if (!scheduledPromotionMessage.trim()) {
+      showToast("Enter a scheduled promotion message.");
+      return;
+    }
+    if (!scheduledPromotionDate.trim()) {
+      showToast("Choose a promotion send date.");
+      return;
+    }
+    if (!scheduledPromotionTime.trim()) {
+      showToast("Choose a promotion send time.");
+      return;
+    }
+    const scheduledCampaign = scheduleTextCampaign({
+      title: "Scheduled promotion",
+      body: scheduledPromotionMessage,
+      audience: scheduledPromotionAudience,
+      scheduledFor: scheduledPromotionDate,
+      scheduledTime: scheduledPromotionTime
+    });
+    if (!scheduledCampaign) {
+      showToast("Could not schedule that promotion.");
+      return;
+    }
+    showToast(`Promotion scheduled for ${scheduledPromotionWhenLabel(scheduledCampaign)}.`);
+  };
+
+  const cancelScheduledPromotion = (campaign: ScheduledTextCampaign) => {
+    const canceledCampaign = cancelScheduledTextCampaign(campaign.id);
+    showToast(canceledCampaign ? `Scheduled promotion for ${scheduledPromotionWhenLabel(canceledCampaign)} canceled.` : "That scheduled promotion is no longer pending.");
   };
 
   const sendQueue = () => {
@@ -9489,9 +10679,780 @@ function MessagesPage() {
     showToast(sentMessage ? `Queued text to ${sentMessage.recipientName} sent.` : "That queued text is no longer waiting.");
   };
 
+  const relayPayloadReadyForLiveSend = (payload: ReturnType<typeof buildTwilioRelayPayload>, origin: string) => {
+    const result = validateTwilioRelayPayloadForServer(payload, {
+      origin,
+      maxMessages: 100,
+      maxSegmentsPerMessage: 3
+    });
+    if (result.ok) return true;
+    showToast("Twilio relay payload needs review before live send.");
+    return false;
+  };
+
+  const twilioSenderComplianceReadyForLiveSend = () => {
+    if (twilioComplianceProfile.readyForUsProductionTraffic) return true;
+    showToast("Verify sender compliance before live Twilio relay sends.");
+    return false;
+  };
+
+  const exportTwilioRelayPayload = () => {
+    const payload = buildTwilioRelayPayload();
+    if (!payload.messages.length) {
+      showToast("No deliverable queued texts are ready for Twilio relay export.");
+      return;
+    }
+    if (!relayPayloadReadyForLiveSend(payload, window.location.origin)) return;
+    downloadTextFile(`chos-twilio-relay-queue-${today}.json`, JSON.stringify(payload, null, 2), "application/json");
+    showToast(`${payload.messages.length} Twilio relay message${payload.messages.length === 1 ? "" : "s"} exported.`);
+  };
+
+  const updateTwilioLaunchProfile = (field: "messagingServiceSid" | "smsSender" | "inboundWebhookUrl" | "statusCallbackBaseUrl" | "relayHealthCheckUrl" | "complianceNotes", value: string) => {
+    setTwilioLaunchProfile((current) => ({
+      ...current,
+      [field]: value
+    }));
+  };
+
+  const updateTwilioComplianceSenderType = (value: string) => {
+    setTwilioLaunchProfile((current) => ({
+      ...current,
+      senderType: normalizeTwilioComplianceSenderType(value)
+    }));
+  };
+
+  const updateTwilioComplianceStatus = (field: "a2pBrandStatus" | "a2pCampaignStatus" | "tollFreeVerificationStatus", value: string) => {
+    setTwilioLaunchProfile((current) => ({
+      ...current,
+      [field]: normalizeTwilioComplianceStatus(value)
+    }));
+  };
+
+  const updateTwilioLaunchProfileAuthMode = (value: string) => {
+    const managerAuthMode = value === "server-session" || value === "oauth-proxy" ? value : "same-site-cookie";
+    setTwilioLaunchProfile((current) => ({
+      ...current,
+      managerAuthMode
+    }));
+  };
+
+  const saveTwilioLaunchProfile = (event: FormEvent) => {
+    event.preventDefault();
+    const profile = sanitizeTwilioLaunchProfile({
+      ...twilioLaunchProfile,
+      savedAt: new Date().toISOString()
+    });
+    setTwilioLaunchProfile(profile);
+    writeTwilioLaunchProfile(profile);
+    showToast("Twilio launch profile saved.");
+  };
+
+  const checkTwilioRelayHealth = async () => {
+    const endpoint = twilioLaunchProfile.relayHealthCheckUrl.trim();
+    if (!endpoint) {
+      setTwilioRelayHealthChecks(undefined);
+      showToast("Enter a relay health check URL.");
+      return;
+    }
+    try {
+      new URL(endpoint);
+    } catch {
+      setTwilioRelayHealthChecks(undefined);
+      showToast("Enter a valid relay health check URL.");
+      return;
+    }
+    setIsTwilioRelayHealthChecking(true);
+    setTwilioRelayHealthStatus("checking");
+    setTwilioRelayHealthChecks(undefined);
+    try {
+      const response = await window.fetch(endpoint, {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) {
+        setTwilioRelayHealthStatus(`HTTP ${response.status}`);
+        setTwilioRelayHealthChecks(undefined);
+        showToast(`Twilio relay health check failed with HTTP ${response.status}.`);
+        return;
+      }
+      const payload = await response.json().catch(() => undefined);
+      const health = validateTwilioRelayHealthResponseForBrowser(payload);
+      if (!health.ok) {
+        const hasSecretLikeField = health.errors.includes("Relay health response must not include credential-like fields.");
+        if (hasSecretLikeField) {
+          setTwilioRelayHealthStatus("unsafe response");
+          setTwilioRelayHealthChecks(undefined);
+          showToast("Twilio relay health response included secret-like fields.");
+          return;
+        }
+        setTwilioRelayHealthStatus("invalid response");
+        setTwilioRelayHealthChecks(undefined);
+        showToast("Twilio relay health response needs readiness checks.");
+        return;
+      }
+      setTwilioRelayHealthChecks(health.readinessChecks);
+      if (health.status === "ready") {
+        setTwilioRelayHealthStatus("ready");
+        showToast("Twilio relay health verified.");
+        return;
+      }
+      if (health.status) {
+        setTwilioRelayHealthStatus(health.status);
+        showToast("Twilio relay health checked.");
+        return;
+      }
+      if (health.errors.includes("Relay health response must not include credential-like fields.")) {
+        setTwilioRelayHealthStatus("unsafe response");
+        setTwilioRelayHealthChecks(undefined);
+        showToast("Twilio relay health response included secret-like fields.");
+        return;
+      }
+      setTwilioRelayHealthStatus("invalid response");
+      setTwilioRelayHealthChecks(undefined);
+      showToast("Twilio relay health response needs readiness checks.");
+    } catch {
+      setTwilioRelayHealthStatus("failed");
+      setTwilioRelayHealthChecks(undefined);
+      showToast("Twilio relay health check failed.");
+    } finally {
+      setIsTwilioRelayHealthChecking(false);
+    }
+  };
+
+  const updateTwilioRelayEndpoint = (value: string) => {
+    setTwilioRelayEndpoint(value);
+    writeTwilioRelayEndpoint(value);
+  };
+
+  const sendToTwilioRelay = async () => {
+    const endpoint = twilioRelayEndpoint.trim();
+    if (!endpoint) {
+      showToast("Enter a private Twilio relay URL.");
+      return;
+    }
+    const payload = buildTwilioRelayPayload();
+    if (!payload.messages.length) {
+      showToast("No deliverable queued texts are ready for the Twilio relay.");
+      return;
+    }
+    let relayOrigin: string;
+    try {
+      relayOrigin = new URL(endpoint).origin;
+    } catch {
+      showToast("Enter a valid private Twilio relay URL.");
+      return;
+    }
+    if (!twilioSenderComplianceReadyForLiveSend()) return;
+    if (!relayPayloadReadyForLiveSend(payload, relayOrigin)) return;
+    setIsTwilioRelaySending(true);
+    try {
+      const response = await window.fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        showToast(`Twilio relay request failed with HTTP ${response.status}.`);
+        return;
+      }
+      const responseText = await response.text();
+      const result = applyTwilioRelayResults(responseText);
+      if (!result) {
+        showToast("Relay returned invalid Twilio results JSON.");
+        return;
+      }
+      if (!result.applied) {
+        showToast("No matching Twilio relay results were found.");
+        return;
+      }
+      showToast(`${result.applied} Twilio relay result${result.applied === 1 ? "" : "s"} applied.`);
+    } catch {
+      showToast("Twilio relay request failed.");
+    } finally {
+      setIsTwilioRelaySending(false);
+    }
+  };
+
+  const applyTwilioResults = () => {
+    const result = applyTwilioRelayResults(twilioRelayResultsJson);
+    if (!result) {
+      showToast("Paste a valid Twilio relay results JSON.");
+      return;
+    }
+    if (!result.applied) {
+      showToast("No matching Twilio relay results were found.");
+      return;
+    }
+    setTwilioRelayResultsJson("");
+    showToast(`${result.applied} Twilio relay result${result.applied === 1 ? "" : "s"} applied.`);
+  };
+
+  const applyTwilioStatus = () => {
+    const result = applyTwilioStatusCallbacks(twilioStatusCallbackJson);
+    if (!result) {
+      showToast("Paste a valid Twilio status callback JSON.");
+      return;
+    }
+    if (!result.applied) {
+      showToast("No matching Twilio status callbacks were found.");
+      return;
+    }
+    setTwilioStatusCallbackJson("");
+    showToast(`${result.applied} Twilio status callback${result.applied === 1 ? "" : "s"} applied.`);
+  };
+
+  const markSmsOptOut = () => {
+    const count = recordSmsOptOut(smsOptOutPhone, true);
+    showToast(count ? `SMS opt-out recorded for ${count} contact${count === 1 ? "" : "s"}.` : "No matching SMS contact found.");
+    if (count) setSmsOptOutPhone("");
+  };
+
+  const clearSmsOptOut = () => {
+    const count = recordSmsOptOut(smsOptOutPhone, false);
+    showToast(count ? `SMS opt-out cleared for ${count} contact${count === 1 ? "" : "s"}.` : "No matching SMS contact found.");
+    if (count) setSmsOptOutPhone("");
+  };
+
+  const applyTwilioInbound = () => {
+    const result = applyTwilioInboundWebhook(twilioInboundWebhookJson);
+    if (!result) {
+      showToast("Paste a valid Twilio inbound webhook JSON.");
+      return;
+    }
+    if (result.imported) {
+      setTwilioInboundWebhookJson("");
+      showToast(`${result.imported} inbound SMS imported.`);
+      return;
+    }
+    const optOutUpdates = result.optedOut + result.optedIn;
+    if (optOutUpdates) {
+      setTwilioInboundWebhookJson("");
+      showToast(`${optOutUpdates} SMS opt-out update${optOutUpdates === 1 ? "" : "s"} applied.`);
+      return;
+    }
+    showToast("No matching SMS contact found for that inbound webhook.");
+  };
+
+  const buildSmsConsentEvidencePayload = () => {
+    const studentContacts = students
+      .filter((student) => isActiveOperationsStudent(student))
+      .flatMap((student) => {
+        const studentName = fullName(student);
+        const contacts = [];
+        if (student.phone.trim()) {
+          const consentUpdatedAt = student.studentSmsConsentUpdatedAt ?? student.smsConsentUpdatedAt;
+          contacts.push({
+            contactId: student.id,
+            role: "student",
+            name: studentName,
+            phone: normalizeConsentPhone(student.phone),
+            consentStatus: smsConsentStatus(student.studentSmsOptOutAt, consentUpdatedAt),
+            consentUpdatedAt: smsConsentUpdatedAt(student.studentSmsOptOutAt, consentUpdatedAt),
+            optOutAt: student.studentSmsOptOutAt?.trim() || null,
+            evidenceSource: student.studentSmsOptOutAt?.trim() ? "twilio-stop-or-manager-opt-out" : consentUpdatedAt?.trim() ? "prototype-consent-record" : "missing-consent-evidence"
+          });
+        }
+        if (student.guardianPhone?.trim()) {
+          const consentUpdatedAt = student.guardianSmsConsentUpdatedAt ?? student.smsConsentUpdatedAt;
+          contacts.push({
+            contactId: `parent-${student.id}`,
+            role: "parent",
+            name: student.guardianName?.trim() || `${studentName} Parent/Guardian`,
+            phone: normalizeConsentPhone(student.guardianPhone),
+            consentStatus: smsConsentStatus(student.guardianSmsOptOutAt, consentUpdatedAt),
+            consentUpdatedAt: smsConsentUpdatedAt(student.guardianSmsOptOutAt, consentUpdatedAt),
+            optOutAt: student.guardianSmsOptOutAt?.trim() || null,
+            evidenceSource: student.guardianSmsOptOutAt?.trim() ? "twilio-stop-or-manager-opt-out" : consentUpdatedAt?.trim() ? "prototype-consent-record" : "missing-consent-evidence"
+          });
+        }
+        return contacts;
+      });
+    const staffContacts = managedAccounts
+      .filter((account) => account.role === "staff" && account.status === "active" && account.phone?.trim())
+      .map((account) => ({
+        contactId: account.id,
+        role: "staff",
+        name: account.displayName.trim(),
+        phone: normalizeConsentPhone(account.phone ?? ""),
+        consentStatus: smsConsentStatus(account.smsOptOutAt, account.smsConsentUpdatedAt),
+        consentUpdatedAt: smsConsentUpdatedAt(account.smsOptOutAt, account.smsConsentUpdatedAt),
+        optOutAt: account.smsOptOutAt?.trim() || null,
+        evidenceSource: account.smsOptOutAt?.trim() ? "twilio-stop-or-manager-opt-out" : account.smsConsentUpdatedAt?.trim() ? "prototype-consent-record" : "missing-consent-evidence"
+      }));
+    return {
+      schemaVersion: "chos-sms-consent-evidence.v1",
+      provider: "twilio",
+      generatedAt: new Date().toISOString(),
+      requestedBy: session
+        ? {
+            email: session.email,
+            role: accountRole
+          }
+        : undefined,
+      serverResponsibilities: [
+        "Treat contacts with missing consent evidence as not sendable until valid opt-in proof exists.",
+        "Sync opt-in and opt-out status to Twilio Consent Management or an equivalent server-side consent store.",
+        "Re-check consent, opt-outs, account status, and phone deliverability immediately before live Twilio sends."
+      ],
+      contacts: [...studentContacts, ...staffContacts]
+    };
+  };
+
+  const exportSmsConsentEvidence = () => {
+    const payload = buildSmsConsentEvidencePayload();
+    downloadTextFile(`chos-sms-consent-evidence-${today}.json`, JSON.stringify(payload, null, 2), "application/json");
+    showToast(`${payload.contacts.length} SMS consent record${payload.contacts.length === 1 ? "" : "s"} exported.`);
+  };
+
   const clearStaleTexts = () => {
     const count = clearStaleQueuedTexts();
     showToast(count ? `${count} stale queued text${count === 1 ? "" : "s"} removed.` : "No stale queued texts need cleanup.");
+  };
+
+  const buildPushSubscriptionPayload = () => {
+    return buildWebPushSubscriptionPayload(messageNotificationSettings, session, accountRole, messagesNotificationUrl());
+  };
+
+  const enableDeviceNotifications = async () => {
+    if (typeof window === "undefined" || !("Notification" in window) || !window.Notification.requestPermission) {
+      setBrowserPermission("unsupported");
+      updateMessageNotificationSettings({ browserNotificationsEnabled: false, browserPermission: "unsupported" });
+      showToast("Device notifications are unavailable in this browser.");
+      return;
+    }
+    const permission = await window.Notification.requestPermission();
+    setBrowserPermission(permission);
+    updateMessageNotificationSettings({ browserNotificationsEnabled: permission === "granted", browserPermission: permission });
+    showToast(permission === "granted" ? "Device notifications enabled for app messages." : "Device notifications were not enabled.");
+  };
+
+  const sendTestDeviceNotification = async () => {
+    if (!deviceNotificationsReady) {
+      showToast("Enable device notifications before sending a test.");
+      return;
+    }
+    const sent = await showDirectMessageBrowserNotification("Cho's test notification", {
+      body: "Device notifications are ready for app messages.",
+      tag: "chos-test-notification",
+      icon: publicAsset("682e95109aa21_chos-logo.png"),
+      badge: publicAsset("682e95109aa21_chos-logo.png"),
+      data: {
+        url: messagesNotificationUrl()
+      }
+    });
+    showToast(sent ? "Test device notification sent." : "Test device notification could not be shown.");
+  };
+
+  const connectDevicePush = async () => {
+    const applicationServerKey = webPushPublicKeyToBytes(webPushPublicKey);
+    if (!applicationServerKey) {
+      showToast("Enter a valid Web Push public key.");
+      return;
+    }
+    if (typeof window === "undefined" || !("Notification" in window) || !window.Notification.requestPermission || typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+      updateMessageNotificationSettings({ browserPermission: "unsupported" });
+      showToast("Web Push subscriptions are unavailable in this browser.");
+      return;
+    }
+    setIsPushSubscribing(true);
+    try {
+      const permission = window.Notification.permission === "granted" ? "granted" : await window.Notification.requestPermission();
+      setBrowserPermission(permission);
+      if (permission !== "granted") {
+        updateMessageNotificationSettings({ browserNotificationsEnabled: false, browserPermission: permission });
+        showToast("Device push notifications were not enabled.");
+        return;
+      }
+      const registration = await navigator.serviceWorker.ready;
+      if (!registration.pushManager || typeof registration.pushManager.subscribe !== "function") {
+        showToast("Web Push subscriptions are unavailable in this browser.");
+        return;
+      }
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey
+      });
+      updateMessageNotificationSettings({
+        ...buildWebPushSubscriptionSettings(webPushPublicKey, subscription)
+      });
+      showToast("Device push subscription ready for private server sync.");
+    } catch {
+      showToast("Device push subscription failed.");
+    } finally {
+      setIsPushSubscribing(false);
+    }
+  };
+
+  const exportPushSubscription = () => {
+    const payload = buildPushSubscriptionPayload();
+    if (!payload) {
+      showToast("Connect this device to Web Push before exporting.");
+      return;
+    }
+    downloadTextFile(`chos-web-push-subscription-${today}.json`, JSON.stringify(payload, null, 2), "application/json");
+    showToast("Device push subscription exported.");
+  };
+
+  const updatePushServerEndpoint = (value: string) => {
+    setPushServerEndpoint(value);
+    writePushServerEndpoint(value);
+  };
+
+  const syncPushSubscription = async () => {
+    const endpoint = pushServerEndpoint.trim();
+    if (!endpoint) {
+      showToast("Enter a private push server URL.");
+      return;
+    }
+    const payload = buildPushSubscriptionPayload();
+    if (!payload) {
+      showToast("Connect this device to Web Push before syncing.");
+      return;
+    }
+    setIsPushSubscriptionSyncing(true);
+    try {
+      const response = await window.fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        showToast(`Push subscription sync failed with HTTP ${response.status}.`);
+        return;
+      }
+      showToast("Device push subscription synced to private server.");
+    } catch {
+      showToast("Device push subscription sync failed.");
+    } finally {
+      setIsPushSubscriptionSyncing(false);
+    }
+  };
+
+  const buildProductionMessagingIntegrationManifest = () => {
+    const baseUrl = new URL(import.meta.env.BASE_URL, window.location.origin).toString();
+    const serviceWorkerUrl = new URL(`${import.meta.env.BASE_URL}cho-service-worker.js`, window.location.origin).toString();
+    return {
+      schemaVersion: "chos-production-messaging-integration.v1",
+      generatedAt: new Date().toISOString(),
+      app: {
+        name: "Cho's Martial Arts App Prototype",
+        baseUrl,
+        messagesPath: "/messages",
+        notificationUrl: messagesNotificationUrl(),
+        serviceWorkerUrl
+      },
+      requestedBy: session
+        ? {
+            email: session.email,
+            role: accountRole
+          }
+        : undefined,
+      twilio: {
+        relayEndpoint: twilioRelayEndpoint.trim() || null,
+        relayPayloadSchemaVersion: "chos-twilio-relay.v1",
+        relayMethod: "POST",
+        browserCredentialMode: "include",
+        accountProfile: {
+          messagingServiceSidConfigured: Boolean(twilioLaunchProfile.messagingServiceSid.trim()),
+          messagingServiceSid: twilioLaunchProfile.messagingServiceSid.trim() || null,
+          smsSender: twilioLaunchProfile.smsSender.trim() || null,
+          inboundWebhookUrl: twilioLaunchProfile.inboundWebhookUrl.trim() || null,
+          statusCallbackBaseUrl: twilioLaunchProfile.statusCallbackBaseUrl.trim() || null,
+          relayHealthCheckUrl: twilioLaunchProfile.relayHealthCheckUrl.trim() || null,
+          managerAuthMode: twilioLaunchProfile.managerAuthMode,
+          savedAt: twilioLaunchProfile.savedAt ?? null,
+          credentialStorage: "server-only",
+          credentialValuesExcluded: true
+        },
+        complianceProfile: twilioComplianceProfile,
+        requiredServerEnv: twilioRequiredServerEnvVars,
+        authServerEnv: twilioAuthServerEnv,
+        senderServerEnv: twilioSenderServerEnv,
+        serverContract: twilioRelayServerContract,
+        optionalServerEnv: ["TWILIO_STATUS_CALLBACK_BASE_URL"],
+        maxMessagesPerBatch: 100,
+        maxSegmentsPerMessage: 3,
+        webhooks: {
+          inboundPath: "/api/messages/inbound",
+          statusCallbackPathTemplate: "/api/messages/status/{messageId}",
+          contentType: "application/x-www-form-urlencoded",
+          signatureHeader: "X-Twilio-Signature",
+          requireSignatureVerification: true,
+          serverContract: twilioWebhookServerContract
+        },
+        serverResponsibilities: [
+          "Authenticate the manager before accepting relay or push subscription requests.",
+          "Store Twilio credentials only in the private server environment.",
+          "Confirm A2P 10DLC brand and campaign approval or verified toll-free/short-code sender status before live US traffic.",
+          "Validate relay payloads, recipient consent, opt-outs, rate limits, and SMS segment limits server-side.",
+          "Verify Twilio webhook signatures before persisting inbound replies or status callbacks."
+        ]
+      },
+      serverAdapterContract: messagingServerAdapterContract,
+      webPush: {
+        subscriptionSyncEndpoint: pushServerEndpoint.trim() || null,
+        subscriptionSchemaVersion: "chos-web-push-subscription.v1",
+        notificationPayloadSchemaVersion: "chos-web-push-notification.v1",
+        serverContract: webPushServerContract,
+        requiredServerEnv: webPushRequiredServerEnvVars,
+        publicKeyConfigured: Boolean(webPushPublicKey.trim() || messageNotificationSettings.pushPublicKey?.trim()),
+        subscriptionEndpoint: messageNotificationSettings.pushSubscriptionEndpoint?.trim() || null,
+        notificationUrl: messagesNotificationUrl(),
+        serviceWorkerUrl,
+        serverResponsibilities: [
+          "Store VAPID private keys only on the private push server.",
+          "Persist browser PushSubscription records for authenticated manager devices.",
+          "Remove expired subscriptions after push send failures.",
+          "Send user-visible notifications that open the messages route."
+        ]
+      },
+      auth: {
+        browserCredentialMode: "include",
+        managerAuthenticationRequired: true,
+        storeSecretsOnServerOnly: true,
+        recommendedSession: "same-site secure cookie or equivalent server-managed session",
+        serverContract: messagingServerAdapterContract
+      }
+    };
+  };
+
+  const exportProductionMessagingIntegrationManifest = () => {
+    const manifest = buildProductionMessagingIntegrationManifest();
+    downloadTextFile(`chos-production-messaging-integration-${today}.json`, JSON.stringify(manifest, null, 2), "application/json");
+    showToast("Production messaging integration manifest exported.");
+  };
+
+  const buildTextAutomationManifest = () => {
+    const baseUrl = new URL(import.meta.env.BASE_URL, window.location.origin).toString();
+    const serviceWorkerUrl = new URL(`${import.meta.env.BASE_URL}cho-service-worker.js`, window.location.origin).toString();
+    const timeZone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone || "local" : "local";
+    const automations = [
+      {
+        key: "missedClassFollowUps",
+        label: "Missed-class follow-ups",
+        provider: "twilio",
+        channel: "sms",
+        source: "students with 3 or more missed classes",
+        dedupe: "recipient/body/idempotency check before queueing"
+      },
+      {
+        key: "attendanceGapCheckIns",
+        label: "Attendance gap check-ins",
+        provider: "twilio",
+        channel: "sms",
+        source: "attendance gap report candidates",
+        dedupe: "same student and body on the same automation date"
+      },
+      {
+        key: "trialConversionFollowUps",
+        label: "Trial conversion follow-ups",
+        provider: "twilio",
+        channel: "sms",
+        source: "trial students due for conversion outreach",
+        dedupe: "same recipient and body on the same automation date"
+      },
+      {
+        key: "newStudentCheckIns",
+        label: "New student check-ins",
+        provider: "twilio",
+        channel: "sms",
+        source: "new student report candidates",
+        dedupe: "same recipient and body on the same automation date"
+      },
+      {
+        key: "pausedStudentReactivationFollowUps",
+        label: "Paused student reactivation follow-ups",
+        provider: "twilio",
+        channel: "sms",
+        source: "paused students due for reactivation outreach",
+        dedupe: "same recipient and body on the same automation date"
+      },
+      {
+        key: "celebrationOutreach",
+        label: "Celebration outreach",
+        provider: "twilio",
+        channel: "sms",
+        source: "birthday and attendance celebration report candidates",
+        dedupe: "same recipient and body on the same automation date"
+      },
+      {
+        key: "profileUpdateRequests",
+        label: "Profile update requests",
+        provider: "twilio",
+        channel: "sms",
+        source: "records missing contact or safety details",
+        dedupe: "same recipient and body on the same automation date"
+      },
+      {
+        key: "classReminders",
+        label: "Class reminders",
+        provider: "twilio",
+        channel: "sms",
+        source: "upcoming class reminder report candidates",
+        dedupe: "same recipient and body on the same automation date"
+      },
+      {
+        key: "milestoneEncouragements",
+        label: "Milestone encouragements",
+        provider: "twilio",
+        channel: "sms",
+        source: "student milestone report candidates",
+        dedupe: "same recipient and body on the same automation date"
+      },
+      {
+        key: "beltTestInvites",
+        label: "Belt test invites",
+        provider: "twilio",
+        channel: "sms",
+        source: "belt readiness report candidates",
+        dedupe: "same recipient and body on the same automation date"
+      },
+      {
+        key: "eventReminders",
+        label: "Event reminders",
+        provider: "twilio",
+        channel: "sms",
+        source: "events due in the next 7 days",
+        dedupe: "same event, recipient, and body on the same automation date"
+      },
+      {
+        key: "scheduledPromotions",
+        label: "Scheduled promotions",
+        provider: "twilio",
+        channel: "sms",
+        source: "scheduled promotion records due by local date and time",
+        dedupe: "scheduled campaign id and generated campaign id"
+      }
+    ];
+    return {
+      schemaVersion: "chos-text-automation-manifest.v1",
+      generatedAt: new Date().toISOString(),
+      app: {
+        name: "Cho's Martial Arts App Prototype",
+        baseUrl,
+        messagesPath: "/messages",
+        notificationUrl: messagesNotificationUrl(),
+        serviceWorkerUrl
+      },
+      requestedBy: session
+        ? {
+            email: session.email,
+            role: accountRole
+          }
+        : undefined,
+      automationRun: {
+        runEndpointPath: "/api/messages/automations/run",
+        method: "POST",
+        serverContractModule: "src/textAutomationContract.ts",
+        executionPlanner: "buildTextAutomationExecutionPlan",
+        serverAdapterContract: messagingServerAdapterContract,
+        recommendedCron: "*/15 * * * *",
+        recommendedCadence: "Every 15 minutes, plus a manual manager-triggered run endpoint.",
+        timezone: timeZone,
+        browserCredentialMode: "include",
+        managerAuthenticationRequired: true,
+        serverJobAuthenticationRequired: true,
+        dryRunRecommended: true,
+        idempotencyRequired: true
+      },
+      relay: {
+        relayEndpoint: twilioRelayEndpoint.trim() || null,
+        relayPayloadSchemaVersion: "chos-twilio-relay.v1",
+        relayMethod: "POST",
+        browserCredentialMode: "include",
+        accountProfile: {
+          messagingServiceSidConfigured: Boolean(twilioLaunchProfile.messagingServiceSid.trim()),
+          messagingServiceSid: twilioLaunchProfile.messagingServiceSid.trim() || null,
+          smsSender: twilioLaunchProfile.smsSender.trim() || null,
+          inboundWebhookUrl: twilioLaunchProfile.inboundWebhookUrl.trim() || null,
+          statusCallbackBaseUrl: twilioLaunchProfile.statusCallbackBaseUrl.trim() || null,
+          relayHealthCheckUrl: twilioLaunchProfile.relayHealthCheckUrl.trim() || null,
+          managerAuthMode: twilioLaunchProfile.managerAuthMode,
+          credentialStorage: "server-only",
+          credentialValuesExcluded: true
+        },
+        complianceProfile: twilioComplianceProfile,
+        requiredServerEnv: twilioRequiredServerEnvVars,
+        authServerEnv: twilioAuthServerEnv,
+        senderServerEnv: twilioSenderServerEnv,
+        serverContract: twilioRelayServerContract,
+        optionalServerEnv: ["TWILIO_STATUS_CALLBACK_BASE_URL"],
+        maxMessagesPerBatch: 100,
+        maxSegmentsPerMessage: 3,
+        statusCallbackPathTemplate: "/api/messages/status/{messageId}"
+      },
+      webPush: {
+        subscriptionSyncEndpoint: pushServerEndpoint.trim() || null,
+        subscriptionSchemaVersion: "chos-web-push-subscription.v1",
+        notificationPayloadSchemaVersion: "chos-web-push-notification.v1",
+        serverContract: webPushServerContract,
+        requiredServerEnv: webPushRequiredServerEnvVars,
+        notificationUrl: messagesNotificationUrl(),
+        serviceWorkerUrl
+      },
+      automations,
+      scheduledPromotions: scheduledTextCampaigns
+        .filter((campaign) => campaign.status !== "canceled")
+        .map((campaign) => ({
+          id: campaign.id,
+          title: campaign.title,
+          audience: campaign.audience,
+          audienceLabel: messageAudienceLabel(campaign.audience),
+          scheduledFor: campaign.scheduledFor,
+          scheduledTime: campaign.scheduledTime ?? null,
+          status: campaign.status,
+          createdAt: campaign.createdAt,
+          queuedAt: campaign.queuedAt ?? null,
+          campaignId: campaign.campaignId ?? null,
+          body: campaign.body,
+          smsPreflight: smsSegmentPreflightText(campaign.body),
+          optOutPreflight: smsOptOutPreflightText(campaign.body)
+        })),
+      recentAutomationRuns: textAutomationRuns.slice(0, 5).map((run) => ({
+        id: run.id,
+        ranAt: run.ranAt,
+        status: run.status,
+        totalQueued: run.totalQueued,
+        deliveryProvider: run.deliveryProvider,
+        deliveryChannel: run.deliveryChannel,
+        deliveryMode: run.deliveryMode,
+        relayPayloadSchemaVersion: run.relayPayloadSchemaVersion,
+        breakdown: run.breakdown
+      })),
+      deliveryGuards: {
+        enforceSmsOptOutServerSide: true,
+        enforceRateLimitsServerSide: true,
+        validateTwilioRelayPayloadServerSide: true,
+        verifyTwilioWebhookSignatures: true,
+        storeSecretsOnServerOnly: true,
+        excludeBrowserStoredPushKeyMaterial: true,
+        requireOptOutLanguageForMarketing: true
+      },
+      serverResponsibilities: [
+        "Run due-date and due-time checks on the private server before queueing automation output.",
+        "Authenticate manager-triggered automation runs and separately authenticate cron or worker runs.",
+        "Re-check recipient consent, SMS opt-outs, account status, and deliverability immediately before creating relay payloads.",
+        "Confirm sender compliance approval before any live Twilio automation run creates US messaging traffic.",
+        "Apply idempotency so repeated cron runs do not duplicate the same recipient/body/campaign work.",
+        "Batch Twilio relay sends within rate, consent, and segment guardrails.",
+        "Persist queued, sent, failed, inbound, and status callback records in the production backend.",
+        "Send Web Push notifications for new app messages through the private push server after storing PushSubscription records."
+      ]
+    };
+  };
+
+  const exportTextAutomationManifest = () => {
+    const manifest = buildTextAutomationManifest();
+    downloadTextFile(`chos-text-automation-manifest-${today}.json`, JSON.stringify(manifest, null, 2), "application/json");
+    showToast("Text automation manifest exported.");
+  };
+
+  const markAppMessagesSeen = () => {
+    markMessageNotificationsSeen();
+    showToast("App message notifications marked seen.");
   };
 
   return (
@@ -9503,32 +11464,483 @@ function MessagesPage() {
           <MessageCircle size={18} /> Open Home Page Messages
         </Link>
       </section>
+      <div className="operations-two-column message-control-grid">
+        <section className="operations-panel message-notification-panel" aria-label="Message notification center">
+          <div className="message-panel-kicker">
+            <Bell size={18} aria-hidden="true" />
+            <span>App alerts</span>
+          </div>
+          <h2>Notification Center</h2>
+          <p className="message-notification-count">{unreadDirectMessageCount} unread app message{unreadDirectMessageCount === 1 ? "" : "s"}</p>
+          <article className="message-notification-preview" aria-label="Latest unread app message">
+            <strong>{latestUnreadSender}</strong>
+            <p>{latestUnreadPreview}</p>
+          </article>
+          <div className="message-notification-actions">
+            <button type="button" className="operations-action" onClick={markAppMessagesSeen} disabled={!directMessages.length}>
+              <CheckCircle2 size={18} /> Mark app messages seen
+            </button>
+            <button type="button" className="operations-action secondary" onClick={enableDeviceNotifications}>
+              <Smartphone size={18} /> Enable Device Notifications
+            </button>
+            <button type="button" className="operations-action secondary" onClick={sendTestDeviceNotification} disabled={!deviceNotificationsReady}>
+              <Bell size={18} /> Send Test Notification
+            </button>
+          </div>
+          <div className="message-push-setup" aria-label="Device push subscription setup">
+            <label>
+              Web Push public key
+              <input
+                value={webPushPublicKey}
+                onChange={(event) => setWebPushPublicKey(event.target.value)}
+                placeholder="Public VAPID key from private push server"
+              />
+            </label>
+            <label>
+              Private push server URL
+              <input
+                type="url"
+                value={pushServerEndpoint}
+                onChange={(event) => updatePushServerEndpoint(event.target.value)}
+                placeholder="https://push.example.com/api/push/subscriptions"
+              />
+            </label>
+            <div className="message-notification-actions">
+              <button type="button" className="operations-action secondary" onClick={connectDevicePush} disabled={!webPushPublicKey.trim() || isPushSubscribing}>
+                <Bell size={18} /> {isPushSubscribing ? "Connecting Device..." : "Connect This Device"}
+              </button>
+              <button type="button" className="operations-action secondary" onClick={syncPushSubscription} disabled={!pushSubscriptionReady || !pushServerEndpoint.trim() || isPushSubscriptionSyncing}>
+                <Server size={18} /> {isPushSubscriptionSyncing ? "Syncing Subscription..." : "Sync Push Subscription"}
+              </button>
+              <button type="button" className="operations-action secondary" onClick={exportPushSubscription} disabled={!pushSubscriptionReady}>
+                <FileText size={18} /> Export Push Subscription JSON
+              </button>
+            </div>
+            <p className="operations-note">{pushSubscriptionReady ? "This device has a Web Push subscription ready for private server storage." : "Paste a public VAPID key from the private push server before connecting this device."}</p>
+          </div>
+          <p className="operations-note">Device permission: {notificationPermissionLabel}. Preference: {messageNotificationSettings.browserNotificationsEnabled ? "enabled" : "off"}.</p>
+        </section>
+        <section className="operations-panel message-twilio-panel" aria-label="Twilio delivery setup">
+          <div className="message-panel-kicker">
+            <Server size={18} aria-hidden="true" />
+            <span>SMS provider</span>
+          </div>
+          <h2>Twilio Delivery Setup</h2>
+          <p className="message-provider-status">Private server relay required</p>
+          <p>Queued texts are tagged for Twilio SMS delivery, but live sends need a private server endpoint with Twilio credentials. This static prototype never stores Auth Tokens in the browser.</p>
+          <div className="message-provider-env" aria-label="Required Twilio server environment variables">
+            {twilioServerEnvLabels.map((envVar) => <span key={envVar}>{envVar}</span>)}
+          </div>
+          <form className="message-launch-profile" aria-label="Twilio account launch profile" onSubmit={saveTwilioLaunchProfile}>
+            <h3>Twilio Account Launch Profile</h3>
+            <p>Track non-secret production setup details for the private relay and manager-auth layer.</p>
+            <label>
+              Twilio Messaging Service SID
+              <input
+                value={twilioLaunchProfile.messagingServiceSid}
+                onChange={(event) => updateTwilioLaunchProfile("messagingServiceSid", event.target.value)}
+                placeholder="MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              />
+            </label>
+            <label>
+              Twilio SMS sender
+              <input
+                value={twilioLaunchProfile.smsSender}
+                onChange={(event) => updateTwilioLaunchProfile("smsSender", event.target.value)}
+                placeholder="+12625550100 or approved sender"
+              />
+            </label>
+            <label>
+              Inbound webhook URL
+              <input
+                type="url"
+                value={twilioLaunchProfile.inboundWebhookUrl}
+                onChange={(event) => updateTwilioLaunchProfile("inboundWebhookUrl", event.target.value)}
+                placeholder="https://relay.example.com/api/messages/inbound"
+              />
+            </label>
+            <label>
+              Status callback base URL
+              <input
+                type="url"
+                value={twilioLaunchProfile.statusCallbackBaseUrl}
+                onChange={(event) => updateTwilioLaunchProfile("statusCallbackBaseUrl", event.target.value)}
+                placeholder="https://relay.example.com"
+              />
+            </label>
+            <label>
+              Relay health check URL
+              <input
+                type="url"
+                value={twilioLaunchProfile.relayHealthCheckUrl}
+                onChange={(event) => updateTwilioLaunchProfile("relayHealthCheckUrl", event.target.value)}
+                placeholder="https://relay.example.com/api/health/twilio"
+              />
+            </label>
+            <label>
+              Manager auth mode
+              <select
+                value={twilioLaunchProfile.managerAuthMode}
+                onChange={(event) => updateTwilioLaunchProfileAuthMode(event.target.value)}
+              >
+                <option value="same-site-cookie">Same-site secure cookie</option>
+                <option value="server-session">Server-managed session</option>
+                <option value="oauth-proxy">OAuth proxy session</option>
+              </select>
+            </label>
+            <label>
+              Messaging compliance sender type
+              <select
+                value={twilioLaunchProfile.senderType}
+                onChange={(event) => updateTwilioComplianceSenderType(event.target.value)}
+              >
+                <option value="not-set">Not selected</option>
+                <option value="10dlc">A2P 10DLC long code</option>
+                <option value="toll-free">Verified toll-free</option>
+                <option value="short-code">Approved short code</option>
+              </select>
+            </label>
+            <label>
+              A2P brand registration status
+              <select
+                value={twilioLaunchProfile.a2pBrandStatus}
+                onChange={(event) => updateTwilioComplianceStatus("a2pBrandStatus", event.target.value)}
+              >
+                <option value="not-started">Not started</option>
+                <option value="pending">Pending review</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Needs revision</option>
+                <option value="not-used">Not used for sender</option>
+              </select>
+            </label>
+            <label>
+              A2P campaign registration status
+              <select
+                value={twilioLaunchProfile.a2pCampaignStatus}
+                onChange={(event) => updateTwilioComplianceStatus("a2pCampaignStatus", event.target.value)}
+              >
+                <option value="not-started">Not started</option>
+                <option value="pending">Pending review</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Needs revision</option>
+                <option value="not-used">Not used for sender</option>
+              </select>
+            </label>
+            <label>
+              Toll-free verification status
+              <select
+                value={twilioLaunchProfile.tollFreeVerificationStatus}
+                onChange={(event) => updateTwilioComplianceStatus("tollFreeVerificationStatus", event.target.value)}
+              >
+                <option value="not-started">Not started</option>
+                <option value="pending">Pending review</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Needs revision</option>
+                <option value="not-used">Not used for sender</option>
+              </select>
+            </label>
+            <label>
+              Messaging compliance notes
+              <textarea
+                rows={3}
+                value={twilioLaunchProfile.complianceNotes}
+                onChange={(event) => updateTwilioLaunchProfile("complianceNotes", event.target.value)}
+                placeholder="Non-secret registration status notes for the private relay handoff."
+              />
+            </label>
+            <button type="submit" className="operations-action secondary">
+              <ShieldCheck size={18} /> Save Launch Profile
+            </button>
+            <button
+              type="button"
+              className="operations-action secondary"
+              onClick={checkTwilioRelayHealth}
+              disabled={!twilioLaunchProfile.relayHealthCheckUrl.trim() || isTwilioRelayHealthChecking}
+            >
+              <Server size={18} /> {isTwilioRelayHealthChecking ? "Checking Relay..." : "Check Relay Health"}
+            </button>
+            <p className="operations-note">Relay health: {twilioRelayHealthStatus}</p>
+            {twilioRelayHealthChecks && (
+              <div className="message-readiness-panel message-relay-health-checks" role="group" aria-label="Twilio relay health readiness checks">
+                <ul className="message-readiness-list">
+                  {twilioRelayHealthCheckLabels.map((item) => {
+                    const isReady = twilioRelayHealthChecks[item.key];
+                    return (
+                      <li key={item.key} className={isReady ? undefined : "message-readiness-warning"}>
+                        <CheckCircle2 size={18} aria-hidden="true" />
+                        <span>
+                          <strong>{item.label}</strong>
+                          <em>{isReady ? "Ready" : "Needs attention"}</em>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+            <p className="operations-note">Do not paste Auth Tokens, API secrets, account passwords, or VAPID private keys here. Those belong only in the private server environment.</p>
+          </form>
+          <div className="message-notification-actions">
+            <button type="button" className="operations-action secondary" onClick={exportProductionMessagingIntegrationManifest}>
+              <FileText size={18} /> Export Integration Manifest
+            </button>
+          </div>
+          <div className="message-readiness-panel" role="group" aria-label="Twilio live readiness checklist">
+            <h3>Live Twilio Readiness</h3>
+            <ul className="message-readiness-list">
+              <li>
+                <Server size={18} aria-hidden="true" />
+                <span>
+                  <strong>Server relay required</strong>
+                  <em>{twilioServerReadinessLabel}</em>
+                </span>
+              </li>
+              <li>
+                <Send size={18} aria-hidden="true" />
+                <span>
+                  <strong>{relayReadyQueueLabel}</strong>
+                  <em>{staleQueuedCount ? `${staleQueuedCount} stale queued text${staleQueuedCount === 1 ? "" : "s"} blocked` : "No stale queued texts blocking export"}</em>
+                </span>
+              </li>
+              <li>
+                <ShieldCheck size={18} aria-hidden="true" />
+                <span>
+                  <strong>{smsOptOutLabel}</strong>
+                  <em>Consent guard active</em>
+                </span>
+              </li>
+              <li className={twilioComplianceProfile.readyForUsProductionTraffic ? undefined : "message-readiness-warning"}>
+                <ShieldCheck size={18} aria-hidden="true" />
+                <span>
+                  <strong>{twilioComplianceLabel}</strong>
+                  <em>{twilioComplianceDetail}</em>
+                </span>
+              </li>
+              <li>
+                <Smartphone size={18} aria-hidden="true" />
+                <span>
+                  <strong>{deviceNotificationsReady ? "Device notifications enabled" : "Device notifications not enabled"}</strong>
+                  <em>Permission: {notificationPermissionLabel}. Preference: {messageNotificationSettings.browserNotificationsEnabled ? "enabled" : "off"}.</em>
+                </span>
+              </li>
+              <li>
+                <Bell size={18} aria-hidden="true" />
+                <span>
+                  <strong>{pushSubscriptionReady ? "Push subscription connected" : "Push subscription not connected"}</strong>
+                  <em>Private push server sync {pushSubscriptionReady ? "ready" : "needs this device subscription"}</em>
+                </span>
+              </li>
+              <li>
+                <CheckCircle2 size={18} aria-hidden="true" />
+                <span>
+                  <strong>Relay result import ready</strong>
+                  <em>Immediate send responses reconcile back into the text log</em>
+                </span>
+              </li>
+              <li>
+                <Bell size={18} aria-hidden="true" />
+                <span>
+                  <strong>Status callback import ready</strong>
+                  <em>Twilio delivery callbacks can update live message status</em>
+                </span>
+              </li>
+              <li>
+                <MessageCircle size={18} aria-hidden="true" />
+                <span>
+                  <strong>Inbound webhook import ready</strong>
+                  <em>Known SMS replies can become app messages</em>
+                </span>
+              </li>
+              <li className="message-readiness-warning">
+                <ShieldCheck size={18} aria-hidden="true" />
+                <span>
+                  <strong>Webhook signature helper ready</strong>
+                  <em>Private relay must enforce X-Twilio-Signature before webhook persistence</em>
+                </span>
+              </li>
+            </ul>
+          </div>
+          <div className="message-consent-guard" aria-label="SMS consent guard">
+            <p>{smsOptOutCount} SMS opt-out record{smsOptOutCount === 1 ? "" : "s"} active.</p>
+            <label>
+              SMS opt-out phone number
+              <input value={smsOptOutPhone} onChange={(event) => setSmsOptOutPhone(event.target.value)} placeholder="(262) 555-0101" />
+            </label>
+            <div className="message-consent-actions">
+              <button type="button" className="operations-action secondary" onClick={markSmsOptOut} disabled={!smsOptOutPhone.trim()}>
+                <ShieldCheck size={18} /> Mark SMS Opt-Out
+              </button>
+              <button type="button" className="operations-action secondary" onClick={clearSmsOptOut} disabled={!smsOptOutPhone.trim()}>
+                <CheckCircle2 size={18} /> Clear SMS Opt-Out
+              </button>
+              <button type="button" className="operations-action secondary" onClick={exportSmsConsentEvidence}>
+                <FileText size={18} /> Export Consent Evidence
+              </button>
+            </div>
+            <label>
+              Twilio inbound webhook JSON
+              <textarea rows={4} value={twilioInboundWebhookJson} onChange={(event) => setTwilioInboundWebhookJson(event.target.value)} />
+            </label>
+            <button type="button" className="operations-action secondary" onClick={applyTwilioInbound} disabled={!twilioInboundWebhookJson.trim()}>
+              <MessageCircle size={18} /> Apply Twilio Inbound
+            </button>
+            <label>
+              Twilio status callback JSON
+              <textarea rows={4} value={twilioStatusCallbackJson} onChange={(event) => setTwilioStatusCallbackJson(event.target.value)} />
+            </label>
+            <button type="button" className="operations-action secondary" onClick={applyTwilioStatus} disabled={!twilioStatusCallbackJson.trim()}>
+              <Bell size={18} /> Apply Twilio Status
+            </button>
+          </div>
+        </section>
+      </div>
       <div className="operations-two-column">
         <section className="operations-panel">
           <h2>Follow-Up Automation</h2>
           <p>{missedCount} student{missedCount === 1 ? "" : "s"} currently missed 3 classes or more.</p>
-          <button type="button" className="operations-action" onClick={sendFollowUps}>
-            <Mail size={18} /> Send Missed-Class Follow-Ups
-          </button>
+          <div className="message-automation-actions">
+            <button type="button" className="operations-action" onClick={sendFollowUps}>
+              <Mail size={18} /> Send Missed-Class Follow-Ups
+            </button>
+            <button type="button" className="operations-action secondary" onClick={queueEventReminders}>
+              <CalendarDays size={18} /> Queue Event Reminders
+            </button>
+            <button type="button" className="operations-action secondary" onClick={runAutomations}>
+              <Sparkles size={18} /> Run Text Automations
+            </button>
+            <button type="button" className="operations-action secondary" onClick={exportTextAutomationManifest}>
+              <FileText size={18} /> Export Automation Manifest
+            </button>
+          </div>
+          <div className="message-automation-history" aria-label="Text automation run history">
+            <h3>Automation Run History</h3>
+            {visibleTextAutomationRuns.length ? (
+              visibleTextAutomationRuns.map((run) => (
+                <article key={run.id} className="message-scheduled-promotion">
+                  <div>
+                    <strong>{automationRunStatusLabel(run)}</strong>
+                    {run.status === "no-due-texts" && <small>0 queued</small>}
+                    <span>{new Date(run.ranAt).toLocaleString()} · Twilio SMS · {run.relayPayloadSchemaVersion}</span>
+                  </div>
+                  <p>{automationRunBreakdownSummary(run)}</p>
+                </article>
+              ))
+            ) : (
+              <p className="operations-note">No automation runs recorded yet.</p>
+            )}
+          </div>
         </section>
+        <form className="operations-form-panel message-promotion-scheduler" onSubmit={schedulePromotion}>
+          <h2>Promotion Automation</h2>
+          <p>{activeScheduledPromotions.length} scheduled promotion{activeScheduledPromotions.length === 1 ? "" : "s"}</p>
+          <label>
+            Promotion audience
+            <select value={scheduledPromotionAudience} onChange={(event) => setScheduledPromotionAudience(event.target.value as MessageCampaign["audience"])}>
+              <option value="all-students">Students</option>
+              <option value="parents">Parents</option>
+              <option value="staff">Staff</option>
+              <option value="everyone">Everyone</option>
+            </select>
+          </label>
+          <label>
+            Promotion send date
+            <input type="date" value={scheduledPromotionDate} onChange={(event) => setScheduledPromotionDate(event.target.value)} />
+          </label>
+          <label>
+            Promotion send time
+            <input type="time" value={scheduledPromotionTime} onChange={(event) => setScheduledPromotionTime(event.target.value)} />
+          </label>
+          <label>
+            Scheduled promotion message
+            <textarea rows={4} value={scheduledPromotionMessage} onChange={(event) => setScheduledPromotionMessage(event.target.value)} />
+          </label>
+          <p className="message-sms-preflight">{scheduledPromotionSmsPreflight}</p>
+          <p className="message-sms-preflight">{scheduledPromotionOptOutPreflight}</p>
+          <button type="submit">
+            <Sparkles size={18} /> Schedule Promotion
+          </button>
+          <div className="message-scheduled-promotions" aria-label="Scheduled promotions">
+            {visibleScheduledPromotions.length ? (
+              visibleScheduledPromotions.map((campaign) => (
+                <article key={campaign.id} className="message-scheduled-promotion">
+                  <div>
+                    <strong>{campaign.title}</strong>
+                    <span>{scheduledPromotionWhenLabel(campaign)} · {messageAudienceLabel(campaign.audience)} · {scheduledPromotionStatusLabel(campaign.status)}</span>
+                  </div>
+                  <p>{campaign.body}</p>
+                  {campaign.status === "scheduled" && (
+                    <button type="button" className="operations-action secondary" onClick={() => cancelScheduledPromotion(campaign)}>
+                      <Trash2 size={16} /> Cancel
+                    </button>
+                  )}
+                </article>
+              ))
+            ) : (
+              <p className="operations-note">No scheduled promotions yet.</p>
+            )}
+          </div>
+        </form>
         <section className="operations-panel">
           <h2>Delivery Queue</h2>
           <p>{queuedCount} text{queuedCount === 1 ? "" : "s"} waiting to be sent.</p>
           <button type="button" className="operations-action" onClick={sendQueue} disabled={!queuedCount}>
             <Send size={18} /> Send Queued Texts
           </button>
+          <button type="button" className="operations-action secondary" onClick={exportTwilioRelayPayload} disabled={!queuedCount}>
+            <FileText size={18} /> Export Twilio Relay JSON
+          </button>
+          <label className="message-relay-endpoint-input">
+            Private Twilio relay URL
+            <input
+              type="url"
+              value={twilioRelayEndpoint}
+              onChange={(event) => updateTwilioRelayEndpoint(event.target.value)}
+              placeholder="https://relay.example.com/api/messages/send"
+            />
+          </label>
+          <button type="button" className="operations-action secondary" onClick={sendToTwilioRelay} disabled={!queuedCount || !twilioRelayEndpoint.trim() || isTwilioRelaySending}>
+            <Server size={18} /> {isTwilioRelaySending ? "Sending to Relay..." : "Send to Twilio Relay"}
+          </button>
           {staleQueuedCount > 0 && (
             <button type="button" className="operations-action secondary" onClick={clearStaleTexts}>
               <Trash2 size={18} /> Clear Stale Texts
             </button>
           )}
+          <label className="message-relay-results-input">
+            Twilio relay results JSON
+            <textarea rows={4} value={twilioRelayResultsJson} onChange={(event) => setTwilioRelayResultsJson(event.target.value)} />
+          </label>
+          <button type="button" className="operations-action secondary" onClick={applyTwilioResults} disabled={!twilioRelayResultsJson.trim()}>
+            <CheckCircle2 size={18} /> Apply Twilio Results
+          </button>
+          <p className="operations-note">Relay export contains only deliverable queued texts and is designed for a private Twilio server endpoint with manager auth.</p>
         </section>
         <form className="operations-form-panel" onSubmit={sendMarketing}>
           <h2>Marketing Tool</h2>
           <label>
+            Audience
+            <select value={marketingAudience} onChange={(event) => setMarketingAudience(event.target.value as MessageCampaign["audience"])}>
+              <option value="all-students">Students</option>
+              <option value="parents">Parents</option>
+              <option value="staff">Staff</option>
+              <option value="everyone">Everyone</option>
+            </select>
+          </label>
+          <label>
             Marketing message
             <textarea rows={4} value={marketingMessage} onChange={(event) => setMarketingMessage(event.target.value)} />
           </label>
+          <div className="message-audience-preview" aria-label="Selected text audience delivery preview">
+            <strong>Delivery preview: {marketingAudiencePreview.total} contact{marketingAudiencePreview.total === 1 ? "" : "s"} ready</strong>
+            <div>
+              <span>Students {marketingAudiencePreview.students}</span>
+              <span>Parents {marketingAudiencePreview.parents}</span>
+              <span>Staff {marketingAudiencePreview.staff}</span>
+            </div>
+            <p>Inactive contacts, missing phones, duplicate phones, SMS opt-outs, and missing SMS consent evidence are excluded before queueing.</p>
+          </div>
+          <p className="message-sms-preflight">{marketingSmsPreflight}</p>
+          <p className="message-sms-preflight">{marketingOptOutPreflight}</p>
           <button type="submit">
             <Mail size={18} /> Send Marketing Blast
           </button>

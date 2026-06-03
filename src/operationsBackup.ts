@@ -15,12 +15,15 @@ import type {
   MessageLog,
   Order,
   ScheduledClass,
+  ScheduledTextCampaign,
   StudentCheckIn,
   StudentRecord,
   StudioClass,
   StudioEvent,
   StudyGuideFolder,
   StudyGuideMaterial,
+  TextAutomationRun,
+  TextAutomationRunKey,
   TrainingVideo,
   TrainingVideoFolder
 } from "./types";
@@ -29,6 +32,29 @@ type BackupArray<T = unknown> = readonly T[];
 type ManagedAccountBackup = Omit<ManagedAccount, "password">;
 type ChildAccountBackup = Omit<ChildAccount, "password"> & {
   hasSavedPassword?: boolean;
+};
+type TwilioComplianceSenderType = "not-set" | "10dlc" | "toll-free" | "short-code";
+type TwilioComplianceStatus = "not-started" | "pending" | "approved" | "rejected" | "not-used";
+
+export type ProductionMessagingSetupBackup = {
+  id: "production-messaging";
+  twilioRelayEndpoint?: string;
+  pushServerEndpoint?: string;
+  webPushPublicKey?: string;
+  twilioLaunchProfile?: {
+    messagingServiceSid: string;
+    smsSender: string;
+    inboundWebhookUrl: string;
+    statusCallbackBaseUrl: string;
+    relayHealthCheckUrl: string;
+    managerAuthMode: "same-site-cookie" | "server-session" | "oauth-proxy";
+    senderType: TwilioComplianceSenderType;
+    a2pBrandStatus: TwilioComplianceStatus;
+    a2pCampaignStatus: TwilioComplianceStatus;
+    tollFreeVerificationStatus: TwilioComplianceStatus;
+    complianceNotes: string;
+    savedAt?: string;
+  };
 };
 
 export type OperationsBackupInput = {
@@ -40,8 +66,11 @@ export type OperationsBackupInput = {
   studioClasses: BackupArray<StudioClass>;
   scheduledClasses: BackupArray<ScheduledClass>;
   messageCampaigns: BackupArray<MessageCampaign>;
+  scheduledTextCampaigns: BackupArray<ScheduledTextCampaign>;
   messageLogs: BackupArray<MessageLog>;
+  automationRuns: BackupArray<TextAutomationRun>;
   directMessages: BackupArray<DirectMessage>;
+  messagingSetup: BackupArray<ProductionMessagingSetupBackup>;
   studioEvents: BackupArray<StudioEvent>;
   merchandiseItems: BackupArray<MerchandiseItem>;
   checkIns: BackupArray<StudentCheckIn>;
@@ -94,8 +123,11 @@ const backupSections: Omit<OperationsBackupSection, "count">[] = [
   { id: "scheduledClasses", label: "Scheduled Classes", shortLabel: "scheduled classes", storageKey: "chos.operations.schedule.v1" },
   { id: "studioEvents", label: "Studio Events", shortLabel: "events", storageKey: "chos.operations.events.v1" },
   { id: "messageCampaigns", label: "Message Campaigns", shortLabel: "campaigns", storageKey: "chos.operations.campaigns.v1" },
+  { id: "scheduledTextCampaigns", label: "Scheduled Promotions", shortLabel: "scheduled promotions", storageKey: "chos.operations.scheduledCampaigns.v1" },
   { id: "messageLogs", label: "Text Logs", shortLabel: "text logs", storageKey: "chos.operations.messages.v1" },
+  { id: "automationRuns", label: "Text Automation Runs", shortLabel: "automation runs", storageKey: "chos.operations.automationRuns.v1" },
   { id: "directMessages", label: "Direct Messages", shortLabel: "direct messages", storageKey: "chos.operations.directMessages.v1" },
+  { id: "messagingSetup", label: "Production Messaging Setup", shortLabel: "messaging setup", storageKey: "chos.operations.messagingSetup.v1" },
   { id: "merchandiseItems", label: "Merchandise", shortLabel: "merchandise items", storageKey: "chos.operations.merchandise.v1" },
   { id: "checkIns", label: "Check-ins", shortLabel: "check-ins", storageKey: "chos.operations.checkins.v1" },
   { id: "trainingVideoFolders", label: "Video Folders", shortLabel: "video folders", storageKey: "chos.operations.videoFolders.v1" },
@@ -108,7 +140,7 @@ const backupSections: Omit<OperationsBackupSection, "count">[] = [
   { id: "leadReviews", label: "Lead Reviews", shortLabel: "lead reviews", storageKey: "chos.operations.leadReviews.v1" }
 ];
 
-const optionalRestoreSectionIds = new Set<keyof OperationsBackupInput>(["leadReviews"]);
+const optionalRestoreSectionIds = new Set<keyof OperationsBackupInput>(["leadReviews", "scheduledTextCampaigns", "messagingSetup", "automationRuns"]);
 
 const idBackedBackupSectionIds = new Set<keyof OperationsBackupInput>([
   "managedAccounts",
@@ -117,8 +149,11 @@ const idBackedBackupSectionIds = new Set<keyof OperationsBackupInput>([
   "studioClasses",
   "scheduledClasses",
   "messageCampaigns",
+  "scheduledTextCampaigns",
   "messageLogs",
+  "automationRuns",
   "directMessages",
+  "messagingSetup",
   "studioEvents",
   "merchandiseItems",
   "checkIns",
@@ -155,6 +190,11 @@ const optionalStudentStringFields = [
   "guardianName",
   "guardianPhone",
   "guardianEmail",
+  "studentSmsOptOutAt",
+  "guardianSmsOptOutAt",
+  "studentSmsConsentUpdatedAt",
+  "guardianSmsConsentUpdatedAt",
+  "smsConsentUpdatedAt",
   "emergencyContactName",
   "emergencyContactRelationship",
   "emergencyContactPhone",
@@ -169,6 +209,8 @@ const optionalStudentStringFields = [
 const requiredStudioEventStringFields = ["title", "date", "time"] as const;
 const requiredMessageLogStringFields = ["recipientName", "recipientPhone", "body", "createdAt"] as const;
 const requiredMessageCampaignStringFields = ["title", "body", "createdAt"] as const;
+const requiredScheduledTextCampaignStringFields = ["title", "body", "scheduledFor", "createdAt"] as const;
+const optionalScheduledTextCampaignStringFields = ["scheduledTime", "queuedAt", "campaignId"] as const;
 const optionalMessageLogStringFields = ["sentAt", "campaignId"] as const;
 const requiredDirectMessageStringFields = ["threadId", "senderId", "senderName", "recipientId", "recipientName", "body", "createdAt"] as const;
 const requiredCheckInStringFields = ["studentId", "studentName", "date", "beltRank"] as const;
@@ -187,6 +229,9 @@ const requiredStudyGuideFolderStringFields = ["name", "subject", "createdAt"] as
 const requiredStudyGuideMaterialStringFields = ["folderId", "title", "fileName", "mimeType", "createdAt"] as const;
 const optionalStudyGuideFolderStringFields = ["parentId", "description"] as const;
 const optionalStudyGuideMaterialStringFields = ["description"] as const;
+const optionalMessagingSetupStringFields = ["twilioRelayEndpoint", "pushServerEndpoint", "webPushPublicKey"] as const;
+const requiredTwilioLaunchProfileStringFields = ["messagingServiceSid", "smsSender", "inboundWebhookUrl", "statusCallbackBaseUrl", "relayHealthCheckUrl", "complianceNotes"] as const;
+const optionalTwilioLaunchProfileStringFields = ["savedAt"] as const;
 
 type BackupCartItemRecord = Record<(typeof requiredCartItemStringFields)[number], string> & {
   quantity: number;
@@ -196,15 +241,37 @@ const supportedAccountRoles = new Set<AccountRole>(["guardian", "student", "staf
 const supportedManagedAccountRoles = new Set<ManagedAccount["role"]>(["staff", "student"]);
 const supportedManagedAccountStatuses = new Set<ManagedAccount["status"]>(["active", "inactive"]);
 const supportedMessageLogKinds = new Set<MessageLog["kind"]>(["welcome", "reminder", "follow-up", "marketing", "celebration", "profile-update"]);
-const supportedMessageLogStatuses = new Set<MessageLog["status"]>(["queued", "sent"]);
-const supportedMessageCampaignAudiences = new Set<MessageCampaign["audience"]>(["all-students", "missed-classes", "new-students"]);
+const supportedMessageLogStatuses = new Set<MessageLog["status"]>(["queued", "sent", "failed"]);
+const supportedMessageCampaignAudiences = new Set<MessageCampaign["audience"]>(["all-students", "parents", "staff", "everyone", "missed-classes", "new-students"]);
+const supportedScheduledTextCampaignStatuses = new Set<ScheduledTextCampaign["status"]>(["scheduled", "queued", "canceled"]);
 const supportedStudioEventAudiences = new Set<StudioEvent["audience"]>(["students", "families", "public"]);
 const supportedLeadReviewKinds = new Set<LeadReview["kind"]>(["booking", "contact"]);
+const supportedTextAutomationRunStatuses = new Set<TextAutomationRun["status"]>(["queued", "no-due-texts"]);
+const supportedTextAutomationRunKeys = new Set<TextAutomationRunKey>([
+  "missedClassFollowUps",
+  "attendanceGapCheckIns",
+  "trialConversionFollowUps",
+  "newStudentCheckIns",
+  "pausedStudentReactivationFollowUps",
+  "celebrationOutreach",
+  "profileUpdateRequests",
+  "classReminders",
+  "milestoneEncouragements",
+  "beltTestInvites",
+  "eventReminders",
+  "scheduledPromotions"
+]);
+const supportedTwilioManagerAuthModes = new Set<NonNullable<ProductionMessagingSetupBackup["twilioLaunchProfile"]>["managerAuthMode"]>(["same-site-cookie", "server-session", "oauth-proxy"]);
+const supportedTwilioComplianceSenderTypes = new Set<TwilioComplianceSenderType>(["not-set", "10dlc", "toll-free", "short-code"]);
+const supportedTwilioComplianceStatuses = new Set<TwilioComplianceStatus>(["not-started", "pending", "approved", "rejected", "not-used"]);
 const supportedClassWeekdays = new Set<ClassWeekday>([0, 1, 2, 3, 4, 5, 6]);
 const builtInLoginIdentities = new Set(["manager123@chos.prototype", "student123@chos.prototype", "parent123@chos.prototype", "guest@chos.prototype"]);
 const builtInGuardianLoginIdentities = new Set(["parent123@chos.prototype"]);
 const builtInLoginUsernames = new Set(["manager123", "student123", "parent123"]);
 const allowedMerchandiseImageMimeTypes = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"]);
+const productionMessagingSetupId = "production-messaging";
+const messagingSetupCredentialFieldPattern = /(?:TWILIO_|AUTH_TOKEN|ACCOUNT_SID|API_KEY|API_SECRET|SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|VAPID_PRIVATE_KEY)/i;
+const rawPushSubscriptionFieldPattern = /^(?:pushSubscriptionJson|pushSubscriptionEndpoint|subscription|subscriptionEndpoint|endpoint|keys|p256dh|auth)$/i;
 const supportedManagerAccessKeys = new Set<ManagerAccessKey>([
   "dashboard",
   "messages",
@@ -412,7 +479,7 @@ function sanitizeDirectMessagesForBackup(messages: readonly DirectMessage[], act
   });
 }
 
-function sanitizeMessageLogForBackup(messageLog: MessageLog, campaignIds: Set<string>, students: readonly StudentRecord[]) {
+function sanitizeMessageLogForBackup(messageLog: MessageLog, campaignIds: Set<string>, students: readonly StudentRecord[], managedAccounts: readonly ManagedAccount[]) {
   const id = cleanBackupString(messageLog.id);
   const kind = cleanBackupString(messageLog.kind);
   const recipientName = cleanBackupString(messageLog.recipientName);
@@ -447,14 +514,14 @@ function sanitizeMessageLogForBackup(messageLog: MessageLog, campaignIds: Set<st
     ...(sentAt ? { sentAt } : {}),
     ...(campaignId && campaignIds.has(campaignId) ? { campaignId } : {})
   };
-  if (sanitizedLog.status === "queued" && !isRestoredQueuedMessageDeliverable(sanitizedLog, students)) return undefined;
+  if (sanitizedLog.status === "queued" && !isRestoredQueuedMessageDeliverable(sanitizedLog, students, managedAccounts)) return undefined;
   return sanitizedLog;
 }
 
-function sanitizeMessageLogsForBackup(messageLogs: readonly MessageLog[], campaignIds: Set<string>, students: readonly StudentRecord[]) {
+function sanitizeMessageLogsForBackup(messageLogs: readonly MessageLog[], campaignIds: Set<string>, students: readonly StudentRecord[], managedAccounts: readonly ManagedAccount[]) {
   const seenMessageLogIds = new Set<string>();
   return messageLogs.flatMap((messageLog) => {
-    const sanitizedLog = sanitizeMessageLogForBackup(messageLog, campaignIds, students);
+    const sanitizedLog = sanitizeMessageLogForBackup(messageLog, campaignIds, students, managedAccounts);
     if (!sanitizedLog || seenMessageLogIds.has(sanitizedLog.id)) return [];
     seenMessageLogIds.add(sanitizedLog.id);
     return [sanitizedLog];
@@ -485,6 +552,98 @@ function sanitizeMessageCampaignsForBackup(campaigns: readonly MessageCampaign[]
     if (!sanitizedCampaign || seenCampaignIds.has(sanitizedCampaign.id)) return [];
     seenCampaignIds.add(sanitizedCampaign.id);
     return [sanitizedCampaign];
+  });
+}
+
+function sanitizeScheduledTextCampaignForBackup(campaign: ScheduledTextCampaign, messageCampaignIds: Set<string>) {
+  const id = cleanBackupString(campaign.id);
+  const title = cleanBackupString(campaign.title);
+  const body = cleanBackupString(campaign.body);
+  const audience = cleanBackupString(campaign.audience);
+  const scheduledFor = cleanBackupString(campaign.scheduledFor);
+  const status = cleanBackupString(campaign.status);
+  const createdAt = cleanBackupString(campaign.createdAt);
+  if (
+    !id ||
+    !title ||
+    !body ||
+    !supportedMessageCampaignAudiences.has(audience as MessageCampaign["audience"]) ||
+    !scheduledFor ||
+    !supportedScheduledTextCampaignStatuses.has(status as ScheduledTextCampaign["status"]) ||
+    !createdAt
+  ) {
+    return undefined;
+  }
+  const queuedAt = cleanBackupString(campaign.queuedAt);
+  const campaignId = cleanBackupString(campaign.campaignId);
+  const scheduledTime = cleanBackupString(campaign.scheduledTime);
+  if (scheduledTime && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(scheduledTime)) return undefined;
+  return {
+    ...campaign,
+    id,
+    title,
+    body,
+    audience: audience as MessageCampaign["audience"],
+    scheduledFor,
+    ...(scheduledTime ? { scheduledTime } : {}),
+    status: status as ScheduledTextCampaign["status"],
+    createdAt,
+    ...(queuedAt ? { queuedAt } : {}),
+    ...(campaignId && messageCampaignIds.has(campaignId) ? { campaignId } : {})
+  };
+}
+
+function sanitizeScheduledTextCampaignsForBackup(campaigns: readonly ScheduledTextCampaign[], messageCampaignIds: Set<string>) {
+  const seenCampaignIds = new Set<string>();
+  return campaigns.flatMap((campaign) => {
+    const sanitizedCampaign = sanitizeScheduledTextCampaignForBackup(campaign, messageCampaignIds);
+    if (!sanitizedCampaign || seenCampaignIds.has(sanitizedCampaign.id)) return [];
+    seenCampaignIds.add(sanitizedCampaign.id);
+    return [sanitizedCampaign];
+  });
+}
+
+function sanitizeTextAutomationRunBreakdown(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const seenKeys = new Set<TextAutomationRunKey>();
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const key = cleanBackupString(entry.key) as TextAutomationRunKey;
+    const label = cleanBackupString(entry.label);
+    const queued = cleanBackupNonnegativeInteger(entry.queued, 0);
+    if (!supportedTextAutomationRunKeys.has(key) || !label || seenKeys.has(key)) return [];
+    seenKeys.add(key);
+    return [{ key, label, queued }];
+  });
+}
+
+function sanitizeTextAutomationRunForBackup(run: TextAutomationRun) {
+  const id = cleanBackupString(run.id);
+  const ranAt = cleanBackupString(run.ranAt);
+  const status = cleanBackupString(run.status) as TextAutomationRun["status"];
+  if (!id || !ranAt || !supportedTextAutomationRunStatuses.has(status)) return undefined;
+  const breakdown = sanitizeTextAutomationRunBreakdown(run.breakdown);
+  const totalQueued = cleanBackupNonnegativeInteger(run.totalQueued, 0);
+  return {
+    id,
+    ranAt,
+    status,
+    totalQueued,
+    deliveryProvider: "twilio" as const,
+    deliveryChannel: "sms" as const,
+    deliveryMode: "prototype" as const,
+    relayPayloadSchemaVersion: "chos-twilio-relay.v1" as const,
+    breakdown
+  };
+}
+
+function sanitizeTextAutomationRunsForBackup(runs: readonly TextAutomationRun[]) {
+  const seenRunIds = new Set<string>();
+  return runs.flatMap((run) => {
+    const sanitizedRun = sanitizeTextAutomationRunForBackup(run);
+    if (!sanitizedRun || seenRunIds.has(sanitizedRun.id)) return [];
+    seenRunIds.add(sanitizedRun.id);
+    return [sanitizedRun];
   });
 }
 
@@ -705,6 +864,76 @@ function sanitizeCheckInsForBackup(checkIns: readonly StudentCheckIn[], studentI
 
 function cleanBackupString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeTwilioManagerAuthMode(value: unknown): NonNullable<ProductionMessagingSetupBackup["twilioLaunchProfile"]>["managerAuthMode"] {
+  return value === "server-session" || value === "oauth-proxy" ? value : "same-site-cookie";
+}
+
+function normalizeTwilioComplianceSenderType(value: unknown): TwilioComplianceSenderType {
+  return typeof value === "string" && supportedTwilioComplianceSenderTypes.has(value as TwilioComplianceSenderType) ? value as TwilioComplianceSenderType : "not-set";
+}
+
+function normalizeTwilioComplianceStatus(value: unknown): TwilioComplianceStatus {
+  return typeof value === "string" && supportedTwilioComplianceStatuses.has(value as TwilioComplianceStatus) ? value as TwilioComplianceStatus : "not-started";
+}
+
+function sanitizeTwilioLaunchProfileForBackup(value: unknown): ProductionMessagingSetupBackup["twilioLaunchProfile"] | undefined {
+  if (!isRecord(value)) return undefined;
+  const profile: NonNullable<ProductionMessagingSetupBackup["twilioLaunchProfile"]> = {
+    messagingServiceSid: cleanBackupString(value.messagingServiceSid),
+    smsSender: cleanBackupString(value.smsSender),
+    inboundWebhookUrl: cleanBackupString(value.inboundWebhookUrl),
+    statusCallbackBaseUrl: cleanBackupString(value.statusCallbackBaseUrl),
+    relayHealthCheckUrl: cleanBackupString(value.relayHealthCheckUrl),
+    managerAuthMode: normalizeTwilioManagerAuthMode(value.managerAuthMode),
+    senderType: normalizeTwilioComplianceSenderType(value.senderType),
+    a2pBrandStatus: normalizeTwilioComplianceStatus(value.a2pBrandStatus),
+    a2pCampaignStatus: normalizeTwilioComplianceStatus(value.a2pCampaignStatus),
+    tollFreeVerificationStatus: normalizeTwilioComplianceStatus(value.tollFreeVerificationStatus),
+    complianceNotes: cleanBackupString(value.complianceNotes),
+    ...(cleanBackupString(value.savedAt) ? { savedAt: cleanBackupString(value.savedAt) } : {})
+  };
+  const hasUsefulProfileValue = Boolean(
+    profile.messagingServiceSid ||
+    profile.smsSender ||
+    profile.inboundWebhookUrl ||
+    profile.statusCallbackBaseUrl ||
+    profile.relayHealthCheckUrl ||
+    profile.complianceNotes ||
+    profile.savedAt ||
+    profile.senderType !== "not-set" ||
+    profile.a2pBrandStatus !== "not-started" ||
+    profile.a2pCampaignStatus !== "not-started" ||
+    profile.tollFreeVerificationStatus !== "not-started"
+  );
+  return hasUsefulProfileValue ? profile : undefined;
+}
+
+function sanitizeProductionMessagingSetupForBackup(entry: unknown): ProductionMessagingSetupBackup | undefined {
+  if (!isRecord(entry)) return undefined;
+  const twilioRelayEndpoint = cleanBackupString(entry.twilioRelayEndpoint);
+  const pushServerEndpoint = cleanBackupString(entry.pushServerEndpoint);
+  const webPushPublicKeyCandidate = cleanBackupString(entry.webPushPublicKey);
+  const webPushPublicKey = stringLooksLikeRawPushSubscription(webPushPublicKeyCandidate) ? "" : webPushPublicKeyCandidate;
+  const twilioLaunchProfile = sanitizeTwilioLaunchProfileForBackup(entry.twilioLaunchProfile);
+  const hasUsefulSetup = Boolean(twilioRelayEndpoint || pushServerEndpoint || webPushPublicKey || twilioLaunchProfile);
+  if (!hasUsefulSetup) return undefined;
+  return {
+    id: productionMessagingSetupId,
+    ...(twilioRelayEndpoint ? { twilioRelayEndpoint } : {}),
+    ...(pushServerEndpoint ? { pushServerEndpoint } : {}),
+    ...(webPushPublicKey ? { webPushPublicKey } : {}),
+    ...(twilioLaunchProfile ? { twilioLaunchProfile } : {})
+  };
+}
+
+function sanitizeProductionMessagingSetupListForBackup(entries: readonly unknown[]) {
+  const setup = entries.flatMap((entry) => {
+    const sanitizedSetup = sanitizeProductionMessagingSetupForBackup(entry);
+    return sanitizedSetup ? [sanitizedSetup] : [];
+  })[0];
+  return setup ? [setup] : [];
 }
 
 function sanitizeTrainingVideoFolderForBackup(folder: TrainingVideoFolder) {
@@ -967,6 +1196,7 @@ export function buildOperationsBackupSnapshot(input: OperationsBackupInput, expo
   const managedAccounts = sanitizeManagedAccountsForBackup(input.managedAccounts, studentIds, activeStudentIds);
   const messageCampaigns = sanitizeMessageCampaignsForBackup(input.messageCampaigns);
   const campaignIds = new Set(messageCampaigns.map((campaign) => campaign.id));
+  const scheduledTextCampaigns = sanitizeScheduledTextCampaignsForBackup(input.scheduledTextCampaigns, campaignIds);
   const accountsBeforeChildCollisionCheck = sanitizeRegisteredAccountsForBackup(input.accounts, customLoginUsernamesForBackup(managedAccounts));
   const guardianParentIdentitiesBeforeChildCollisionCheck = guardianParentIdentitiesForBackup(accountsBeforeChildCollisionCheck);
   const seenChildUsernamesBeforeAccountCollisionCheck = customLoginUsernamesForBackup(managedAccounts);
@@ -991,8 +1221,11 @@ export function buildOperationsBackupSnapshot(input: OperationsBackupInput, expo
     studioClasses: sanitizeStudioClassesForBackup(input.studioClasses),
     scheduledClasses: sanitizeScheduledClassesForBackup(input.scheduledClasses, activeStudentIds),
     messageCampaigns,
-    messageLogs: sanitizeMessageLogsForBackup(input.messageLogs, campaignIds, students),
+    scheduledTextCampaigns,
+    messageLogs: sanitizeMessageLogsForBackup(input.messageLogs, campaignIds, students, input.managedAccounts),
+    automationRuns: sanitizeTextAutomationRunsForBackup(input.automationRuns ?? []),
     directMessages: sanitizeDirectMessagesForBackup(input.directMessages, activeStudentIds),
+    messagingSetup: sanitizeProductionMessagingSetupListForBackup(input.messagingSetup ?? []),
     studioEvents: sanitizeStudioEventsForBackup(input.studioEvents),
     merchandiseItems: sanitizeMerchandiseItemsForBackup(input.merchandiseItems),
     checkIns: sanitizeCheckInsForBackup(input.checkIns, studentIds),
@@ -1167,6 +1400,7 @@ function isRestoredDirectMessageParticipantAvailable(participantId: string, acti
 
 function normalizeMessagePhone(value: string) {
   const digits = value.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
   return digits || value.trim().toLowerCase();
 }
 
@@ -1174,21 +1408,139 @@ function restoredStudentFullName(student: Pick<StudentRecord, "firstName" | "las
   return `${student.firstName} ${student.lastName}`.trim();
 }
 
-function isRestoredQueuedMessageDeliverable(message: Pick<MessageLog, "recipientName" | "recipientPhone">, students: readonly StudentRecord[]) {
+function isRestoredQueuedMessageDeliverable(
+  message: Pick<MessageLog, "recipientName" | "recipientPhone" | "recipientRole" | "recipientId">,
+  students: readonly StudentRecord[],
+  managedAccounts: readonly ManagedAccount[] = []
+) {
   const recipientName = message.recipientName.trim().toLowerCase();
   const recipientPhone = normalizeMessagePhone(message.recipientPhone);
   if (!recipientName || !recipientPhone) return false;
-  return students.some(
+  if (message.recipientRole === "staff") {
+    return managedAccounts.some(
+      (account) =>
+        account.role === "staff" &&
+        account.status === "active" &&
+        (message.recipientId === account.id || account.displayName.trim().toLowerCase() === recipientName) &&
+        normalizeMessagePhone(account.phone ?? "") === recipientPhone
+    );
+  }
+  if (message.recipientRole === "parent") {
+    return students.some((student) => {
+      if (!isCurrentRestoredStudent(student)) return false;
+      const parentId = `parent-${student.id}`;
+      const guardianName = (student.guardianName?.trim() || `${restoredStudentFullName(student)} Parent/Guardian`).toLowerCase();
+      return (
+        (message.recipientId === parentId || guardianName === recipientName) &&
+        normalizeMessagePhone(student.guardianPhone ?? "") === recipientPhone
+      );
+    });
+  }
+  const studentMatch = students.some(
     (student) =>
       isCurrentRestoredStudent(student) &&
       restoredStudentFullName(student).trim().toLowerCase() === recipientName &&
       normalizeMessagePhone(student.phone) === recipientPhone
+  );
+  if (message.recipientRole === "student") return studentMatch;
+  return (
+    studentMatch ||
+    students.some(
+      (student) =>
+        isCurrentRestoredStudent(student) &&
+        (student.guardianName?.trim().toLowerCase() || "") === recipientName &&
+        normalizeMessagePhone(student.guardianPhone ?? "") === recipientPhone
+    ) ||
+    managedAccounts.some(
+      (account) =>
+        account.role === "staff" &&
+        account.status === "active" &&
+        account.displayName.trim().toLowerCase() === recipientName &&
+        normalizeMessagePhone(account.phone ?? "") === recipientPhone
+    )
   );
 }
 
 function hasDuplicateCheckInDatePairs(checkIns: readonly Pick<StudentCheckIn, "studentId" | "date">[]) {
   const pairs = checkIns.map((checkIn) => `${checkIn.studentId.trim()}::${checkIn.date.trim()}`);
   return new Set(pairs).size !== pairs.length;
+}
+
+function hasMessagingSetupCredentialLikeField(value: unknown, seen = new Set<object>()): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) return value.some((item) => hasMessagingSetupCredentialLikeField(item, seen));
+  return Object.entries(value as Record<string, unknown>).some(
+    ([key, item]) => messagingSetupCredentialFieldPattern.test(key) || hasMessagingSetupCredentialLikeField(item, seen)
+  );
+}
+
+function hasRawPushSubscriptionMaterial(value: unknown, seen = new Set<object>()): boolean {
+  if (typeof value === "string") return stringLooksLikeRawPushSubscription(value);
+  if (!value || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) return value.some((item) => hasRawPushSubscriptionMaterial(item, seen));
+  return Object.entries(value as Record<string, unknown>).some(
+    ([key, item]) => rawPushSubscriptionFieldPattern.test(key) || hasRawPushSubscriptionMaterial(item, seen)
+  );
+}
+
+function stringLooksLikeRawPushSubscription(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || !/(?:endpoint|p256dh|PushSubscription|"keys"|"auth")/i.test(trimmed)) return false;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return hasRawPushSubscriptionMaterial(parsed);
+  } catch {
+    return /endpoint/i.test(trimmed) && /p256dh/i.test(trimmed) && /auth/i.test(trimmed);
+  }
+}
+
+function hasInvalidTwilioLaunchProfile(profile: Record<string, unknown>) {
+  return (
+    requiredTwilioLaunchProfileStringFields.some((field) => typeof profile[field] !== "string" || hasPaddedStringField(profile, field)) ||
+    optionalTwilioLaunchProfileStringFields.some((field) => hasInvalidOptionalStringField(profile, field)) ||
+    typeof profile.managerAuthMode !== "string" ||
+    !supportedTwilioManagerAuthModes.has(profile.managerAuthMode as NonNullable<ProductionMessagingSetupBackup["twilioLaunchProfile"]>["managerAuthMode"]) ||
+    typeof profile.senderType !== "string" ||
+    !supportedTwilioComplianceSenderTypes.has(profile.senderType as TwilioComplianceSenderType) ||
+    typeof profile.a2pBrandStatus !== "string" ||
+    !supportedTwilioComplianceStatuses.has(profile.a2pBrandStatus as TwilioComplianceStatus) ||
+    typeof profile.a2pCampaignStatus !== "string" ||
+    !supportedTwilioComplianceStatuses.has(profile.a2pCampaignStatus as TwilioComplianceStatus) ||
+    typeof profile.tollFreeVerificationStatus !== "string" ||
+    !supportedTwilioComplianceStatuses.has(profile.tollFreeVerificationStatus as TwilioComplianceStatus)
+  );
+}
+
+function validateProductionMessagingSetupEntries(entries: readonly Record<string, unknown>[]) {
+  if (entries.length > 1) {
+    throw new Error("messagingSetup entries must contain a single production messaging setup record in the operations backup.");
+  }
+  if (entries.some((entry) => entry.id !== productionMessagingSetupId)) {
+    throw new Error("messagingSetup entries must use the production-messaging id in the operations backup.");
+  }
+  if (entries.some((entry) => hasMessagingSetupCredentialLikeField(entry))) {
+    throw new Error("messagingSetup entries must not include provider secrets in the operations backup.");
+  }
+  if (entries.some((entry) => hasRawPushSubscriptionMaterial(entry))) {
+    throw new Error("messagingSetup entries must not include raw push subscription material in the operations backup.");
+  }
+  if (entries.some((entry) => optionalMessagingSetupStringFields.some((field) => hasInvalidOptionalStringField(entry, field)))) {
+    throw new Error("messagingSetup entries must include valid portable endpoint fields in the operations backup.");
+  }
+  if (entries.some((entry) => entry.twilioLaunchProfile !== undefined && !isRecord(entry.twilioLaunchProfile))) {
+    throw new Error("messagingSetup entries must include valid Twilio launch profile metadata in the operations backup.");
+  }
+  if (
+    entries.some((entry) =>
+      isRecord(entry.twilioLaunchProfile) && hasInvalidTwilioLaunchProfile(entry.twilioLaunchProfile)
+    )
+  ) {
+    throw new Error("messagingSetup entries must include valid Twilio launch profile metadata in the operations backup.");
+  }
 }
 
 function readBackupArray(data: Record<string, unknown>, id: keyof OperationsBackupInput) {
@@ -1345,6 +1697,29 @@ function readBackupArray(data: Record<string, unknown>, id: keyof OperationsBack
     throw new Error("messageLogs entries must use supported delivery statuses in the operations backup.");
   }
   if (
+    id === "automationRuns" &&
+    entries.some((entry) =>
+      hasInvalidRequiredStringField(entry, "ranAt") ||
+      typeof entry.status !== "string" ||
+      !supportedTextAutomationRunStatuses.has(entry.status as TextAutomationRun["status"]) ||
+      !isNonnegativeFiniteNumber(entry.totalQueued) ||
+      entry.deliveryProvider !== "twilio" ||
+      entry.deliveryChannel !== "sms" ||
+      entry.deliveryMode !== "prototype" ||
+      entry.relayPayloadSchemaVersion !== "chos-twilio-relay.v1" ||
+      !Array.isArray(entry.breakdown) ||
+      entry.breakdown.some((item: unknown) =>
+        !isRecord(item) ||
+        typeof item.key !== "string" ||
+        !supportedTextAutomationRunKeys.has(item.key as TextAutomationRunKey) ||
+        hasInvalidRequiredStringField(item, "label") ||
+        !isNonnegativeFiniteNumber(item.queued)
+      )
+    )
+  ) {
+    throw new Error("automationRuns entries must include valid Twilio scheduler audit fields in the operations backup.");
+  }
+  if (
     id === "messageCampaigns" &&
     entries.some((entry) =>
       requiredMessageCampaignStringFields.some((field) => hasInvalidRequiredStringField(entry, field)) ||
@@ -1353,6 +1728,20 @@ function readBackupArray(data: Record<string, unknown>, id: keyof OperationsBack
     )
   ) {
     throw new Error("messageCampaigns entries must include valid campaign fields in the operations backup.");
+  }
+  if (
+    id === "scheduledTextCampaigns" &&
+    entries.some((entry) =>
+      requiredScheduledTextCampaignStringFields.some((field) => hasInvalidRequiredStringField(entry, field)) ||
+      optionalScheduledTextCampaignStringFields.some((field) => hasInvalidOptionalStringField(entry, field)) ||
+      (entry.scheduledTime !== undefined && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(entry.scheduledTime.trim())) ||
+      typeof entry.audience !== "string" ||
+      !supportedMessageCampaignAudiences.has(entry.audience as MessageCampaign["audience"]) ||
+      typeof entry.status !== "string" ||
+      !supportedScheduledTextCampaignStatuses.has(entry.status as ScheduledTextCampaign["status"])
+    )
+  ) {
+    throw new Error("scheduledTextCampaigns entries must include valid scheduled promotion fields in the operations backup.");
   }
   if (
     id === "directMessages" &&
@@ -1468,6 +1857,9 @@ function readBackupArray(data: Record<string, unknown>, id: keyof OperationsBack
     entries.some((entry) => entry.role === "student" && Array.isArray(entry.access) && entry.access.length > 0)
   ) {
     throw new Error("Student managedAccounts entries cannot include staff access in the operations backup.");
+  }
+  if (id === "messagingSetup") {
+    validateProductionMessagingSetupEntries(entries as Record<string, unknown>[]);
   }
   return entries;
 }
@@ -1633,8 +2025,11 @@ function validateRestoredReferences(data: OperationsBackupData) {
   if (hasBrokenOptionalReference(data.messageLogs, (messageLog) => messageLog.campaignId, campaignIds)) {
     throw new Error("messageLogs entries can only reference restored message campaigns in the operations backup.");
   }
-  if (data.messageLogs.some((messageLog) => messageLog.status === "queued" && !isRestoredQueuedMessageDeliverable(messageLog, data.students))) {
-    throw new Error("Queued messageLogs entries can only reference restored active student recipients in the operations backup.");
+  if (hasBrokenOptionalReference(data.scheduledTextCampaigns, (campaign) => campaign.campaignId, campaignIds)) {
+    throw new Error("scheduledTextCampaigns entries can only reference restored message campaigns in the operations backup.");
+  }
+  if (data.messageLogs.some((messageLog) => messageLog.status === "queued" && !isRestoredQueuedMessageDeliverable(messageLog, data.students, data.managedAccounts as ManagedAccount[]))) {
+    throw new Error("Queued messageLogs entries can only reference restored active recipients in the operations backup.");
   }
   if (
     data.directMessages.some((message) =>
@@ -1673,8 +2068,11 @@ export function parseOperationsBackupSnapshot(raw: string): OperationsRestoreSna
     studioClasses: readBackupArray(parsed.data, "studioClasses") as OperationsBackupData["studioClasses"],
     scheduledClasses: readBackupArray(parsed.data, "scheduledClasses") as OperationsBackupData["scheduledClasses"],
     messageCampaigns: readBackupArray(parsed.data, "messageCampaigns") as OperationsBackupData["messageCampaigns"],
+    scheduledTextCampaigns: readBackupArray(parsed.data, "scheduledTextCampaigns") as OperationsBackupData["scheduledTextCampaigns"],
     messageLogs: readBackupArray(parsed.data, "messageLogs") as OperationsBackupData["messageLogs"],
+    automationRuns: readBackupArray(parsed.data, "automationRuns") as OperationsBackupData["automationRuns"],
     directMessages: readBackupArray(parsed.data, "directMessages") as OperationsBackupData["directMessages"],
+    messagingSetup: readBackupArray(parsed.data, "messagingSetup") as OperationsBackupData["messagingSetup"],
     studioEvents: readBackupArray(parsed.data, "studioEvents") as OperationsBackupData["studioEvents"],
     merchandiseItems: readBackupArray(parsed.data, "merchandiseItems") as OperationsBackupData["merchandiseItems"],
     checkIns: readBackupArray(parsed.data, "checkIns") as OperationsBackupData["checkIns"],

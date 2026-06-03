@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { buildOperationsBackupSnapshot, parseOperationsBackupSnapshot, type OperationsBackupInput } from "./operationsBackup";
 
-function makeBackupInput(overrides: Partial<OperationsBackupInput> = {}): OperationsBackupInput {
+type BackupInputOverrides = Omit<Partial<OperationsBackupInput>, "automationRuns" | "messagingSetup"> & {
+  automationRuns?: readonly Record<string, unknown>[];
+  messagingSetup?: readonly Record<string, unknown>[];
+};
+
+function makeBackupInput(overrides: BackupInputOverrides = {}): OperationsBackupInput {
   return {
     accounts: [],
     accountRoles: [],
@@ -11,8 +16,11 @@ function makeBackupInput(overrides: Partial<OperationsBackupInput> = {}): Operat
     studioClasses: [],
     scheduledClasses: [],
     messageCampaigns: [],
+    scheduledTextCampaigns: [],
     messageLogs: [],
     directMessages: [],
+    automationRuns: [],
+    messagingSetup: [],
     studioEvents: [],
     merchandiseItems: [],
     checkIns: [],
@@ -25,7 +33,7 @@ function makeBackupInput(overrides: Partial<OperationsBackupInput> = {}): Operat
     contacts: [],
     leadReviews: [],
     ...overrides
-  };
+  } as unknown as OperationsBackupInput;
 }
 
 function makeBackupPayload(overrides: Record<string, unknown>) {
@@ -151,6 +159,217 @@ describe("buildOperationsBackupSnapshot", () => {
     delete legacySnapshot.data.leadReviews;
 
     expect(parseOperationsBackupSnapshot(JSON.stringify(legacySnapshot)).data.leadReviews).toEqual([]);
+  });
+
+  it("exports portable messaging setup without provider secrets or raw push subscription key material", () => {
+    const snapshot = buildOperationsBackupSnapshot(
+      makeBackupInput({
+        messagingSetup: [
+          {
+            id: " production-messaging ",
+            twilioRelayEndpoint: " https://relay.example.test/api/messages/twilio ",
+            pushServerEndpoint: " https://push.example.test/api/push/subscriptions ",
+            webPushPublicKey: " BO_PUBLIC_WEB_PUSH_KEY ",
+            pushSubscriptionEndpoint: "https://fcm.googleapis.com/fcm/send/device-1",
+            pushSubscriptionJson: JSON.stringify({
+              endpoint: "https://fcm.googleapis.com/fcm/send/device-1",
+              keys: {
+                p256dh: "raw-device-p256dh",
+                auth: "raw-device-auth"
+              }
+            }),
+            TWILIO_AUTH_TOKEN: "secret-auth-token",
+            VAPID_PRIVATE_KEY: "secret-vapid-private-key",
+            twilioLaunchProfile: {
+              messagingServiceSid: " MG1234567890abcdef ",
+              smsSender: " +12625550100 ",
+              inboundWebhookUrl: " https://relay.example.test/api/messages/inbound ",
+              statusCallbackBaseUrl: " https://relay.example.test/api/messages/status ",
+              relayHealthCheckUrl: " https://relay.example.test/api/messages/health ",
+              managerAuthMode: "server-session",
+              senderType: "10dlc",
+              a2pBrandStatus: "approved",
+              a2pCampaignStatus: "approved",
+              tollFreeVerificationStatus: "not-used",
+              complianceNotes: " A2P 10DLC path approved for studio outreach. ",
+              savedAt: " 2026-06-03T10:15:00.000Z "
+            }
+          }
+        ]
+      }),
+      "2026-06-03T12:00:00.000Z"
+    );
+    const messagingSetup = (snapshot.data as unknown as { messagingSetup?: readonly Record<string, unknown>[] }).messagingSetup;
+
+    expect(messagingSetup).toEqual([
+      expect.objectContaining({
+        id: "production-messaging",
+        twilioRelayEndpoint: "https://relay.example.test/api/messages/twilio",
+        pushServerEndpoint: "https://push.example.test/api/push/subscriptions",
+        webPushPublicKey: "BO_PUBLIC_WEB_PUSH_KEY",
+        twilioLaunchProfile: expect.objectContaining({
+          messagingServiceSid: "MG1234567890abcdef",
+          smsSender: "+12625550100",
+          inboundWebhookUrl: "https://relay.example.test/api/messages/inbound",
+          statusCallbackBaseUrl: "https://relay.example.test/api/messages/status",
+          relayHealthCheckUrl: "https://relay.example.test/api/messages/health",
+          managerAuthMode: "server-session",
+          senderType: "10dlc",
+          a2pBrandStatus: "approved",
+          a2pCampaignStatus: "approved",
+          tollFreeVerificationStatus: "not-used",
+          complianceNotes: "A2P 10DLC path approved for studio outreach.",
+          savedAt: "2026-06-03T10:15:00.000Z"
+        })
+      })
+    ]);
+    expect(snapshot.sections.find((section) => section.id === "messagingSetup")).toEqual(expect.objectContaining({
+      label: "Production Messaging Setup",
+      shortLabel: "messaging setup",
+      count: 1
+    }));
+    expect(JSON.stringify(messagingSetup)).not.toMatch(/TWILIO_AUTH_TOKEN|VAPID_PRIVATE_KEY|secret-auth-token|secret-vapid-private-key|pushSubscriptionJson|pushSubscriptionEndpoint|raw-device-p256dh|raw-device-auth|fcm\.googleapis/i);
+  });
+
+  it("rejects restored production messaging setup that contains provider secrets or raw push subscription material", () => {
+    expect(() => parseOperationsBackupSnapshot(JSON.stringify(
+      makeBackupPayload({
+        messagingSetup: [
+          {
+            id: "production-messaging",
+            twilioRelayEndpoint: "https://relay.example.test/api/messages/twilio",
+            TWILIO_AUTH_TOKEN: "secret-auth-token"
+          }
+        ]
+      })
+    ))).toThrow(/messagingSetup entries must not include provider secrets/i);
+
+    expect(() => parseOperationsBackupSnapshot(JSON.stringify(
+      makeBackupPayload({
+        messagingSetup: [
+          {
+            id: "production-messaging",
+            pushSubscriptionJson: JSON.stringify({
+              endpoint: "https://fcm.googleapis.com/fcm/send/device-1",
+              keys: {
+                p256dh: "raw-device-p256dh",
+                auth: "raw-device-auth"
+              }
+            })
+          }
+        ]
+      })
+    ))).toThrow(/messagingSetup entries must not include raw push subscription material/i);
+
+    expect(() => parseOperationsBackupSnapshot(JSON.stringify(
+      makeBackupPayload({
+        messagingSetup: [
+          {
+            id: "production-messaging",
+            webPushPublicKey: JSON.stringify({
+              endpoint: "https://fcm.googleapis.com/fcm/send/device-1",
+              keys: {
+                p256dh: "raw-device-p256dh",
+                auth: "raw-device-auth"
+              }
+            })
+          }
+        ]
+      })
+    ))).toThrow(/messagingSetup entries must not include raw push subscription material/i);
+  });
+
+  it("drops raw push subscription-shaped strings from exported messaging setup", () => {
+    const snapshot = buildOperationsBackupSnapshot(
+      makeBackupInput({
+        messagingSetup: [
+          {
+            id: "production-messaging",
+            twilioRelayEndpoint: "https://relay.example.test/api/messages/twilio",
+            webPushPublicKey: JSON.stringify({
+              endpoint: "https://fcm.googleapis.com/fcm/send/device-1",
+              keys: {
+                p256dh: "raw-device-p256dh",
+                auth: "raw-device-auth"
+              }
+            })
+          }
+        ]
+      })
+    );
+    const messagingSetup = (snapshot.data as unknown as { messagingSetup?: readonly Record<string, unknown>[] }).messagingSetup;
+
+    expect(messagingSetup).toEqual([
+      expect.objectContaining({
+        id: "production-messaging",
+        twilioRelayEndpoint: "https://relay.example.test/api/messages/twilio"
+      })
+    ]);
+    expect(messagingSetup?.[0]).not.toHaveProperty("webPushPublicKey");
+    expect(JSON.stringify(messagingSetup)).not.toMatch(/raw-device-p256dh|raw-device-auth|fcm\.googleapis/i);
+  });
+
+  it("restores legacy backups that predate production messaging setup metadata", () => {
+    const snapshot = buildOperationsBackupSnapshot(makeBackupInput(), "2026-06-02T12:00:00.000Z");
+    const legacySnapshot = JSON.parse(JSON.stringify(snapshot)) as { data: Record<string, unknown> };
+    delete legacySnapshot.data.messagingSetup;
+
+    expect((parseOperationsBackupSnapshot(JSON.stringify(legacySnapshot)).data as unknown as { messagingSetup?: readonly unknown[] }).messagingSetup).toEqual([]);
+  });
+
+  it("exports text automation run audit history with restorable Twilio scheduler metadata", () => {
+    const snapshot = buildOperationsBackupSnapshot(
+      makeBackupInput({
+        automationRuns: [
+          {
+            id: " automation-run-1 ",
+            ranAt: " 2026-06-03T10:00:00.000Z ",
+            status: "queued",
+            totalQueued: 1,
+            deliveryProvider: "twilio",
+            deliveryChannel: "sms",
+            deliveryMode: "prototype",
+            relayPayloadSchemaVersion: "chos-twilio-relay.v1",
+            breakdown: [
+              { key: "scheduledPromotions", label: " Scheduled promotions ", queued: 1 },
+              { key: "eventReminders", label: " Event reminders ", queued: 0 }
+            ]
+          }
+        ]
+      }),
+      "2026-06-03T12:00:00.000Z"
+    );
+    const automationRuns = (snapshot.data as unknown as { automationRuns?: readonly Record<string, unknown>[] }).automationRuns;
+
+    expect(automationRuns).toEqual([
+      expect.objectContaining({
+        id: "automation-run-1",
+        ranAt: "2026-06-03T10:00:00.000Z",
+        status: "queued",
+        totalQueued: 1,
+        deliveryProvider: "twilio",
+        deliveryChannel: "sms",
+        deliveryMode: "prototype",
+        relayPayloadSchemaVersion: "chos-twilio-relay.v1",
+        breakdown: [
+          { key: "scheduledPromotions", label: "Scheduled promotions", queued: 1 },
+          { key: "eventReminders", label: "Event reminders", queued: 0 }
+        ]
+      })
+    ]);
+    expect(snapshot.sections.find((section) => section.id === "automationRuns")).toEqual(expect.objectContaining({
+      label: "Text Automation Runs",
+      shortLabel: "automation runs",
+      count: 1
+    }));
+  });
+
+  it("restores legacy backups that predate text automation run audit history", () => {
+    const snapshot = buildOperationsBackupSnapshot(makeBackupInput(), "2026-06-02T12:00:00.000Z");
+    const legacySnapshot = JSON.parse(JSON.stringify(snapshot)) as { data: Record<string, unknown> };
+    delete legacySnapshot.data.automationRuns;
+
+    expect((parseOperationsBackupSnapshot(JSON.stringify(legacySnapshot)).data as unknown as { automationRuns?: readonly unknown[] }).automationRuns).toEqual([]);
   });
 
   it("rejects malformed restore files before state is changed", () => {
@@ -298,7 +517,10 @@ describe("buildOperationsBackupSnapshot", () => {
             classesAttended: "12",
             missedClassCount: -1,
             joinedAt: " 2026-01-01 ",
-            notes: " Needs a belt test reminder. "
+            notes: " Needs a belt test reminder. ",
+            studentSmsConsentUpdatedAt: " 2026-05-20T10:00:00.000Z ",
+            guardianSmsConsentUpdatedAt: " 2026-05-21T11:00:00.000Z ",
+            smsConsentUpdatedAt: " 2026-05-19T09:00:00.000Z "
           },
           {
             id: "student-mina",
@@ -353,7 +575,10 @@ describe("buildOperationsBackupSnapshot", () => {
         classesAttended: 12,
         missedClassCount: 0,
         joinedAt: "2026-01-01",
-        notes: "Needs a belt test reminder."
+        notes: "Needs a belt test reminder.",
+        studentSmsConsentUpdatedAt: "2026-05-20T10:00:00.000Z",
+        guardianSmsConsentUpdatedAt: "2026-05-21T11:00:00.000Z",
+        smsConsentUpdatedAt: "2026-05-19T09:00:00.000Z"
       }),
       expect.objectContaining({
         id: "student-mina",
@@ -1324,7 +1549,7 @@ describe("buildOperationsBackupSnapshot", () => {
           }
         ]
       })
-    ))).toThrow(/queued messageLogs entries can only reference restored active student recipients/i);
+    ))).toThrow(/queued messageLogs entries can only reference restored active recipients/i);
 
     expect(() => parseOperationsBackupSnapshot(JSON.stringify(
       makeBackupPayload({
@@ -1341,7 +1566,7 @@ describe("buildOperationsBackupSnapshot", () => {
           }
         ]
       })
-    ))).toThrow(/queued messageLogs entries can only reference restored active student recipients/i);
+    ))).toThrow(/queued messageLogs entries can only reference restored active recipients/i);
   });
 
   it("exports only restorable queued text logs while preserving sent history", () => {
@@ -1419,6 +1644,72 @@ describe("buildOperationsBackupSnapshot", () => {
     ]);
     expect(snapshot.sections.find((section) => section.id === "messageLogs")).toEqual(expect.objectContaining({ count: 2 }));
     expect(snapshot.summary.totalRecords).toBe(4);
+    expect(parseOperationsBackupSnapshot(JSON.stringify(snapshot)).data.messageLogs).toHaveLength(2);
+  });
+
+  it("preserves restorable queued parent and staff text logs in operations backups", () => {
+    const activeStudent = {
+      id: "student-ari",
+      firstName: "Ari",
+      lastName: "Nguyen",
+      phone: "(262) 555-0101",
+      email: "ari@example.com",
+      guardianName: "Mina Nguyen",
+      guardianPhone: "(262) 555-1101",
+      status: "Active",
+      beltRank: "Yellow",
+      classesAttended: 12,
+      missedClassCount: 0,
+      joinedAt: "2026-01-01"
+    };
+    const staffAccount = {
+      id: "staff-kim",
+      displayName: "Coach Kim",
+      username: "coach.kim",
+      password: "staff-password",
+      role: "staff",
+      status: "active",
+      email: "coach.kim@example.com",
+      phone: "(262) 555-2101",
+      access: ["messages"],
+      createdAt: "2026-05-01T10:00:00.000Z"
+    } satisfies OperationsBackupInput["managedAccounts"][number];
+    const snapshot = buildOperationsBackupSnapshot(
+      makeBackupInput({
+        students: [activeStudent],
+        managedAccounts: [staffAccount],
+        messageLogs: [
+          {
+            id: "message-parent-queued",
+            kind: "marketing",
+            recipientName: "Mina Nguyen",
+            recipientPhone: "+12625551101",
+            recipientRole: "parent",
+            recipientId: "parent-student-ari",
+            body: "Family night starts Friday.",
+            status: "queued",
+            createdAt: "2026-06-02T10:00:00.000Z"
+          },
+          {
+            id: "message-staff-queued",
+            kind: "reminder",
+            recipientName: "Coach Kim",
+            recipientPhone: "+12625552101",
+            recipientRole: "staff",
+            recipientId: "staff-kim",
+            body: "Please prep for family night.",
+            status: "queued",
+            createdAt: "2026-06-02T10:05:00.000Z"
+          }
+        ]
+      }),
+      "2026-06-02T12:00:00.000Z"
+    );
+
+    expect(snapshot.data.messageLogs).toEqual([
+      expect.objectContaining({ id: "message-parent-queued", recipientRole: "parent", recipientId: "parent-student-ari" }),
+      expect.objectContaining({ id: "message-staff-queued", recipientRole: "staff", recipientId: "staff-kim" })
+    ]);
     expect(parseOperationsBackupSnapshot(JSON.stringify(snapshot)).data.messageLogs).toHaveLength(2);
   });
 
@@ -1584,6 +1875,73 @@ describe("buildOperationsBackupSnapshot", () => {
     expect(snapshot.data.messageLogs[1]).not.toHaveProperty("campaignId");
     expect(snapshot.sections.find((section) => section.id === "messageCampaigns")).toEqual(expect.objectContaining({ count: 1 }));
     expect(parseOperationsBackupSnapshot(JSON.stringify(snapshot)).data.messageCampaigns).toHaveLength(1);
+  });
+
+  it("preserves valid scheduled text promotions in operations backups", () => {
+    const snapshot = buildOperationsBackupSnapshot(
+      makeBackupInput({
+        messageCampaigns: [
+          {
+            id: "campaign-summer",
+            title: "Summer training",
+            body: "Keep training this summer.",
+            audience: "parents",
+            createdAt: "2026-06-01T09:00:00.000Z"
+          }
+        ],
+        scheduledTextCampaigns: [
+          {
+            id: "scheduled-family-sale",
+            title: "Family gear sale",
+            body: "Family gear sale starts tonight at 5 PM.",
+            audience: "parents",
+            scheduledFor: "2026-06-03",
+            scheduledTime: "17:00",
+            status: "scheduled",
+            createdAt: "2026-06-01T09:00:00.000Z"
+          },
+          {
+            id: "scheduled-queued",
+            title: "Queued sale",
+            body: "Queued family gear sale.",
+            audience: "parents",
+            scheduledFor: "2026-06-02",
+            scheduledTime: "09:00",
+            status: "queued",
+            createdAt: "2026-06-01T09:05:00.000Z",
+            queuedAt: "2026-06-02T09:00:00.000Z",
+            campaignId: "campaign-summer"
+          },
+          {
+            id: "scheduled-invalid",
+            title: " ",
+            body: "Invalid scheduled promotion should drop.",
+            audience: "parents",
+            scheduledFor: "2026-06-02",
+            status: "scheduled",
+            createdAt: "2026-06-01T09:10:00.000Z"
+          },
+          {
+            id: "scheduled-invalid-time",
+            title: "Invalid send time",
+            body: "Invalid scheduled promotion time should drop.",
+            audience: "parents",
+            scheduledFor: "2026-06-02",
+            scheduledTime: "99:99",
+            status: "scheduled",
+            createdAt: "2026-06-01T09:15:00.000Z"
+          }
+        ] as OperationsBackupInput["scheduledTextCampaigns"]
+      }),
+      "2026-06-02T12:00:00.000Z"
+    );
+
+    expect(snapshot.data.scheduledTextCampaigns).toEqual([
+      expect.objectContaining({ id: "scheduled-family-sale", scheduledTime: "17:00", status: "scheduled", audience: "parents" }),
+      expect.objectContaining({ id: "scheduled-queued", scheduledTime: "09:00", status: "queued", campaignId: "campaign-summer", queuedAt: "2026-06-02T09:00:00.000Z" })
+    ]);
+    expect(snapshot.sections.find((section) => section.id === "scheduledTextCampaigns")).toEqual(expect.objectContaining({ count: 2 }));
+    expect(parseOperationsBackupSnapshot(JSON.stringify(snapshot)).data.scheduledTextCampaigns).toHaveLength(2);
   });
 
   it("exports outreach campaigns and text logs with restorable fields", () => {

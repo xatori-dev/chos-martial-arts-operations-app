@@ -3,8 +3,9 @@ import { childUsernameFromName, normalizeChildUsername } from "./childAccountUti
 import { isSafeStudyMaterialFile, isSafeTrainingVideoFile } from "./contentSafety";
 import { getProduct, studio } from "./data";
 import { parseOperationsBackupSnapshot, type OperationsBackupData } from "./operationsBackup";
-import { getClassReminderCandidates, getLeadCandidates, getMerchandiseTargetStock, getStudentCelebrationEvents, getStudentProfileIssues, isAttendanceGapFollowUpDue, isBeltTestInviteDue, isLowStockMerchandiseItem, isMilestoneEncouragementDue, isMissedClassFollowUpDue, isNewStudentCheckInDue, isPausedStudentReviewDue, isProfileUpdateRequestDue, isQueuedMessageDeliverable, isStaleOneTimeScheduledClass, isTrialConversionDue } from "./operationsReports";
+import { getClassReminderCandidates, getLeadCandidates, getMerchandiseTargetStock, getStudentCelebrationEvents, getStudentProfileIssues, hasGuardianSmsConsent, hasStaffSmsConsent, hasStudentSmsConsent, isAttendanceGapFollowUpDue, isBeltTestInviteDue, isLowStockMerchandiseItem, isMilestoneEncouragementDue, isMissedClassFollowUpDue, isNewStudentCheckInDue, isPausedStudentReviewDue, isProfileUpdateRequestDue, isQueuedMessageDeliverable, isStaleOneTimeScheduledClass, isTrialConversionDue } from "./operationsReports";
 import { buildStudentBeltProgress } from "./studentProgress";
+import { normalizeTwilioInboundSmsWebhookForServer, normalizeTwilioStatusCallbackForServer, type TwilioInboundSmsWebhook } from "./twilioRelayContract";
 import type {
   AccountRole,
   AccountSession,
@@ -21,7 +22,9 @@ import type {
   MerchandiseItem,
   MessageCampaign,
   MessageLog,
+  MessageNotificationSettings,
   Order,
+  ScheduledTextCampaign,
   StudioClass,
   ScheduledClass,
   StudyGuideFolder,
@@ -29,10 +32,15 @@ import type {
   StudentCheckIn,
   StudentRecord,
   StudioEvent,
+  TextAutomationRun,
+  TextAutomationRunKey,
+  TwilioDeliveryStatus,
+  TwilioRelayPayload,
+  TwilioRelayResult,
   TrainingVideo,
   TrainingVideoFolder
 } from "./types";
-import { applyCoupon, calculateTotals, createOrder, prototypeManagerLogin, prototypeParentLogin, prototypeStudentLogin } from "./utils";
+import { applyCoupon, calculateTotals, createOrder, estimateSmsSegments, hasSmsOptOutLanguage, prototypeManagerLogin, prototypeParentLogin, prototypeStudentLogin } from "./utils";
 
 const keys = {
   cart: "chos.cart.v1",
@@ -50,7 +58,13 @@ const keys = {
   studioClasses: "chos.operations.classes.v1",
   scheduledClasses: "chos.operations.schedule.v1",
   messageCampaigns: "chos.operations.campaigns.v1",
+  scheduledTextCampaigns: "chos.operations.scheduledCampaigns.v1",
   messageLogs: "chos.operations.messages.v1",
+  textAutomationRuns: "chos.operations.automationRuns.v1",
+  messageNotificationSettings: "chos.operations.notificationSettings.v1",
+  twilioRelayEndpoint: "chos.operations.twilioRelayEndpoint.v1",
+  pushServerEndpoint: "chos.operations.pushServerEndpoint.v1",
+  twilioLaunchProfile: "chos.operations.twilioLaunchProfile.v1",
   directMessages: "chos.operations.directMessages.v1",
   studioEvents: "chos.operations.events.v1",
   merchandiseItems: "chos.operations.merchandise.v1",
@@ -60,6 +74,8 @@ const keys = {
   studyGuideFolders: "chos.operations.studyGuideFolders.v1",
   studyGuideMaterials: "chos.operations.studyGuideMaterials.v1"
 } as const;
+
+const prototypeSeedSmsConsentUpdatedAt = "2026-05-01T10:00:00.000Z";
 
 const seedStudents: StudentRecord[] = [
   {
@@ -585,7 +601,7 @@ const seedStudents: StudentRecord[] = [
     joinedAt: "2025-02-11",
     notes: "Prototype testing profile for senior dark-brown belt coverage."
   }
-];
+].map((student) => ({ ...student, smsConsentUpdatedAt: prototypeSeedSmsConsentUpdatedAt }));
 
 const seedScheduledClasses: ScheduledClass[] = [
   { id: "schedule-youth-beginners", title: "Youth Beginners", date: "2026-05-18", time: "5:00 PM", type: "class", notes: "Beginner martial arts fundamentals." },
@@ -633,6 +649,10 @@ const seedDirectMessages: DirectMessage[] = [
     status: "sent"
   }
 ];
+
+const defaultMessageNotificationSettings: MessageNotificationSettings = {
+  browserNotificationsEnabled: false
+};
 
 const seedStudioEvents: StudioEvent[] = [
   { id: "event-testing-seed", title: "Color Belt Testing", date: "2026-05-30", time: "10:00 AM", details: "Testing date for students cleared by instructors.", audience: "students" },
@@ -806,6 +826,77 @@ type StudentCheckInResult = StudentCheckIn & {
   queuedMessage?: MessageLog;
 };
 
+type TextAutomationRunResult = {
+  missedClassFollowUps: number;
+  attendanceGapCheckIns: number;
+  trialConversionFollowUps: number;
+  newStudentCheckIns: number;
+  pausedStudentReactivationFollowUps: number;
+  celebrationOutreach: number;
+  profileUpdateRequests: number;
+  classReminders: number;
+  milestoneEncouragements: number;
+  beltTestInvites: number;
+  eventReminders: number;
+  scheduledPromotions: number;
+  totalQueued: number;
+};
+
+const textAutomationRunBreakdownLabels: { key: TextAutomationRunKey; label: string }[] = [
+  { key: "missedClassFollowUps", label: "Missed-class follow-ups" },
+  { key: "attendanceGapCheckIns", label: "Attendance gap check-ins" },
+  { key: "trialConversionFollowUps", label: "Trial conversion follow-ups" },
+  { key: "newStudentCheckIns", label: "New student check-ins" },
+  { key: "pausedStudentReactivationFollowUps", label: "Paused reactivation follow-ups" },
+  { key: "celebrationOutreach", label: "Celebration outreach" },
+  { key: "profileUpdateRequests", label: "Profile update requests" },
+  { key: "classReminders", label: "Class reminders" },
+  { key: "milestoneEncouragements", label: "Milestone encouragements" },
+  { key: "beltTestInvites", label: "Belt test invites" },
+  { key: "eventReminders", label: "Event reminders" },
+  { key: "scheduledPromotions", label: "Scheduled promotions" }
+];
+
+function buildTextAutomationRunLog(result: TextAutomationRunResult, ranAt = new Date().toISOString()): TextAutomationRun {
+  return {
+    id: createPrototypeId("automation-run"),
+    ranAt,
+    status: result.totalQueued > 0 ? "queued" : "no-due-texts",
+    totalQueued: result.totalQueued,
+    deliveryProvider: "twilio",
+    deliveryChannel: "sms",
+    deliveryMode: "prototype",
+    relayPayloadSchemaVersion: "chos-twilio-relay.v1",
+    breakdown: textAutomationRunBreakdownLabels.map(({ key, label }) => ({
+      key,
+      label,
+      queued: result[key]
+    }))
+  };
+}
+
+type TextAudiencePreview = {
+  audience: MessageCampaign["audience"];
+  total: number;
+  students: number;
+  parents: number;
+  staff: number;
+};
+
+type TwilioRelayApplySummary = {
+  applied: number;
+  sent: number;
+  failed: number;
+  ignored: number;
+};
+
+type TwilioInboundApplySummary = {
+  imported: number;
+  optedOut: number;
+  optedIn: number;
+  ignored: number;
+};
+
 interface AppState {
   cart: CartItem[];
   coupon?: Coupon;
@@ -828,7 +919,12 @@ interface AppState {
   studioClasses: StudioClass[];
   scheduledClasses: ScheduledClass[];
   messageCampaigns: MessageCampaign[];
+  scheduledTextCampaigns: ScheduledTextCampaign[];
   messageLogs: MessageLog[];
+  textAutomationRuns: TextAutomationRun[];
+  messageNotificationSettings: MessageNotificationSettings;
+  unreadDirectMessageCount: number;
+  latestUnreadDirectMessage?: DirectMessage;
   directMessages: DirectMessage[];
   studioEvents: StudioEvent[];
   merchandiseItems: MerchandiseItem[];
@@ -884,6 +980,7 @@ interface AppState {
   restockLowInventory: () => number;
   reviewLeadFollowUps: () => number;
   restoreOperationsBackup: (rawBackup: string) => { restoredRecords: number; restoredSections: number } | undefined;
+  recordSmsOptOut: (phone: string, optedOut: boolean) => number;
   recordStudentCheckIn: (studentId: string) => StudentCheckInResult | undefined;
   sendMissedClassFollowUps: () => number;
   sendAttendanceGapCheckIns: () => number;
@@ -895,12 +992,23 @@ interface AppState {
   sendClassReminders: () => number;
   sendMilestoneEncouragements: () => number;
   sendBeltTestInvites: () => number;
+  sendEventReminderTexts: () => number;
+  runTextAutomations: () => TextAutomationRunResult;
   queueStudentMilestoneEncouragement: (studentId: string) => MessageLog | undefined;
   queueStudentProfileUpdateRequest: (studentId: string) => MessageLog | undefined;
-  sendMarketingBlast: (body: string) => number;
+  scheduleTextCampaign: (campaign: { body: string; audience: MessageCampaign["audience"]; scheduledFor: string; scheduledTime?: string; title?: string }) => ScheduledTextCampaign | undefined;
+  cancelScheduledTextCampaign: (campaignId: string) => ScheduledTextCampaign | undefined;
+  getTextAudiencePreview: (audience: MessageCampaign["audience"]) => TextAudiencePreview;
+  sendMarketingBlast: (body: string, audience?: MessageCampaign["audience"]) => number;
+  buildTwilioRelayPayload: () => TwilioRelayPayload;
+  applyTwilioRelayResults: (rawResults: string) => TwilioRelayApplySummary | undefined;
+  applyTwilioStatusCallbacks: (rawCallbacks: string) => TwilioRelayApplySummary | undefined;
+  applyTwilioInboundWebhook: (rawWebhook: string) => TwilioInboundApplySummary | undefined;
   sendQueuedTexts: () => number;
   sendQueuedText: (messageId: string) => MessageLog | undefined;
   clearStaleQueuedTexts: () => number;
+  updateMessageNotificationSettings: (settings: Partial<MessageNotificationSettings>) => void;
+  markMessageNotificationsSeen: () => void;
   sendDirectMessage: (message: { senderId: string; senderName: string; recipientId: string; recipientName: string; body: string }) => DirectMessage | undefined;
 }
 
@@ -947,6 +1055,78 @@ function useStoredState<T>(key: string, fallback: T) {
     [key]
   );
   return [value, update] as const;
+}
+
+function notificationSettingsScope(email?: string) {
+  const keyEmail = email
+    ?.trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return keyEmail || "guest";
+}
+
+function scopedMessageNotificationSettingsKey(email?: string) {
+  return email?.trim()
+    ? `chos.operations.notificationSettings.${notificationSettingsScope(email)}.v1`
+    : keys.messageNotificationSettings;
+}
+
+function isPrototypeManagerNotificationSession(email?: string) {
+  return email?.trim().toLowerCase() === prototypeManagerLogin.email.toLowerCase();
+}
+
+function cleanNotificationString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function cleanNotificationPermission(value: unknown): MessageNotificationSettings["browserPermission"] {
+  return value === "default" || value === "granted" || value === "denied" || value === "unsupported" ? value : undefined;
+}
+
+function normalizeMessageNotificationSettings(value: unknown): MessageNotificationSettings {
+  if (!value || typeof value !== "object") return { ...defaultMessageNotificationSettings };
+  const settings = value as Partial<MessageNotificationSettings>;
+  return {
+    browserNotificationsEnabled: Boolean(settings.browserNotificationsEnabled),
+    ...(cleanNotificationPermission(settings.browserPermission) ? { browserPermission: cleanNotificationPermission(settings.browserPermission) } : {}),
+    ...(cleanNotificationString(settings.lastSeenDirectMessageAt) ? { lastSeenDirectMessageAt: cleanNotificationString(settings.lastSeenDirectMessageAt) } : {}),
+    ...(cleanNotificationString(settings.lastBrowserNotifiedAt) ? { lastBrowserNotifiedAt: cleanNotificationString(settings.lastBrowserNotifiedAt) } : {}),
+    ...(cleanNotificationString(settings.lastBrowserNotifiedDirectMessageAt) ? { lastBrowserNotifiedDirectMessageAt: cleanNotificationString(settings.lastBrowserNotifiedDirectMessageAt) } : {}),
+    ...(cleanNotificationString(settings.pushPublicKey) ? { pushPublicKey: cleanNotificationString(settings.pushPublicKey) } : {}),
+    ...(cleanNotificationString(settings.pushSubscriptionEndpoint) ? { pushSubscriptionEndpoint: cleanNotificationString(settings.pushSubscriptionEndpoint) } : {}),
+    ...(cleanNotificationString(settings.pushSubscriptionJson) ? { pushSubscriptionJson: cleanNotificationString(settings.pushSubscriptionJson) } : {}),
+    ...(cleanNotificationString(settings.pushSubscribedAt) ? { pushSubscribedAt: cleanNotificationString(settings.pushSubscribedAt) } : {}),
+    ...(cleanNotificationString(settings.updatedAt) ? { updatedAt: cleanNotificationString(settings.updatedAt) } : {})
+  };
+}
+
+function readOptionalMessageNotificationSettings(key: string) {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return undefined;
+    return normalizeMessageNotificationSettings(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+function readMessageNotificationSettingsForSession(email?: string): MessageNotificationSettings {
+  const scopedSettings = email?.trim() ? readOptionalMessageNotificationSettings(scopedMessageNotificationSettingsKey(email)) : undefined;
+  if (scopedSettings) return scopedSettings;
+  if (isPrototypeManagerNotificationSession(email)) {
+    return readOptionalMessageNotificationSettings(keys.messageNotificationSettings) ?? { ...defaultMessageNotificationSettings };
+  }
+  return { ...defaultMessageNotificationSettings };
+}
+
+function writeMessageNotificationSettingsForSession(email: string | undefined, settings: MessageNotificationSettings) {
+  const normalizedSettings = normalizeMessageNotificationSettings(settings);
+  writeStorage(scopedMessageNotificationSettingsKey(email), normalizedSettings);
+  if (isPrototypeManagerNotificationSession(email)) {
+    writeStorage(keys.messageNotificationSettings, normalizedSettings);
+  }
 }
 
 function isCurrentStudentEnrollment(student: Pick<StudentRecord, "status">) {
@@ -1025,9 +1205,28 @@ function useSessionState() {
   return [value, update] as const;
 }
 
+function dateStamp(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 function todayStamp() {
-  const today = new Date();
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  return dateStamp(new Date());
+}
+
+function isDateKey(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
+}
+
+function dateKeyFromDate(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function addDaysToDateKey(dateKey: string, days: number) {
+  const [year, month, day] = dateKey.split("-").map((part) => Number(part));
+  if (!year || !month || !day) return dateKey;
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() + days);
+  return dateKeyFromDate(date);
 }
 
 function createPrototypeId(prefix: string) {
@@ -1141,11 +1340,119 @@ function isValidContactSubmission(contact: ContactSubmission) {
 
 function normalizeMessagePhone(value: string) {
   const digits = value.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
   return digits || value.trim().toLowerCase();
+}
+
+function hasSmsOptOut(value?: string) {
+  return Boolean(value?.trim());
+}
+
+function hasStudentSmsSendConsent(student: StudentRecord) {
+  return Boolean(student.phone.trim() && hasStudentSmsConsent(student));
+}
+
+function normalizeTwilioRelayPhone(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("+")) return trimmed.replace(/[^\d+]/g, "");
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return trimmed;
+}
+
+const twilioDeliveryStatuses = new Set<TwilioDeliveryStatus>(["accepted", "scheduled", "queued", "sending", "sent", "delivered", "undelivered", "failed", "canceled"]);
+const failedTwilioDeliveryStatuses = new Set<TwilioDeliveryStatus>(["undelivered", "failed", "canceled"]);
+
+function normalizeTwilioDeliveryStatus(value: unknown): TwilioDeliveryStatus | undefined {
+  if (typeof value !== "string") return undefined;
+  const status = value.trim().toLowerCase();
+  return twilioDeliveryStatuses.has(status as TwilioDeliveryStatus) ? (status as TwilioDeliveryStatus) : undefined;
 }
 
 function normalizeContactText(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+type TextBlastRecipient = {
+  id: string;
+  role: NonNullable<MessageLog["recipientRole"]>;
+  name: string;
+  phone: string;
+};
+
+function textDeliveryMetadata(status: NonNullable<MessageLog["deliveryStatus"]>) {
+  return {
+    deliveryChannel: "sms" as const,
+    deliveryProvider: "twilio" as const,
+    deliveryMode: "prototype" as const,
+    deliveryStatus: status,
+    deliveryDetail: "Ready for a server-side Twilio relay; simulated inside the static prototype."
+  };
+}
+
+function studentTextRecipient(student: StudentRecord): TextBlastRecipient | undefined {
+  const phone = student.phone.trim();
+  if (!phone || !isCurrentOperationsStudent(student) || !hasStudentSmsConsent(student)) return undefined;
+  return {
+    id: student.id,
+    role: "student",
+    name: studentFullName(student),
+    phone
+  };
+}
+
+function parentTextRecipient(student: StudentRecord): TextBlastRecipient | undefined {
+  const phone = student.guardianPhone?.trim();
+  if (!phone || !isCurrentOperationsStudent(student) || !hasGuardianSmsConsent(student)) return undefined;
+  const studentName = studentFullName(student);
+  return {
+    id: `parent-${student.id}`,
+    role: "parent",
+    name: student.guardianName?.trim() || `${studentName} Parent/Guardian`,
+    phone
+  };
+}
+
+function staffTextRecipient(account: ManagedAccount): TextBlastRecipient | undefined {
+  const phone = account.phone?.trim();
+  if (!phone || account.role !== "staff" || account.status !== "active" || !hasStaffSmsConsent(account)) return undefined;
+  return {
+    id: account.id,
+    role: "staff",
+    name: account.displayName.trim(),
+    phone
+  };
+}
+
+function uniqueTextBlastRecipients(recipients: readonly TextBlastRecipient[]) {
+  const seenPhones = new Set<string>();
+  return recipients.filter((recipient) => {
+    const phoneKey = normalizeMessagePhone(recipient.phone);
+    if (!recipient.name.trim() || !phoneKey || seenPhones.has(phoneKey)) return false;
+    seenPhones.add(phoneKey);
+    return true;
+  });
+}
+
+function getTextBlastRecipients(audience: MessageCampaign["audience"], students: readonly StudentRecord[], managedAccounts: readonly ManagedAccount[]) {
+  const studentRecipients = students.flatMap((student) => {
+    const recipient = studentTextRecipient(student);
+    return recipient ? [recipient] : [];
+  });
+  const parentRecipients = students.flatMap((student) => {
+    const recipient = parentTextRecipient(student);
+    return recipient ? [recipient] : [];
+  });
+  const staffRecipients = managedAccounts.flatMap((account) => {
+    const recipient = staffTextRecipient(account);
+    return recipient ? [recipient] : [];
+  });
+
+  if (audience === "parents") return uniqueTextBlastRecipients(parentRecipients);
+  if (audience === "staff") return uniqueTextBlastRecipients(staffRecipients);
+  if (audience === "everyone") return uniqueTextBlastRecipients([...studentRecipients, ...parentRecipients, ...staffRecipients]);
+  return uniqueTextBlastRecipients(studentRecipients);
 }
 
 function studioClassCreationKey(studioClass: Pick<StudioClass, "name" | "daysOfWeek" | "startTime" | "endTime" | "recurring" | "notes">) {
@@ -1224,10 +1531,20 @@ function studentEnrollmentKey(student: Pick<StudentRecord, "firstName" | "lastNa
   ].join("::");
 }
 
-function isMessageLogLinkedToStudent(message: Pick<MessageLog, "recipientName" | "recipientPhone">, student: StudentRecord) {
+function isMessageLogLinkedToStudent(message: Pick<MessageLog, "recipientName" | "recipientPhone" | "recipientRole" | "recipientId">, student: StudentRecord) {
+  const messagePhone = normalizeMessagePhone(message.recipientPhone);
+  if (message.recipientRole === "parent") {
+    return (
+      message.recipientId === `parent-${student.id}` ||
+      (
+        message.recipientName.trim().toLowerCase() === (student.guardianName?.trim().toLowerCase() ?? "") &&
+        messagePhone === normalizeMessagePhone(student.guardianPhone ?? "")
+      )
+    );
+  }
   return (
     message.recipientName.trim().toLowerCase() === studentFullName(student).trim().toLowerCase() &&
-    normalizeMessagePhone(message.recipientPhone) === normalizeMessagePhone(student.phone)
+    messagePhone === normalizeMessagePhone(student.phone)
   );
 }
 
@@ -1251,10 +1568,21 @@ function retargetQueuedMessageBody(body: string, previousStudent: StudentRecord,
 
 function retargetQueuedMessageForStudent(message: MessageLog, previousStudent: StudentRecord, updatedStudent: StudentRecord): MessageLog {
   if (message.status !== "queued" || !isMessageLogLinkedToStudent(message, previousStudent)) return message;
+  if (message.recipientRole === "parent") {
+    return {
+      ...message,
+      recipientName: updatedStudent.guardianName?.trim() || `${studentFullName(updatedStudent)} Parent/Guardian`,
+      recipientPhone: updatedStudent.guardianPhone?.trim() ?? "",
+      recipientId: `parent-${updatedStudent.id}`,
+      body: retargetQueuedMessageBody(message.body, previousStudent, updatedStudent)
+    };
+  }
   return {
     ...message,
     recipientName: studentFullName(updatedStudent),
     recipientPhone: updatedStudent.phone,
+    recipientId: updatedStudent.id,
+    recipientRole: message.recipientRole ?? "student",
     body: retargetQueuedMessageBody(message.body, previousStudent, updatedStudent)
   };
 }
@@ -1274,6 +1602,28 @@ function isDirectMessageParticipantAvailable(participantId: string, students: re
   if (cleanParticipantId.startsWith("direct-staff-")) return true;
   const studentId = cleanParticipantId.startsWith("parent-") ? cleanParticipantId.slice("parent-".length) : cleanParticipantId;
   return students.some((student) => student.id === studentId && isCurrentOperationsStudent(student));
+}
+
+function isStaffDirectMessageParticipant(participantId: string) {
+  return participantId.trim().toLowerCase().startsWith("direct-staff-");
+}
+
+function directMessageStudentIdForParticipant(participantId: string) {
+  const cleanParticipantId = participantId.trim();
+  return cleanParticipantId.startsWith("parent-") ? cleanParticipantId.slice("parent-".length) : cleanParticipantId;
+}
+
+function getUnreadDirectMessageNotifications(directMessages: readonly DirectMessage[], settings: MessageNotificationSettings, students: readonly StudentRecord[]) {
+  const lastSeen = settings.lastSeenDirectMessageAt?.trim() ?? "";
+  const currentStudentIds = new Set(students.filter(isCurrentOperationsStudent).map((student) => student.id));
+  return directMessages
+    .filter((message) => {
+      const createdAt = message.createdAt.trim();
+      if (message.status !== "sent" || !createdAt || createdAt <= lastSeen) return false;
+      if (!isStaffDirectMessageParticipant(message.recipientId) || isStaffDirectMessageParticipant(message.senderId)) return false;
+      return currentStudentIds.has(directMessageStudentIdForParticipant(message.senderId));
+    })
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id));
 }
 
 function isDirectMessageLinkedToStudent(message: Pick<DirectMessage, "senderId" | "recipientId">, studentId: string) {
@@ -1400,12 +1750,225 @@ function classReminderTextForStudent(student: StudentRecord, reminder: ReturnTyp
   return `Hi ${student.firstName}, reminder: ${reminder.title} is scheduled for ${reminder.date} at ${reminder.time} at Cho's Martial Arts. Reply or call ${studio.phone} if you need help.`;
 }
 
+function eventReminderTextForRecipient(event: StudioEvent, student: StudentRecord, recipient: TextBlastRecipient) {
+  const detail = event.details.trim() ? ` ${event.details.trim()}` : "";
+  if (recipient.role === "parent") {
+    return `Hi ${recipient.name}, reminder: ${event.title} is scheduled for ${event.date} at ${event.time} at Cho's Martial Arts for ${studentFullName(student)}.${detail} Reply or call ${studio.phone} if you need help.`;
+  }
+  return `Hi ${student.firstName}, reminder: ${event.title} is scheduled for ${event.date} at ${event.time} at Cho's Martial Arts.${detail} Reply or call ${studio.phone} if you need help.`;
+}
+
+function eventReminderRecipients(event: StudioEvent, student: StudentRecord) {
+  const recipients: TextBlastRecipient[] = [];
+  const studentRecipient = studentTextRecipient(student);
+  const guardianRecipient = parentTextRecipient(student);
+  if (event.audience === "students" && studentRecipient) recipients.push(studentRecipient);
+  if (event.audience === "families" && guardianRecipient) recipients.push(guardianRecipient);
+  if (event.audience === "public") {
+    if (studentRecipient) recipients.push(studentRecipient);
+    if (guardianRecipient) recipients.push(guardianRecipient);
+  }
+  return recipients;
+}
+
+function getEventReminderCandidates(events: readonly StudioEvent[], students: readonly StudentRecord[], today: string) {
+  const reminderEnd = addDaysToDateKey(today, 7);
+  const upcomingEvents = events.filter((event) => {
+    const eventDate = event.date.trim();
+    return Boolean(eventDate && eventDate >= today && eventDate <= reminderEnd);
+  });
+  return upcomingEvents.flatMap((event) =>
+    students.flatMap((student) =>
+      eventReminderRecipients(event, student).map((recipient) => ({
+        event,
+        student,
+        recipient
+      }))
+    )
+  );
+}
+
+function studentIdsForMessageLogs(logs: readonly Pick<MessageLog, "recipientId" | "recipientRole">[]) {
+  return new Set(
+    logs.flatMap((log) => {
+      const recipientId = log.recipientId?.trim();
+      if (!recipientId) return [];
+      if (log.recipientRole === "parent" && recipientId.startsWith("parent-")) return [recipientId.slice("parent-".length)];
+      if (log.recipientRole === "student") return [recipientId];
+      return [];
+    })
+  );
+}
+
+function buildTwilioRelayMessage(message: MessageLog) {
+  const smsEstimate = estimateSmsSegments(message.body);
+  const to = normalizeTwilioRelayPhone(message.recipientPhone);
+  const phoneKey = to.replace(/\D/g, "");
+  return {
+    id: message.id,
+    to,
+    body: message.body,
+    recipientName: message.recipientName,
+    recipientRole: message.recipientRole,
+    recipientId: message.recipientId,
+    kind: message.kind,
+    campaignId: message.campaignId,
+    createdAt: message.createdAt,
+    smsEncoding: smsEstimate.encoding,
+    smsUnitCount: smsEstimate.units,
+    smsSegmentCount: smsEstimate.segments,
+    optOutLanguageDetected: hasSmsOptOutLanguage(message.body),
+    idempotencyKey: `chos-${message.id}-${phoneKey}`,
+    statusCallbackPath: `/api/messages/status/${encodeURIComponent(message.id)}`
+  };
+}
+
+function stringField(value: unknown) {
+  return typeof value === "string" ? value.trim() : undefined;
+}
+
+function normalizeTwilioRelayResult(value: unknown): TwilioRelayResult | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const id = stringField(record.id) ?? stringField(record.messageId) ?? stringField(record.MessageId);
+  const deliveryStatus = normalizeTwilioDeliveryStatus(record.deliveryStatus ?? record.status ?? record.MessageStatus);
+  if (!id || !deliveryStatus) return undefined;
+  return {
+    id,
+    deliveryStatus,
+    deliveryProviderMessageId: stringField(record.deliveryProviderMessageId) ?? stringField(record.sid) ?? stringField(record.messageSid) ?? stringField(record.MessageSid),
+    sentAt: stringField(record.sentAt) ?? stringField(record.dateSent),
+    deliveryDetail: stringField(record.deliveryDetail),
+    errorCode: stringField(record.errorCode) ?? stringField(record.ErrorCode),
+    errorMessage: stringField(record.errorMessage) ?? stringField(record.ErrorMessage)
+  };
+}
+
+function parseTwilioRelayResults(rawResults: string) {
+  const cleanResults = rawResults.trim();
+  if (!cleanResults) return undefined;
+  try {
+    const parsed = JSON.parse(cleanResults) as unknown;
+    const rawItems = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === "object" && Array.isArray((parsed as { results?: unknown }).results)
+        ? (parsed as { results: unknown[] }).results
+        : undefined;
+    if (!rawItems) return undefined;
+    return rawItems.flatMap((item) => {
+      const result = normalizeTwilioRelayResult(item);
+      return result ? [result] : [];
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function parseTwilioStatusCallbackForm(rawCallbacks: string): unknown[] | undefined {
+  if (!rawCallbacks.includes("=")) return undefined;
+  const params = new URLSearchParams(rawCallbacks);
+  const record: Record<string, string> = {};
+  params.forEach((value, key) => {
+    record[key] = value;
+  });
+  return Object.keys(record).length ? [record] : undefined;
+}
+
+function twilioStatusCallbackItems(parsed: unknown): unknown[] | undefined {
+  if (Array.isArray(parsed)) return parsed;
+  if (!parsed || typeof parsed !== "object") return undefined;
+  const record = parsed as Record<string, unknown>;
+  if (Array.isArray(record.callbacks)) return record.callbacks;
+  if (Array.isArray(record.statusCallbacks)) return record.statusCallbacks;
+  if (Array.isArray(record.results)) return record.results;
+  return [record];
+}
+
+function parseTwilioStatusCallbacks(rawCallbacks: string) {
+  const cleanCallbacks = rawCallbacks.trim();
+  if (!cleanCallbacks) return undefined;
+  try {
+    const rawItems = twilioStatusCallbackItems(JSON.parse(cleanCallbacks) as unknown);
+    if (!rawItems) return undefined;
+    return rawItems.flatMap((item) => {
+      const result = item && typeof item === "object" ? normalizeTwilioStatusCallbackForServer(item as Record<string, unknown>) : undefined;
+      return result ? [result] : [];
+    });
+  } catch {
+    const rawItems = parseTwilioStatusCallbackForm(cleanCallbacks);
+    if (!rawItems) return undefined;
+    return rawItems.flatMap((item) => {
+      const result = item && typeof item === "object" ? normalizeTwilioStatusCallbackForServer(item as Record<string, unknown>) : undefined;
+      return result ? [result] : [];
+    });
+  }
+}
+
+function twilioRelayDeliveryDetail(result: TwilioRelayResult) {
+  const base = result.deliveryDetail?.trim() || `Twilio status: ${result.deliveryStatus}.`;
+  const errorCode = result.errorCode?.trim();
+  const errorMessage = result.errorMessage?.trim().replace(/\.+$/, "");
+  if (!errorCode && !errorMessage) return base;
+  const errorLabel = errorCode && errorMessage ? `Error ${errorCode}: ${errorMessage}.` : `Error ${errorCode || errorMessage}.`;
+  return `${base.replace(/\s*\.*$/, ".")} ${errorLabel}`;
+}
+
+function applyTwilioRelayResultToMessage(message: MessageLog, result: TwilioRelayResult, appliedAt: string): MessageLog {
+  const failed = failedTwilioDeliveryStatuses.has(result.deliveryStatus);
+  return {
+    ...message,
+    status: failed ? "failed" : "sent",
+    sentAt: failed ? message.sentAt : (result.sentAt ?? message.sentAt ?? appliedAt),
+    deliveryChannel: "sms",
+    deliveryProvider: "twilio",
+    deliveryMode: "live",
+    deliveryStatus: result.deliveryStatus,
+    deliveryDetail: twilioRelayDeliveryDetail(result),
+    deliveryProviderMessageId: result.deliveryProviderMessageId ?? message.deliveryProviderMessageId
+  };
+}
+
+function parseTwilioInboundWebhook(rawWebhook: string): TwilioInboundSmsWebhook | undefined {
+  const cleanWebhook = rawWebhook.trim();
+  if (!cleanWebhook) return undefined;
+  try {
+    const parsed = JSON.parse(cleanWebhook) as unknown;
+    if (!parsed || typeof parsed !== "object") return undefined;
+    return normalizeTwilioInboundSmsWebhookForServer(parsed as Record<string, unknown>);
+  } catch {
+    return cleanWebhook.includes("=") ? normalizeTwilioInboundSmsWebhookForServer(new URLSearchParams(cleanWebhook)) : undefined;
+  }
+}
+
+function inboundSmsDirectSenderForPhone(phone: string, students: readonly StudentRecord[]) {
+  const phoneKey = normalizeMessagePhone(phone);
+  if (!phoneKey) return undefined;
+  for (const student of students) {
+    if (!isCurrentOperationsStudent(student)) continue;
+    if (normalizeMessagePhone(student.guardianPhone ?? "") === phoneKey) {
+      return {
+        senderId: `parent-${student.id}`,
+        senderName: student.guardianName?.trim() || `${studentFullName(student)} Parent/Guardian`
+      };
+    }
+    if (normalizeMessagePhone(student.phone) === phoneKey) {
+      return {
+        senderId: student.id,
+        senderName: studentFullName(student)
+      };
+    }
+  }
+  return undefined;
+}
+
 function makeMessageLog(input: Omit<MessageLog, "id" | "createdAt" | "status">): MessageLog {
   return {
     ...input,
     id: createPrototypeId("message"),
     createdAt: new Date().toISOString(),
-    status: "queued"
+    status: "queued",
+    ...textDeliveryMetadata("queued"),
+    deliveryDetail: input.deliveryDetail ?? textDeliveryMetadata("queued").deliveryDetail
   };
 }
 
@@ -1421,6 +1984,30 @@ function messageLogOutreachKey(message: Pick<MessageLog, "kind" | "recipientName
     message.recipientName.trim().toLowerCase(),
     normalizeMessagePhone(message.recipientPhone),
     message.body.trim()
+  ].join("::");
+}
+
+function isTimeKey(value: string) {
+  return /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value.trim());
+}
+
+function localTimeKey(date: Date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function scheduledTextCampaignDue(campaign: ScheduledTextCampaign, now: Date) {
+  const today = dateStamp(now);
+  if (campaign.scheduledFor < today) return true;
+  if (campaign.scheduledFor > today) return false;
+  return (campaign.scheduledTime?.trim() || "00:00") <= localTimeKey(now);
+}
+
+function scheduledTextCampaignKey(campaign: Pick<ScheduledTextCampaign, "scheduledFor" | "audience" | "body" | "scheduledTime">) {
+  return [
+    campaign.scheduledFor.trim(),
+    campaign.scheduledTime?.trim() || "00:00",
+    campaign.audience,
+    normalizeContactText(campaign.body)
   ].join("::");
 }
 
@@ -1522,6 +2109,39 @@ function assertRestoredLoginPasswordsAvailable(
   }
 }
 
+function writeRestoredPlainStorageValue(key: string, value?: string) {
+  if (typeof window === "undefined" || value === undefined) return;
+  try {
+    const cleanValue = value.trim();
+    if (cleanValue) {
+      window.localStorage.setItem(key, cleanValue);
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Non-secret messaging setup is optional; blocked storage should not break the main restore.
+  }
+}
+
+function restoreProductionMessagingSetupStorage(setup: OperationsBackupData["messagingSetup"][number] | undefined) {
+  if (!setup) return;
+  writeRestoredPlainStorageValue(keys.twilioRelayEndpoint, setup.twilioRelayEndpoint);
+  writeRestoredPlainStorageValue(keys.pushServerEndpoint, setup.pushServerEndpoint);
+  if (setup.twilioLaunchProfile) {
+    writeStorage(keys.twilioLaunchProfile, setup.twilioLaunchProfile);
+  }
+}
+
+function withRestoredMessagingPublicKey(settings: MessageNotificationSettings, setup: OperationsBackupData["messagingSetup"][number] | undefined): MessageNotificationSettings {
+  const publicKey = setup?.webPushPublicKey?.trim();
+  if (!publicKey) return settings;
+  return {
+    ...settings,
+    pushPublicKey: publicKey,
+    updatedAt: new Date().toISOString()
+  };
+}
+
 function isSessionAvailableAfterRestore(
   currentSession: AccountSession | undefined,
   restoredAccounts: AccountRecord[],
@@ -1557,7 +2177,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const [studioClasses, setStudioClasses] = useStoredState<StudioClass[]>(keys.studioClasses, seedStudioClasses);
   const [scheduledClasses, setScheduledClasses] = useStoredState<ScheduledClass[]>(keys.scheduledClasses, seedScheduledClasses);
   const [messageCampaigns, setMessageCampaigns] = useStoredState<MessageCampaign[]>(keys.messageCampaigns, []);
+  const [scheduledTextCampaigns, setScheduledTextCampaigns] = useStoredState<ScheduledTextCampaign[]>(keys.scheduledTextCampaigns, []);
   const [messageLogs, setMessageLogs] = useStoredState<MessageLog[]>(keys.messageLogs, seedMessageLogs);
+  const [textAutomationRuns, setTextAutomationRuns] = useStoredState<TextAutomationRun[]>(keys.textAutomationRuns, []);
+  const [messageNotificationSettings, setMessageNotificationSettingsState] = useState<MessageNotificationSettings>(() => readMessageNotificationSettingsForSession(session?.email));
   const [directMessages, setDirectMessages] = useStoredState<DirectMessage[]>(keys.directMessages, seedDirectMessages);
   const [studioEvents, setStudioEvents] = useStoredState<StudioEvent[]>(keys.studioEvents, seedStudioEvents);
   const [merchandiseItems, setMerchandiseItems] = useStoredState<MerchandiseItem[]>(keys.merchandiseItems, seedMerchandiseItems);
@@ -1578,7 +2201,9 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const studioEventsRef = useRef(studioEvents);
   const studentsRef = useRef(students);
   const checkInsRef = useRef(checkIns);
+  const scheduledTextCampaignsRef = useRef(scheduledTextCampaigns);
   const messageLogsRef = useRef(messageLogs);
+  const textAutomationRunsRef = useRef(textAutomationRuns);
   const directMessagesRef = useRef(directMessages);
   const leadReviewsRef = useRef(leadReviews);
   const managedAccountsRef = useRef(managedAccounts);
@@ -1806,6 +2431,21 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   );
 
   useEffect(() => {
+    setMessageNotificationSettingsState(readMessageNotificationSettingsForSession(session?.email));
+  }, [session?.email]);
+
+  const setMessageNotificationSettings = useCallback(
+    (next: MessageNotificationSettings | ((previous: MessageNotificationSettings) => MessageNotificationSettings)) => {
+      setMessageNotificationSettingsState((previous) => {
+        const resolved = typeof next === "function" ? (next as (previous: MessageNotificationSettings) => MessageNotificationSettings)(previous) : next;
+        writeMessageNotificationSettingsForSession(session?.email, resolved);
+        return normalizeMessageNotificationSettings(resolved);
+      });
+    },
+    [session?.email]
+  );
+
+  useEffect(() => {
     studentsRef.current = students;
   }, [students]);
 
@@ -1814,8 +2454,16 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   }, [checkIns]);
 
   useEffect(() => {
+    scheduledTextCampaignsRef.current = scheduledTextCampaigns;
+  }, [scheduledTextCampaigns]);
+
+  useEffect(() => {
     messageLogsRef.current = messageLogs;
   }, [messageLogs]);
+
+  useEffect(() => {
+    textAutomationRunsRef.current = textAutomationRuns;
+  }, [textAutomationRuns]);
 
   useEffect(() => {
     directMessagesRef.current = directMessages;
@@ -1836,6 +2484,34 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     merchandiseItemsRef.current = merchandiseItems;
   }, [merchandiseItems]);
+
+  const unreadDirectMessages = useMemo(
+    () => getUnreadDirectMessageNotifications(directMessages, messageNotificationSettings, students),
+    [directMessages, messageNotificationSettings, students]
+  );
+  const latestUnreadDirectMessage = unreadDirectMessages[0];
+  const unreadDirectMessageCount = unreadDirectMessages.length;
+
+  const updateMessageNotificationSettings = useCallback(
+    (settings: Partial<MessageNotificationSettings>) => {
+      setMessageNotificationSettings((current) => ({
+        ...current,
+        ...settings,
+        updatedAt: new Date().toISOString()
+      }));
+    },
+    [setMessageNotificationSettings]
+  );
+
+  const markMessageNotificationsSeen = useCallback(() => {
+    const latestMessage = getUnreadDirectMessageNotifications(directMessagesRef.current, messageNotificationSettings, studentsRef.current)[0];
+    const lastSeenDirectMessageAt = latestMessage?.createdAt ?? new Date().toISOString();
+    setMessageNotificationSettings((current) => ({
+      ...current,
+      lastSeenDirectMessageAt,
+      updatedAt: new Date().toISOString()
+    }));
+  }, [messageNotificationSettings, setMessageNotificationSettings]);
 
   const showToast = useCallback((message: string, actionLabel?: string, onAction?: () => void) => {
     const id = createPrototypeId("toast");
@@ -2714,11 +3390,14 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const restoredChildAccounts = restoreChildAccountPasswords(snapshot.data.childAccounts, childAccounts);
       assertRestoredLoginPasswordsAvailable(restoredAccounts, restoredManagedAccounts, restoredChildAccounts, snapshot.data.childAccounts, restoredAccountRoles);
       const restoredStudents = snapshot.data.students as StudentRecord[];
+      const restoredScheduledTextCampaigns = snapshot.data.scheduledTextCampaigns as ScheduledTextCampaign[];
       const restoredMessageLogs = snapshot.data.messageLogs as MessageLog[];
+      const restoredTextAutomationRuns = snapshot.data.automationRuns as TextAutomationRun[];
       const restoredDirectMessages = snapshot.data.directMessages as DirectMessage[];
       const restoredCheckIns = snapshot.data.checkIns as StudentCheckIn[];
       const restoredContacts = snapshot.data.contacts as ContactSubmission[];
       const restoredLeadReviews = snapshot.data.leadReviews as LeadReview[];
+      const restoredMessagingSetup = snapshot.data.messagingSetup[0];
       updateAccountsState(restoredAccounts);
       setAccountRoles(restoredAccountRoles);
       updateManagedAccountsState(restoredManagedAccounts);
@@ -2728,8 +3407,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       updateStudioClassesState(snapshot.data.studioClasses as StudioClass[]);
       updateScheduledClassesState(snapshot.data.scheduledClasses as ScheduledClass[]);
       setMessageCampaigns(snapshot.data.messageCampaigns as MessageCampaign[]);
+      scheduledTextCampaignsRef.current = restoredScheduledTextCampaigns;
+      setScheduledTextCampaigns(restoredScheduledTextCampaigns);
       messageLogsRef.current = restoredMessageLogs;
       setMessageLogs(restoredMessageLogs);
+      textAutomationRunsRef.current = restoredTextAutomationRuns;
+      setTextAutomationRuns(restoredTextAutomationRuns);
       directMessagesRef.current = restoredDirectMessages;
       setDirectMessages(restoredDirectMessages);
       updateStudioEventsState(snapshot.data.studioEvents as StudioEvent[]);
@@ -2746,6 +3429,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       setContacts(restoredContacts);
       leadReviewsRef.current = restoredLeadReviews;
       setLeadReviews(restoredLeadReviews);
+      restoreProductionMessagingSetupStorage(restoredMessagingSetup);
+      if (restoredMessagingSetup?.webPushPublicKey?.trim()) {
+        setMessageNotificationSettings((current) => withRestoredMessagingPublicKey(current, restoredMessagingSetup));
+      }
       if (!isSessionAvailableAfterRestore(session, restoredAccounts, restoredManagedAccounts, restoredChildAccounts, restoredStudents)) {
         setSession(undefined);
       }
@@ -2764,8 +3451,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       setContacts,
       setDirectMessages,
       setLeadReviews,
+      setMessageNotificationSettings,
+      setTextAutomationRuns,
       setMessageCampaigns,
       setMessageLogs,
+      setScheduledTextCampaigns,
       setSession,
       setStudents,
       updateAccountsState,
@@ -2782,6 +3472,48 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       updateTrainingVideosState,
       updateOrdersState
     ]
+  );
+
+  const recordSmsOptOut = useCallback(
+    (phone: string, optedOut: boolean) => {
+      const phoneKey = normalizeMessagePhone(phone);
+      if (!phoneKey) return 0;
+      const updatedAt = new Date().toISOString();
+      let updatedContacts = 0;
+      const nextStudents = studentsRef.current.map((student) => {
+        let nextStudent = student;
+        if (normalizeMessagePhone(student.phone) === phoneKey) {
+          updatedContacts += 1;
+          const { studentSmsOptOutAt: _studentSmsOptOutAt, ...restStudent } = nextStudent;
+          nextStudent = optedOut
+            ? { ...nextStudent, studentSmsOptOutAt: updatedAt, studentSmsConsentUpdatedAt: updatedAt, smsConsentUpdatedAt: updatedAt }
+            : { ...restStudent, studentSmsConsentUpdatedAt: updatedAt, smsConsentUpdatedAt: updatedAt };
+        }
+        if (normalizeMessagePhone(student.guardianPhone ?? "") === phoneKey) {
+          updatedContacts += 1;
+          const { guardianSmsOptOutAt: _guardianSmsOptOutAt, ...restStudent } = nextStudent;
+          nextStudent = optedOut
+            ? { ...nextStudent, guardianSmsOptOutAt: updatedAt, guardianSmsConsentUpdatedAt: updatedAt, smsConsentUpdatedAt: updatedAt }
+            : { ...restStudent, guardianSmsConsentUpdatedAt: updatedAt, smsConsentUpdatedAt: updatedAt };
+        }
+        return nextStudent;
+      });
+      const nextManagedAccounts = managedAccountsRef.current.map((account) => {
+        if (normalizeMessagePhone(account.phone ?? "") !== phoneKey) return account;
+        updatedContacts += 1;
+        const { smsOptOutAt: _smsOptOutAt, ...restAccount } = account;
+        return optedOut
+          ? { ...account, smsOptOutAt: updatedAt, smsConsentUpdatedAt: updatedAt }
+          : { ...restAccount, smsConsentUpdatedAt: updatedAt };
+      });
+      if (updatedContacts) {
+        studentsRef.current = nextStudents;
+        setStudents(nextStudents);
+        updateManagedAccountsState(nextManagedAccounts);
+      }
+      return updatedContacts;
+    },
+    [setStudents, updateManagedAccountsState]
   );
 
   const recordStudentCheckIn = useCallback(
@@ -2807,14 +3539,15 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       };
       const reachedBeltReview = !isBeltTestInviteDue(student, checkInDate) && isBeltTestInviteDue(updatedStudent, checkInDate);
       const reachedMilestone = !isMilestoneEncouragementDue(student, checkInDate) && isMilestoneEncouragementDue(updatedStudent, checkInDate);
-      const queuedMessage = reachedBeltReview
+      const canTextUpdatedStudent = hasStudentSmsSendConsent(updatedStudent);
+      const queuedMessage = canTextUpdatedStudent && reachedBeltReview
         ? makeMessageLog({
             kind: "follow-up",
             recipientName: studentFullName(updatedStudent),
             recipientPhone: updatedStudent.phone,
             body: beltTestInviteTextForStudent(updatedStudent)
           })
-        : reachedMilestone
+        : canTextUpdatedStudent && reachedMilestone
           ? makeMessageLog({
               kind: "follow-up",
               recipientName: studentFullName(updatedStudent),
@@ -2849,7 +3582,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const sendMissedClassFollowUps = useCallback(() => {
     const today = todayStamp();
-    const targets = studentsRef.current.filter((student) => isMissedClassFollowUpDue(student, today));
+    const targets = studentsRef.current.filter((student) => isMissedClassFollowUpDue(student, today) && hasStudentSmsSendConsent(student));
     if (!targets.length) return 0;
     const targetIds = new Set(targets.map((student) => student.id));
     const logs = targets.map((student) =>
@@ -2869,7 +3602,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const sendAttendanceGapCheckIns = useCallback(() => {
     const today = todayStamp();
-    const targets = studentsRef.current.filter((student) => isAttendanceGapFollowUpDue(student, today));
+    const targets = studentsRef.current.filter((student) => isAttendanceGapFollowUpDue(student, today) && hasStudentSmsSendConsent(student));
     if (!targets.length) return 0;
     const targetIds = new Set(targets.map((student) => student.id));
     const logs = targets.map((student) =>
@@ -2889,7 +3622,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const sendTrialConversionFollowUps = useCallback(() => {
     const today = todayStamp();
-    const targets = studentsRef.current.filter((student) => isTrialConversionDue(student, today));
+    const targets = studentsRef.current.filter((student) => isTrialConversionDue(student, today) && hasStudentSmsSendConsent(student));
     if (!targets.length) return 0;
     const targetIds = new Set(targets.map((student) => student.id));
     const logs = targets.map((student) =>
@@ -2909,7 +3642,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const sendNewStudentCheckIns = useCallback(() => {
     const today = todayStamp();
-    const targets = studentsRef.current.filter((student) => isNewStudentCheckInDue(student, today));
+    const targets = studentsRef.current.filter((student) => isNewStudentCheckInDue(student, today) && hasStudentSmsSendConsent(student));
     if (!targets.length) return 0;
     const targetIds = new Set(targets.map((student) => student.id));
     const logs = targets.map((student) =>
@@ -2929,7 +3662,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const sendPausedStudentReactivationFollowUps = useCallback(() => {
     const today = todayStamp();
-    const targets = studentsRef.current.filter((student) => isPausedStudentReviewDue(student, today));
+    const targets = studentsRef.current.filter((student) => isPausedStudentReviewDue(student, today) && hasStudentSmsSendConsent(student));
     if (!targets.length) return 0;
     const targetIds = new Set(targets.map((student) => student.id));
     const logs = targets.map((student) =>
@@ -2949,7 +3682,9 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const sendCelebrationOutreach = useCallback(() => {
     const today = todayStamp();
-    const targetEvents = studentsRef.current.flatMap((student) => getStudentCelebrationEvents(student, today).map((event) => ({ student, event })));
+    const targetEvents = studentsRef.current.flatMap((student) => (
+      hasStudentSmsSendConsent(student) ? getStudentCelebrationEvents(student, today).map((event) => ({ student, event })) : []
+    ));
     if (!targetEvents.length) return 0;
     const targetIds = new Set(targetEvents.map(({ student }) => student.id));
     const logs = targetEvents.map(({ student, event }) =>
@@ -2969,7 +3704,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const sendProfileUpdateRequests = useCallback(() => {
     const today = todayStamp();
-    const targets = studentsRef.current.filter((student) => isProfileUpdateRequestDue(student, today));
+    const targets = studentsRef.current.filter((student) => isProfileUpdateRequestDue(student, today) && hasStudentSmsSendConsent(student));
     if (!targets.length) return 0;
     const targetIds = new Set(targets.map((student) => student.id));
     const logs = targets.map((student) =>
@@ -2993,8 +3728,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     const targets = getClassReminderCandidates(currentStudents, scheduledClassesRef.current, today);
     if (!targets.length) return 0;
     const studentsById = new Map(currentStudents.map((student) => [student.id, student]));
-    const targetStudentIds = new Set(targets.map((target) => target.studentId));
-    const logs = targets.flatMap((target) => {
+    const sendableTargets = targets.filter((target) => {
+      const student = studentsById.get(target.studentId);
+      return Boolean(student && hasStudentSmsSendConsent(student));
+    });
+    const targetStudentIds = new Set(sendableTargets.map((target) => target.studentId));
+    const logs = sendableTargets.flatMap((target) => {
       const student = studentsById.get(target.studentId);
       if (!student) return [];
       return makeMessageLog({
@@ -3014,7 +3753,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const sendMilestoneEncouragements = useCallback(() => {
     const today = todayStamp();
-    const targets = studentsRef.current.filter((student) => isMilestoneEncouragementDue(student, today));
+    const targets = studentsRef.current.filter((student) => isMilestoneEncouragementDue(student, today) && hasStudentSmsSendConsent(student));
     if (!targets.length) return 0;
     const targetIds = new Set(targets.map((student) => student.id));
     const logs = targets.map((student) =>
@@ -3034,7 +3773,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   const sendBeltTestInvites = useCallback(() => {
     const today = todayStamp();
-    const targets = studentsRef.current.filter((student) => isBeltTestInviteDue(student, today));
+    const targets = studentsRef.current.filter((student) => isBeltTestInviteDue(student, today) && hasStudentSmsSendConsent(student));
     if (!targets.length) return 0;
     const targetIds = new Set(targets.map((student) => student.id));
     const logs = targets.map((student) =>
@@ -3052,10 +3791,187 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     return insertedLogs.length;
   }, [appendUniqueMessageLogs, setStudents]);
 
+  const sendEventReminderTexts = useCallback(() => {
+    const today = todayStamp();
+    const targets = getEventReminderCandidates(studioEventsRef.current, studentsRef.current, today);
+    if (!targets.length) return 0;
+    const logs = targets.map(({ event, student, recipient }) =>
+      makeMessageLog({
+        kind: "reminder",
+        recipientName: recipient.name,
+        recipientPhone: recipient.phone,
+        recipientRole: recipient.role,
+        recipientId: recipient.id,
+        body: eventReminderTextForRecipient(event, student, recipient)
+      })
+    );
+    const insertedLogs = appendUniqueMessageLogs(logs);
+    const contactedStudentIds = studentIdsForMessageLogs(insertedLogs);
+    if (contactedStudentIds.size) {
+      const nextStudents = studentsRef.current.map((student) => (contactedStudentIds.has(student.id) ? { ...student, lastContactedAt: today } : student));
+      studentsRef.current = nextStudents;
+      setStudents(nextStudents);
+    }
+    return insertedLogs.length;
+  }, [appendUniqueMessageLogs, setStudents]);
+
+  const scheduleTextCampaign = useCallback(
+    (campaign: { body: string; audience: MessageCampaign["audience"]; scheduledFor: string; scheduledTime?: string; title?: string }) => {
+      const body = campaign.body.trim();
+      const scheduledFor = campaign.scheduledFor.trim();
+      const scheduledTime = campaign.scheduledTime?.trim();
+      if (!body || !isDateKey(scheduledFor) || (scheduledTime && !isTimeKey(scheduledTime))) return undefined;
+      const createdCampaign: ScheduledTextCampaign = {
+        id: createPrototypeId("scheduled-campaign"),
+        title: campaign.title?.trim() || "Scheduled promotion",
+        body,
+        audience: campaign.audience,
+        scheduledFor,
+        ...(scheduledTime ? { scheduledTime } : {}),
+        status: "scheduled",
+        createdAt: new Date().toISOString()
+      };
+      const existingCampaign = scheduledTextCampaignsRef.current.find(
+        (item) => item.status === "scheduled" && scheduledTextCampaignKey(item) === scheduledTextCampaignKey(createdCampaign)
+      );
+      if (existingCampaign) return existingCampaign;
+      const nextScheduledCampaigns = [createdCampaign, ...scheduledTextCampaignsRef.current];
+      scheduledTextCampaignsRef.current = nextScheduledCampaigns;
+      setScheduledTextCampaigns(nextScheduledCampaigns);
+      return createdCampaign;
+    },
+    [setScheduledTextCampaigns]
+  );
+
+  const cancelScheduledTextCampaign = useCallback(
+    (campaignId: string) => {
+      const existingCampaign = scheduledTextCampaignsRef.current.find((campaign) => campaign.id === campaignId && campaign.status === "scheduled");
+      if (!existingCampaign) return undefined;
+      const canceledCampaign: ScheduledTextCampaign = {
+        ...existingCampaign,
+        status: "canceled"
+      };
+      const nextScheduledCampaigns = scheduledTextCampaignsRef.current.map((campaign) => (campaign.id === campaignId ? canceledCampaign : campaign));
+      scheduledTextCampaignsRef.current = nextScheduledCampaigns;
+      setScheduledTextCampaigns(nextScheduledCampaigns);
+      return canceledCampaign;
+    },
+    [setScheduledTextCampaigns]
+  );
+
+  const runScheduledTextCampaigns = useCallback(() => {
+    const now = new Date();
+    const dueCampaigns = scheduledTextCampaignsRef.current.filter((campaign) => campaign.status === "scheduled" && scheduledTextCampaignDue(campaign, now));
+    if (!dueCampaigns.length) return 0;
+    const queuedAt = new Date().toISOString();
+    let totalQueued = 0;
+    const createdCampaigns: MessageCampaign[] = [];
+    const completedScheduledCampaignIds = new Map<string, string | undefined>();
+
+    dueCampaigns.forEach((scheduledCampaign) => {
+      const recipients = getTextBlastRecipients(scheduledCampaign.audience, studentsRef.current, managedAccountsRef.current);
+      if (!recipients.length) return;
+      const campaign: MessageCampaign = {
+        id: createPrototypeId("campaign"),
+        title: scheduledCampaign.title.trim() || "Scheduled promotion",
+        body: scheduledCampaign.body,
+        audience: scheduledCampaign.audience,
+        createdAt: queuedAt
+      };
+      const logs = recipients.map((recipient) =>
+        makeMessageLog({
+          kind: "marketing",
+          recipientName: recipient.name,
+          recipientPhone: recipient.phone,
+          recipientRole: recipient.role,
+          recipientId: recipient.id,
+          body: scheduledCampaign.body,
+          campaignId: campaign.id
+        })
+      );
+      const insertedLogs = appendUniqueMessageLogs(logs);
+      if (insertedLogs.length) {
+        totalQueued += insertedLogs.length;
+        createdCampaigns.push(campaign);
+      }
+      completedScheduledCampaignIds.set(scheduledCampaign.id, insertedLogs.length ? campaign.id : undefined);
+    });
+
+    if (completedScheduledCampaignIds.size) {
+      const nextScheduledCampaigns = scheduledTextCampaignsRef.current.map((campaign) => {
+        if (!completedScheduledCampaignIds.has(campaign.id)) return campaign;
+        const campaignId = completedScheduledCampaignIds.get(campaign.id);
+        return {
+          ...campaign,
+          status: "queued" as const,
+          queuedAt,
+          ...(campaignId ? { campaignId } : {})
+        };
+      });
+      scheduledTextCampaignsRef.current = nextScheduledCampaigns;
+      setScheduledTextCampaigns(nextScheduledCampaigns);
+    }
+
+    if (createdCampaigns.length) {
+      setMessageCampaigns((current) => [...createdCampaigns, ...current]);
+    }
+    return totalQueued;
+  }, [appendUniqueMessageLogs, setMessageCampaigns, setScheduledTextCampaigns]);
+
+  const runTextAutomations = useCallback(() => {
+    const result: TextAutomationRunResult = {
+      missedClassFollowUps: sendMissedClassFollowUps(),
+      attendanceGapCheckIns: sendAttendanceGapCheckIns(),
+      trialConversionFollowUps: sendTrialConversionFollowUps(),
+      newStudentCheckIns: sendNewStudentCheckIns(),
+      pausedStudentReactivationFollowUps: sendPausedStudentReactivationFollowUps(),
+      celebrationOutreach: sendCelebrationOutreach(),
+      profileUpdateRequests: sendProfileUpdateRequests(),
+      classReminders: sendClassReminders(),
+      milestoneEncouragements: sendMilestoneEncouragements(),
+      beltTestInvites: sendBeltTestInvites(),
+      eventReminders: sendEventReminderTexts(),
+      scheduledPromotions: runScheduledTextCampaigns(),
+      totalQueued: 0
+    };
+    result.totalQueued =
+      result.missedClassFollowUps +
+      result.attendanceGapCheckIns +
+      result.trialConversionFollowUps +
+      result.newStudentCheckIns +
+      result.pausedStudentReactivationFollowUps +
+      result.celebrationOutreach +
+      result.profileUpdateRequests +
+      result.classReminders +
+      result.milestoneEncouragements +
+      result.beltTestInvites +
+      result.eventReminders +
+      result.scheduledPromotions;
+    const automationRun = buildTextAutomationRunLog(result);
+    const nextAutomationRuns = [automationRun, ...textAutomationRunsRef.current].slice(0, 20);
+    textAutomationRunsRef.current = nextAutomationRuns;
+    setTextAutomationRuns(nextAutomationRuns);
+    return result;
+  }, [
+    sendAttendanceGapCheckIns,
+    sendBeltTestInvites,
+    sendCelebrationOutreach,
+    sendClassReminders,
+    sendEventReminderTexts,
+    sendMilestoneEncouragements,
+    sendMissedClassFollowUps,
+    sendNewStudentCheckIns,
+    sendPausedStudentReactivationFollowUps,
+    sendProfileUpdateRequests,
+    runScheduledTextCampaigns,
+    sendTrialConversionFollowUps,
+    setTextAutomationRuns
+  ]);
+
   const queueStudentMilestoneEncouragement = useCallback(
     (studentId: string) => {
       const student = studentsRef.current.find((item) => item.id === studentId);
-      if (!student || !isCurrentStudentEnrollment(student) || !student.phone.trim()) return undefined;
+      if (!student || !isCurrentStudentEnrollment(student) || !hasStudentSmsSendConsent(student)) return undefined;
       const today = todayStamp();
       const log = makeMessageLog({
         kind: "follow-up",
@@ -3076,7 +3992,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const queueStudentProfileUpdateRequest = useCallback(
     (studentId: string) => {
       const student = studentsRef.current.find((item) => item.id === studentId);
-      if (!student || !isCurrentStudentEnrollment(student) || !student.phone.trim()) return undefined;
+      if (!student || !isCurrentStudentEnrollment(student) || !hasStudentSmsSendConsent(student)) return undefined;
       const today = todayStamp();
       const log = makeMessageLog({
         kind: "profile-update",
@@ -3095,25 +4011,27 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   );
 
   const sendMarketingBlast = useCallback(
-    (body: string) => {
+    (body: string, audience: MessageCampaign["audience"] = "all-students") => {
       const cleanBody = body.trim();
       if (!cleanBody) return 0;
-      const logs = studentsRef.current
-        .filter((student) => isCurrentOperationsStudent(student) && student.phone.trim())
-        .map((student) =>
+      const recipients = getTextBlastRecipients(audience, studentsRef.current, managedAccountsRef.current);
+      const logs = recipients
+        .map((recipient) =>
           makeMessageLog({
             kind: "marketing",
-            recipientName: studentFullName(student),
-            recipientPhone: student.phone,
+            recipientName: recipient.name,
+            recipientPhone: recipient.phone,
+            recipientRole: recipient.role,
+            recipientId: recipient.id,
             body: cleanBody
           })
         );
       if (!logs.length) return 0;
       const campaign: MessageCampaign = {
         id: createPrototypeId("campaign"),
-        title: "Marketing blast",
+        title: audience === "all-students" ? "Marketing blast" : "Audience text blast",
         body: cleanBody,
-        audience: "all-students",
+        audience,
         createdAt: new Date().toISOString()
       };
       const logsWithCampaign = logs.map((log) => ({ ...log, campaignId: campaign.id }));
@@ -3125,20 +4043,104 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [appendUniqueMessageLogs, setMessageCampaigns]
   );
 
+  const getTextAudiencePreview = useCallback((audience: MessageCampaign["audience"]): TextAudiencePreview => {
+    const recipients = getTextBlastRecipients(audience, studentsRef.current, managedAccountsRef.current);
+    return {
+      audience,
+      total: recipients.length,
+      students: recipients.filter((recipient) => recipient.role === "student").length,
+      parents: recipients.filter((recipient) => recipient.role === "parent").length,
+      staff: recipients.filter((recipient) => recipient.role === "staff").length
+    };
+  }, []);
+
+  const buildTwilioRelayPayload = useCallback((): TwilioRelayPayload => {
+    const currentStudents = studentsRef.current;
+    const currentManagedAccounts = managedAccountsRef.current;
+    const messages = messageLogsRef.current
+      .filter((message) => message.status === "queued" && isQueuedMessageDeliverable(message, currentStudents, currentManagedAccounts))
+      .map(buildTwilioRelayMessage);
+    return {
+      schemaVersion: "chos-twilio-relay.v1",
+      provider: "twilio",
+      deliveryMode: "server-relay",
+      generatedAt: new Date().toISOString(),
+      requestedBy: session
+        ? {
+            email: session.email,
+            role: accountRole
+          }
+        : undefined,
+      messages
+    };
+  }, [accountRole, session]);
+
+  const applyTwilioResultsToMessageLogs = useCallback(
+    (results: TwilioRelayResult[]) => {
+      if (!results.length) return { applied: 0, sent: 0, failed: 0, ignored: 0 };
+      const appliedAt = new Date().toISOString();
+      const unappliedResults = [...results];
+      let applied = 0;
+      let sent = 0;
+      let failed = 0;
+      const nextMessageLogs = messageLogsRef.current.map((message) => {
+        const resultIndex = unappliedResults.findIndex((result) => {
+          if (result.id === message.id) return true;
+          if (result.id && result.id === message.deliveryProviderMessageId) return true;
+          return Boolean(result.deliveryProviderMessageId && result.deliveryProviderMessageId === message.deliveryProviderMessageId);
+        });
+        if (resultIndex < 0) return message;
+        const [result] = unappliedResults.splice(resultIndex, 1);
+        applied += 1;
+        if (failedTwilioDeliveryStatuses.has(result.deliveryStatus)) {
+          failed += 1;
+        } else {
+          sent += 1;
+        }
+        return applyTwilioRelayResultToMessage(message, result, appliedAt);
+      });
+      if (applied) {
+        messageLogsRef.current = nextMessageLogs;
+        setMessageLogs(nextMessageLogs);
+      }
+      return { applied, sent, failed, ignored: unappliedResults.length };
+    },
+    [setMessageLogs]
+  );
+
+  const applyTwilioRelayResults = useCallback(
+    (rawResults: string) => {
+      const results = parseTwilioRelayResults(rawResults);
+      if (!results) return undefined;
+      return applyTwilioResultsToMessageLogs(results);
+    },
+    [applyTwilioResultsToMessageLogs]
+  );
+
+  const applyTwilioStatusCallbacks = useCallback(
+    (rawCallbacks: string) => {
+      const results = parseTwilioStatusCallbacks(rawCallbacks);
+      if (!results) return undefined;
+      return applyTwilioResultsToMessageLogs(results);
+    },
+    [applyTwilioResultsToMessageLogs]
+  );
+
   const sendQueuedTexts = useCallback(() => {
     const currentMessageLogs = messageLogsRef.current;
     const currentStudents = studentsRef.current;
+    const currentManagedAccounts = managedAccountsRef.current;
     const deliverableQueuedIds = new Set(
-      currentMessageLogs.filter((message) => message.status === "queued" && isQueuedMessageDeliverable(message, currentStudents)).map((message) => message.id)
+      currentMessageLogs.filter((message) => message.status === "queued" && isQueuedMessageDeliverable(message, currentStudents, currentManagedAccounts)).map((message) => message.id)
     );
     const staleQueuedIds = new Set(
-      currentMessageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, currentStudents)).map((message) => message.id)
+      currentMessageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, currentStudents, currentManagedAccounts)).map((message) => message.id)
     );
     if (!deliverableQueuedIds.size && !staleQueuedIds.size) return 0;
     const sentAt = new Date().toISOString();
     const nextMessageLogs = currentMessageLogs.flatMap((message): MessageLog[] => {
       if (message.status !== "queued") return [message];
-      if (deliverableQueuedIds.has(message.id)) return [{ ...message, status: "sent", sentAt }];
+      if (deliverableQueuedIds.has(message.id)) return [{ ...message, status: "sent", sentAt, deliveryStatus: "sent" }];
       if (staleQueuedIds.has(message.id)) return [];
       return [message];
     });
@@ -3152,14 +4154,14 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const currentMessageLogs = messageLogsRef.current;
       const queuedMessage = currentMessageLogs.find((message) => message.id === messageId && message.status === "queued");
       if (!queuedMessage) return undefined;
-      if (!isQueuedMessageDeliverable(queuedMessage, studentsRef.current)) {
+      if (!isQueuedMessageDeliverable(queuedMessage, studentsRef.current, managedAccountsRef.current)) {
         const nextMessageLogs = currentMessageLogs.filter((message) => message.id !== messageId || message.status !== "queued");
         messageLogsRef.current = nextMessageLogs;
         setMessageLogs(nextMessageLogs);
         return undefined;
       }
       const sentAt = new Date().toISOString();
-      const sentMessage: MessageLog = { ...queuedMessage, status: "sent", sentAt };
+      const sentMessage: MessageLog = { ...queuedMessage, status: "sent", sentAt, deliveryStatus: "sent" };
       const nextMessageLogs = currentMessageLogs.map((message) => (message.id === messageId && message.status === "queued" ? sentMessage : message));
       messageLogsRef.current = nextMessageLogs;
       setMessageLogs(nextMessageLogs);
@@ -3171,8 +4173,9 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const clearStaleQueuedTexts = useCallback(() => {
     const currentMessageLogs = messageLogsRef.current;
     const currentStudents = studentsRef.current;
+    const currentManagedAccounts = managedAccountsRef.current;
     const staleQueuedIds = new Set(
-      currentMessageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, currentStudents)).map((message) => message.id)
+      currentMessageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, currentStudents, currentManagedAccounts)).map((message) => message.id)
     );
     if (!staleQueuedIds.size) return 0;
     const nextMessageLogs = currentMessageLogs.filter((message) => message.status !== "queued" || !staleQueuedIds.has(message.id));
@@ -3180,6 +4183,44 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     setMessageLogs(nextMessageLogs);
     return staleQueuedIds.size;
   }, [setMessageLogs]);
+
+  const applyTwilioInboundWebhook = useCallback(
+    (rawWebhook: string) => {
+      const webhook = parseTwilioInboundWebhook(rawWebhook);
+      if (!webhook) return undefined;
+      const keyword = webhook.keyword;
+      if (keyword === "opt-out" || keyword === "opt-in") {
+        const updatedContacts = recordSmsOptOut(webhook.from, keyword === "opt-out");
+        return {
+          imported: 0,
+          optedOut: keyword === "opt-out" ? updatedContacts : 0,
+          optedIn: keyword === "opt-in" ? updatedContacts : 0,
+          ignored: updatedContacts ? 0 : 1
+        };
+      }
+      const sender = inboundSmsDirectSenderForPhone(webhook.from, studentsRef.current);
+      if (!sender) return { imported: 0, optedOut: 0, optedIn: 0, ignored: 1 };
+      const id = webhook.messageSid ? `twilio-${webhook.messageSid}` : createPrototypeId("twilio-direct");
+      if (directMessagesRef.current.some((message) => message.id === id)) return { imported: 0, optedOut: 0, optedIn: 0, ignored: 1 };
+      const recipientId = "direct-staff-seed";
+      const createdMessage: DirectMessage = {
+        id,
+        threadId: [recipientId, sender.senderId].sort().join("__"),
+        senderId: sender.senderId,
+        senderName: sender.senderName,
+        recipientId,
+        recipientName: "Cho's Manager",
+        body: webhook.body.trim(),
+        createdAt: new Date().toISOString(),
+        status: "sent"
+      };
+      const nextDirectMessages = [...directMessagesRef.current, createdMessage];
+      directMessagesRef.current = nextDirectMessages;
+      setDirectMessages(nextDirectMessages);
+      return { imported: 1, optedOut: 0, optedIn: 0, ignored: 0 };
+    },
+    [recordSmsOptOut, setDirectMessages]
+  );
 
   const sendDirectMessage = useCallback(
     (message: { senderId: string; senderName: string; recipientId: string; recipientName: string; body: string }) => {
@@ -3231,7 +4272,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     studioClasses,
     scheduledClasses,
     messageCampaigns,
+    scheduledTextCampaigns,
     messageLogs,
+    textAutomationRuns,
+    messageNotificationSettings,
+    unreadDirectMessageCount,
+    latestUnreadDirectMessage,
     directMessages,
     studioEvents,
     merchandiseItems,
@@ -3287,6 +4333,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     restockLowInventory,
     reviewLeadFollowUps,
     restoreOperationsBackup,
+    recordSmsOptOut,
     recordStudentCheckIn,
     sendMissedClassFollowUps,
     sendAttendanceGapCheckIns,
@@ -3298,12 +4345,23 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     sendClassReminders,
     sendMilestoneEncouragements,
     sendBeltTestInvites,
+    sendEventReminderTexts,
+    runTextAutomations,
     queueStudentMilestoneEncouragement,
     queueStudentProfileUpdateRequest,
+    scheduleTextCampaign,
+    cancelScheduledTextCampaign,
+    getTextAudiencePreview,
     sendMarketingBlast,
+    buildTwilioRelayPayload,
+    applyTwilioRelayResults,
+    applyTwilioStatusCallbacks,
+    applyTwilioInboundWebhook,
     sendQueuedTexts,
     sendQueuedText,
     clearStaleQueuedTexts,
+    updateMessageNotificationSettings,
+    markMessageNotificationsSeen,
     sendDirectMessage
   };
 

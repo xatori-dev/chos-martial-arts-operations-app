@@ -1,5 +1,5 @@
 import { buildStudentBeltProgress } from "./studentProgress";
-import type { BookingDetails, ContactSubmission, DirectMessage, LeadReview, MerchandiseItem, MessageLog, ScheduledClass, StudentCheckIn, StudentRecord, StudioClass, StudioEvent } from "./types";
+import type { BookingDetails, ContactSubmission, DirectMessage, LeadReview, ManagedAccount, MerchandiseItem, MessageLog, ScheduledClass, StudentCheckIn, StudentRecord, StudioClass, StudioEvent } from "./types";
 
 export type ReportsPriorityAction = {
   id: string;
@@ -173,6 +173,7 @@ type ReportsCommandCenterInput = {
   studioClasses: StudioClass[];
   studioEvents: StudioEvent[];
   messageLogs: MessageLog[];
+  managedAccounts?: ManagedAccount[];
   merchandiseItems: MerchandiseItem[];
   bookings?: BookingDetails[];
   contacts?: ContactSubmission[];
@@ -247,7 +248,28 @@ function isCurrentStudent(student: StudentRecord) {
 
 function normalizeMessagePhone(value: string) {
   const digits = value.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
   return digits || value.trim().toLowerCase();
+}
+
+function hasSmsOptOut(value?: string) {
+  return Boolean(value?.trim());
+}
+
+function hasSmsOptIn(consentUpdatedAt?: string, optOutAt?: string) {
+  return Boolean(consentUpdatedAt?.trim() && !hasSmsOptOut(optOutAt));
+}
+
+export function hasStudentSmsConsent(student: Pick<StudentRecord, "studentSmsOptOutAt" | "studentSmsConsentUpdatedAt" | "smsConsentUpdatedAt">) {
+  return hasSmsOptIn(student.studentSmsConsentUpdatedAt ?? student.smsConsentUpdatedAt, student.studentSmsOptOutAt);
+}
+
+export function hasGuardianSmsConsent(student: Pick<StudentRecord, "guardianSmsOptOutAt" | "guardianSmsConsentUpdatedAt" | "smsConsentUpdatedAt">) {
+  return hasSmsOptIn(student.guardianSmsConsentUpdatedAt ?? student.smsConsentUpdatedAt, student.guardianSmsOptOutAt);
+}
+
+export function hasStaffSmsConsent(account: Pick<ManagedAccount, "smsOptOutAt" | "smsConsentUpdatedAt">) {
+  return hasSmsOptIn(account.smsConsentUpdatedAt, account.smsOptOutAt);
 }
 
 function slugId(value: string) {
@@ -323,15 +345,62 @@ export function getLeadCandidates(input: Pick<ReportsCommandCenterInput, "bookin
   return [...contactCandidates, ...bookingCandidates];
 }
 
-export function isQueuedMessageDeliverable(message: Pick<MessageLog, "recipientName" | "recipientPhone">, students: readonly StudentRecord[]) {
+export function isQueuedMessageDeliverable(
+  message: Pick<MessageLog, "recipientName" | "recipientPhone" | "recipientRole" | "recipientId">,
+  students: readonly StudentRecord[],
+  managedAccounts: readonly ManagedAccount[] = []
+) {
   const recipientName = message.recipientName.trim().toLowerCase();
   const recipientPhone = normalizeMessagePhone(message.recipientPhone);
   if (!recipientName || !recipientPhone) return false;
-  return students.some(
+  if (message.recipientRole === "staff") {
+    return managedAccounts.some(
+      (account) =>
+        account.role === "staff" &&
+        account.status === "active" &&
+        hasStaffSmsConsent(account) &&
+        account.displayName.trim().toLowerCase() === recipientName &&
+        normalizeMessagePhone(account.phone ?? "") === recipientPhone
+    );
+  }
+  if (message.recipientRole === "parent") {
+    return students.some((student) => {
+      if (!isCurrentStudent(student)) return false;
+      const parentId = `parent-${student.id}`;
+      const guardianName = (student.guardianName?.trim() || `${fullName(student)} Parent/Guardian`).toLowerCase();
+      const guardianPhone = normalizeMessagePhone(student.guardianPhone ?? "");
+      return (
+        hasGuardianSmsConsent(student) &&
+        (message.recipientId === parentId || guardianName === recipientName) &&
+        guardianPhone === recipientPhone
+      );
+    });
+  }
+  const studentMatch = students.some(
     (student) =>
       isCurrentStudent(student) &&
+      hasStudentSmsConsent(student) &&
       fullName(student).trim().toLowerCase() === recipientName &&
       normalizeMessagePhone(student.phone) === recipientPhone
+  );
+  if (message.recipientRole === "student") return studentMatch;
+  return (
+    studentMatch ||
+    students.some(
+      (student) =>
+        isCurrentStudent(student) &&
+        hasGuardianSmsConsent(student) &&
+        (student.guardianName?.trim().toLowerCase() || "") === recipientName &&
+        normalizeMessagePhone(student.guardianPhone ?? "") === recipientPhone
+    ) ||
+    managedAccounts.some(
+      (account) =>
+        account.role === "staff" &&
+        account.status === "active" &&
+        hasStaffSmsConsent(account) &&
+        account.displayName.trim().toLowerCase() === recipientName &&
+        normalizeMessagePhone(account.phone ?? "") === recipientPhone
+    )
   );
 }
 
@@ -717,8 +786,8 @@ export function buildReportsCommandCenter(input: ReportsCommandCenterInput): Rep
       .filter((event) => isDateBetween(event.date, input.today, calendarEnd))
       .map((event) => ({ id: event.id, title: event.title, date: event.date, time: event.time, kind: "event" as const }))
   ].sort((left, right) => left.date.localeCompare(right.date) || left.time.localeCompare(right.time));
-  const deliverableQueuedMessages = input.messageLogs.filter((message) => message.status === "queued" && isQueuedMessageDeliverable(message, input.students));
-  const staleQueuedMessages = input.messageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, input.students));
+  const deliverableQueuedMessages = input.messageLogs.filter((message) => message.status === "queued" && isQueuedMessageDeliverable(message, input.students, input.managedAccounts));
+  const staleQueuedMessages = input.messageLogs.filter((message) => message.status === "queued" && !isQueuedMessageDeliverable(message, input.students, input.managedAccounts));
   const queuedMessages = deliverableQueuedMessages.length;
   const queuedMessageNames = deliverableQueuedMessages.map((message) => message.recipientName);
   const staleQueuedMessageNames = staleQueuedMessages.map((message) => message.recipientName);

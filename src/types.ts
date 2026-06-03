@@ -207,6 +207,8 @@ export interface ManagedAccount {
   status: "active" | "inactive";
   email?: string;
   phone?: string;
+  smsOptOutAt?: string;
+  smsConsentUpdatedAt?: string;
   title?: string;
   notes?: string;
   access: ManagerAccessKey[];
@@ -245,6 +247,11 @@ export interface StudentRecord {
   guardianName?: string;
   guardianPhone?: string;
   guardianEmail?: string;
+  studentSmsOptOutAt?: string;
+  guardianSmsOptOutAt?: string;
+  studentSmsConsentUpdatedAt?: string;
+  guardianSmsConsentUpdatedAt?: string;
+  smsConsentUpdatedAt?: string;
   emergencyContactName?: string;
   emergencyContactRelationship?: string;
   emergencyContactPhone?: string;
@@ -291,20 +298,136 @@ export interface MessageCampaign {
   id: string;
   title: string;
   body: string;
-  audience: "all-students" | "missed-classes" | "new-students";
+  audience: "all-students" | "parents" | "staff" | "everyone" | "missed-classes" | "new-students";
   createdAt: string;
 }
+
+export type ScheduledTextCampaignStatus = "scheduled" | "queued" | "canceled";
+
+export interface ScheduledTextCampaign {
+  id: string;
+  title: string;
+  body: string;
+  audience: MessageCampaign["audience"];
+  scheduledFor: string;
+  scheduledTime?: string;
+  status: ScheduledTextCampaignStatus;
+  createdAt: string;
+  queuedAt?: string;
+  campaignId?: string;
+}
+
+export type TextAutomationRunKey =
+  | "missedClassFollowUps"
+  | "attendanceGapCheckIns"
+  | "trialConversionFollowUps"
+  | "newStudentCheckIns"
+  | "pausedStudentReactivationFollowUps"
+  | "celebrationOutreach"
+  | "profileUpdateRequests"
+  | "classReminders"
+  | "milestoneEncouragements"
+  | "beltTestInvites"
+  | "eventReminders"
+  | "scheduledPromotions";
+
+export interface TextAutomationRunBreakdown {
+  key: TextAutomationRunKey;
+  label: string;
+  queued: number;
+}
+
+export interface TextAutomationRun {
+  id: string;
+  ranAt: string;
+  status: "queued" | "no-due-texts";
+  totalQueued: number;
+  deliveryProvider: "twilio";
+  deliveryChannel: "sms";
+  deliveryMode: "prototype";
+  relayPayloadSchemaVersion: "chos-twilio-relay.v1";
+  breakdown: TextAutomationRunBreakdown[];
+}
+
+export type MessageLogStatus = "queued" | "sent" | "failed";
+
+export type TwilioDeliveryStatus = "accepted" | "scheduled" | "queued" | "sending" | "sent" | "delivered" | "undelivered" | "failed" | "canceled";
 
 export interface MessageLog {
   id: string;
   kind: "welcome" | "reminder" | "follow-up" | "marketing" | "celebration" | "profile-update";
   recipientName: string;
   recipientPhone: string;
+  recipientRole?: "student" | "parent" | "staff";
+  recipientId?: string;
   body: string;
-  status: "queued" | "sent";
+  status: MessageLogStatus;
   createdAt: string;
   sentAt?: string;
   campaignId?: string;
+  deliveryChannel?: "sms";
+  deliveryProvider?: "twilio";
+  deliveryMode?: "prototype" | "live";
+  deliveryStatus?: TwilioDeliveryStatus;
+  deliveryDetail?: string;
+  deliveryProviderMessageId?: string;
+}
+
+export interface TwilioRelayMessage {
+  id: string;
+  to: string;
+  body: string;
+  recipientName: string;
+  recipientRole?: MessageLog["recipientRole"];
+  recipientId?: string;
+  kind: MessageLog["kind"];
+  campaignId?: string;
+  createdAt: string;
+  smsEncoding: "GSM-7" | "UCS-2";
+  smsUnitCount: number;
+  smsSegmentCount: number;
+  optOutLanguageDetected: boolean;
+  idempotencyKey: string;
+  statusCallbackPath: string;
+}
+
+export interface TwilioRelayPayload {
+  schemaVersion: "chos-twilio-relay.v1";
+  provider: "twilio";
+  deliveryMode: "server-relay";
+  generatedAt: string;
+  requestedBy?: {
+    email: string;
+    role?: AccountRole;
+  };
+  messages: TwilioRelayMessage[];
+}
+
+export interface TwilioRelayResult {
+  id: string;
+  deliveryStatus: TwilioDeliveryStatus;
+  deliveryProviderMessageId?: string;
+  sentAt?: string;
+  deliveryDetail?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface TwilioRelayResultPayload {
+  results: TwilioRelayResult[];
+}
+
+export interface MessageNotificationSettings {
+  browserNotificationsEnabled: boolean;
+  browserPermission?: "default" | "granted" | "denied" | "unsupported";
+  lastSeenDirectMessageAt?: string;
+  lastBrowserNotifiedAt?: string;
+  lastBrowserNotifiedDirectMessageAt?: string;
+  pushPublicKey?: string;
+  pushSubscriptionEndpoint?: string;
+  pushSubscriptionJson?: string;
+  pushSubscribedAt?: string;
+  updatedAt?: string;
 }
 
 export interface DirectMessage {
