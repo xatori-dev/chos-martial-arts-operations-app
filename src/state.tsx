@@ -654,6 +654,7 @@ interface Toast {
 interface AccountRecord {
   email: string;
   password?: string;
+  role?: AccountRole;
   createdAt: string;
 }
 
@@ -676,7 +677,8 @@ const managerAccessKeys: ManagerAccessKey[] = [
   "create"
 ];
 
-const defaultStaffAccess: ManagerAccessKey[] = ["dashboard", "messages", "students", "classes", "events", "scheduling"];
+const ownerManagerAccess: ManagerAccessKey[] = managerAccessKeys;
+const staffManagerAccess: ManagerAccessKey[] = managerAccessKeys.filter((key) => key !== "create");
 
 type StudioClassInput = {
   name: string;
@@ -741,6 +743,12 @@ type ManagedAccountInput = {
   access?: ManagerAccessKey[];
   studentId?: string;
   linkedStudent?: StudentRecord;
+};
+
+type RegisteredAccountInput = {
+  email: string;
+  password: string;
+  role?: AccountRole;
 };
 
 type ManagerAccountAccess = {
@@ -850,7 +858,7 @@ interface AppState {
   managedUsernameExists: (username: string) => boolean;
   childUsernameExists: (username: string, options?: { excludeChildId?: string }) => boolean;
   logout: () => void;
-  register: (account: { email: string; password: string }) => AccountRecord | undefined;
+  register: (account: RegisteredAccountInput) => AccountRecord | undefined;
   setAccountRole: (role: AccountRole) => void;
   createManagedAccount: (account: ManagedAccountInput) => ManagedAccount | undefined;
   updateManagedAccountStatus: (accountId: string, status: ManagedAccount["status"]) => ManagedAccount | undefined;
@@ -1035,9 +1043,8 @@ function normalizeAccountUsername(username: string) {
     .replace(/^[._-]+|[._-]+$/g, "");
 }
 
-function normalizeManagerAccess(access?: ManagerAccessKey[]) {
-  const selected = access?.length ? access : defaultStaffAccess;
-  return managerAccessKeys.filter((key) => selected.includes(key));
+function normalizeRegisteredAccountRole(role?: AccountRole): AccountRole {
+  return role === "staff" || role === "student" || role === "guardian" ? role : "guardian";
 }
 
 function isPrototypeLoginUsername(username: string) {
@@ -1092,8 +1099,8 @@ function childAccountCreationKey(child: Pick<ChildAccount, "parentEmail" | "name
   ].join("::");
 }
 
-function registeredAccountCreationKey(account: Pick<AccountRecord, "email" | "password">) {
-  return [account.email.trim().toLowerCase(), account.password?.trim() ?? ""].join("::");
+function registeredAccountCreationKey(account: Pick<AccountRecord, "email" | "password" | "role">) {
+  return [account.email.trim().toLowerCase(), account.password?.trim() ?? "", normalizeRegisteredAccountRole(account.role)].join("::");
 }
 
 function studentFullName(student: Pick<StudentRecord, "firstName" | "lastName">) {
@@ -1891,7 +1898,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const accountRole = useMemo(() => {
     if (!session) return undefined;
     const normalizedEmail = session.email.toLowerCase();
-    const registeredRole: AccountRole | undefined = currentRegisteredAccount ? "guardian" : undefined;
+    const registeredRole: AccountRole | undefined = currentRegisteredAccount ? normalizeRegisteredAccountRole(currentRegisteredAccount.role) : undefined;
     const childRole: AccountRole | undefined = currentChildAccount ? "student" : undefined;
     return inferBuiltInPrototypeAccountRole(session.email) ?? currentManagedAccount?.role ?? registeredRole ?? childRole ?? accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role ?? inferPrototypeAccountRole(session.email);
   }, [accountRoles, currentChildAccount, currentManagedAccount, currentRegisteredAccount, session]);
@@ -1901,17 +1908,19 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     const storedRole = normalizedEmail ? accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role : undefined;
     const builtInRole = normalizedEmail ? inferBuiltInPrototypeAccountRole(normalizedEmail) : undefined;
     const allowedTools = isManagerOwner
-      ? managerAccessKeys
+      ? ownerManagerAccess
       : currentManagedAccount
         ? currentManagedAccount.role === "staff"
-          ? normalizeManagerAccess(currentManagedAccount.access)
+          ? staffManagerAccess
           : []
         : currentRegisteredAccount
-          ? []
+          ? normalizeRegisteredAccountRole(currentRegisteredAccount.role) === "staff"
+            ? staffManagerAccess
+            : []
           : currentChildAccount
             ? []
             : !builtInRole && storedRole === "staff"
-              ? defaultStaffAccess
+              ? staffManagerAccess
               : [];
 
     return {
@@ -2075,7 +2084,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       if (isRegisteredAccountLoginCollision(normalizedEmail, managedAccountsRef.current, childAccountsRef.current)) return undefined;
       const account = accountsRef.current.find((item) => item.email.trim().toLowerCase() === normalizedEmail && item.password === password);
       if (!account) return undefined;
-      saveRoleForEmail(account.email, "guardian");
+      saveRoleForEmail(account.email, normalizeRegisteredAccountRole(account.role));
       setSession({ email: account.email, remembered: true, createdAt: new Date().toISOString() });
       return account;
     },
@@ -2146,7 +2155,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         phone: account.phone?.trim() || undefined,
         title: account.title?.trim() || undefined,
         notes: account.notes?.trim() || undefined,
-        access: role === "staff" ? normalizeManagerAccess(account.access) : [],
+        access: role === "staff" ? staffManagerAccess : [],
         studentId: role === "student" ? studentId : undefined,
         createdBy: session?.email,
         createdAt: new Date().toISOString()
@@ -2257,11 +2266,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   );
 
   const register = useCallback(
-    (account: { email: string; password: string }) => {
+    (account: RegisteredAccountInput) => {
       const email = account.email.trim().toLowerCase();
       const password = account.password.trim();
+      const role = normalizeRegisteredAccountRole(account.role);
       if (!email || !password || isBuiltInPrototypeIdentity(email)) return undefined;
-      const createdAccount = { email, password, createdAt: new Date().toISOString() };
+      const createdAccount = { email, password, role, createdAt: new Date().toISOString() };
       const existingAccount = accountsRef.current.find((currentAccount) => registeredAccountCreationKey(currentAccount) === registeredAccountCreationKey(createdAccount));
       if (existingAccount) return existingAccount;
       if (accountsRef.current.some((currentAccount) => currentAccount.email.trim().toLowerCase() === email)) return undefined;

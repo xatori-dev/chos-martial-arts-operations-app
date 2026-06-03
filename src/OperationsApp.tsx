@@ -75,8 +75,10 @@ import { childUsernameFromName, normalizeChildUsername } from "./childAccountUti
 import { beltRanks } from "./data";
 import {
   readManagerProfile,
+  readStaffProfile,
   readStudentProfile,
   writeManagerProfile,
+  writeStaffProfile,
   writeStudentProfile,
   type ProfileSettings as ManagerProfileSettings
 } from "./profileStorage";
@@ -346,7 +348,7 @@ type ProfileColorPreviewChild = {
 };
 
 type ProfileColorPreviewData = {
-  kind: "manager" | "student" | "parent";
+  kind: "manager" | "staff" | "student" | "parent";
   title: string;
   displayName: string;
   roleLabel: string;
@@ -374,11 +376,11 @@ function ProfileColorMiniScreen({ preview }: { preview: ProfileColorPreviewData 
       <div className={screenClassName} aria-label="Live profile mini screen">
         <header className="profile-color-mini-topbar">
           <div>
-            <span>{preview.kind === "parent" ? "Parent Profile" : "Profile"}</span>
+            <span>{preview.kind === "parent" ? "Parent Profile" : preview.kind === "staff" ? "Staff Profile" : "Profile"}</span>
             <strong>{preview.title}</strong>
           </div>
           <nav aria-label="Mini profile actions">
-            <span>{isParentPreview ? "Settings" : preview.kind === "manager" ? "Manager's Panel" : "Student's Panel"}</span>
+            <span>{isParentPreview ? "Settings" : preview.kind === "manager" ? "Manager's Panel" : preview.kind === "staff" ? "Staff Panel" : "Student's Panel"}</span>
             <span>Log Out</span>
           </nav>
         </header>
@@ -5758,9 +5760,16 @@ function ParentProfilePage() {
 }
 
 function ManagerHomePage() {
-  const { addStudioEvent, directMessages, logout, scheduledClasses, sendDirectMessage, session, showToast, studioClasses, studioEvents, students } = useAppState();
+  const { addStudioEvent, currentManagedAccount, directMessages, logout, managerAccountAccess, scheduledClasses, sendDirectMessage, session, showToast, studioClasses, studioEvents, students } = useAppState();
   const today = useLiveCalendarDate();
-  const [managerProfile, setManagerProfile] = useState(() => readManagerProfile(session?.email));
+  const isManagerOwner = managerAccountAccess.isManagerOwner;
+  const readHomeProfile = isManagerOwner ? readManagerProfile : readStaffProfile;
+  const writeHomeProfile = isManagerOwner ? writeManagerProfile : writeStaffProfile;
+  const [managerProfile, setManagerProfile] = useState(() => readHomeProfile(session?.email));
+  const profileTitle = isManagerOwner ? "Profile" : "Staff Profile";
+  const panelLabel = isManagerOwner ? "Manager's Panel" : "Staff Panel";
+  const roleLabel = isManagerOwner ? "Head Coach & Manager" : currentManagedAccount?.title?.trim() || "Staff Member";
+  const profileKindLabel = isManagerOwner ? "manager" : "staff";
   const activeStudentCount = students.filter((student) => (student.status ?? "Active").toLowerCase() === "active").length;
   const memberSinceLabel = formatMonthYear(session?.createdAt);
   const defaultHomeScheduleDateKey = useMemo(
@@ -5944,8 +5953,8 @@ function ManagerHomePage() {
   }, []);
 
   useEffect(() => {
-    setManagerProfile(readManagerProfile(session?.email));
-  }, [session?.email]);
+    setManagerProfile(readHomeProfile(session?.email));
+  }, [readHomeProfile, session?.email]);
 
   useEffect(() => {
     if (isFeedSearchOpen) feedSearchInputRef.current?.focus();
@@ -6048,7 +6057,7 @@ function ManagerHomePage() {
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      showToast("Choose an image file for the manager profile picture.");
+      showToast(`Choose an image file for the ${profileKindLabel} profile picture.`);
       return;
     }
 
@@ -6062,10 +6071,10 @@ function ManagerHomePage() {
 
       setManagerProfile((currentProfile) => {
         const nextProfile = { ...currentProfile, photoDataUrl: result };
-        writeManagerProfile(nextProfile, session?.email);
+        writeHomeProfile(nextProfile, session?.email);
         return nextProfile;
       });
-      showToast("Manager profile picture updated.");
+      showToast(`${isManagerOwner ? "Manager" : "Staff"} profile picture updated.`);
     };
     reader.onerror = () => showToast("Could not read that profile image.");
     reader.readAsDataURL(file);
@@ -6145,7 +6154,7 @@ function ManagerHomePage() {
     const nextTheme: AppThemeMode = managerProfile.theme === "dark" ? "light" : "dark";
     setManagerProfile((currentProfile) => {
       const nextProfile = { ...currentProfile, theme: nextTheme };
-      writeManagerProfile(nextProfile, session?.email);
+      writeHomeProfile(nextProfile, session?.email);
       return nextProfile;
     });
     writeStoredAppTheme(nextTheme);
@@ -6339,13 +6348,13 @@ function ManagerHomePage() {
   };
 
   return (
-    <section className="manager-home-page" aria-label="Manager home page">
+    <section className="manager-home-page" aria-label={isManagerOwner ? "Manager home page" : "Staff home page"}>
       <header className="manager-home-profile-title manager-page-title-bar" aria-label="Profile page header">
-        <ManagerPageTitleFrame title="Profile" className="manager-home-profile-title-frame" />
+        <ManagerPageTitleFrame title={profileTitle} className="manager-home-profile-title-frame" />
         <nav className="manager-home-top-actions" aria-label="Profile quick actions">
-          <Link className="manager-home-top-action manager-home-panel-link" to="/manager" aria-label="Manager's Panel">
+          <Link className="manager-home-top-action manager-home-panel-link" to="/manager" aria-label={panelLabel}>
             <img className="manager-home-panel-icon" src={managerPageIcon} alt="" draggable="false" />
-            <span className="manager-home-top-action-label">Manager&apos;s Panel</span>
+            <span className="manager-home-top-action-label">{panelLabel}</span>
           </Link>
           <button className="manager-home-top-action manager-home-logout-button" type="button" aria-label="Log Out" onClick={logout}>
             <img className="manager-home-logout-icon" src={managerLogoutIcon} alt="" draggable="false" />
@@ -6361,8 +6370,8 @@ function ManagerHomePage() {
           data-overview-state={overviewStageState}
           style={overviewStageStyle}
         >
-          <section className="manager-home-overview" aria-label="Manager home overview" ref={overviewContentRef}>
-            <article className="manager-home-profile-card" aria-label="Manager profile overview">
+          <section className="manager-home-overview" aria-label={isManagerOwner ? "Manager home overview" : "Staff home overview"} ref={overviewContentRef}>
+            <article className="manager-home-profile-card" aria-label={isManagerOwner ? "Manager profile overview" : "Staff profile overview"}>
             <Link className="manager-home-profile-settings-link" to="/manager?profile=settings" aria-label="Profile Settings">
               <img className="manager-home-profile-settings-icon" src={managerProfileSettingsIcon} alt="" draggable="false" />
             </Link>
@@ -6383,8 +6392,8 @@ function ManagerHomePage() {
               </span>
             </button>
             <label className="manager-home-profile-frame manager-home-profile-upload">
-                <span className="sr-only">Upload manager profile picture</span>
-                <input type="file" accept="image/*" aria-label="Upload manager profile picture" onChange={changeManagerProfilePhoto} />
+                <span className="sr-only">Upload {profileKindLabel} profile picture</span>
+                <input type="file" accept="image/*" aria-label={`Upload ${profileKindLabel} profile picture`} onChange={changeManagerProfilePhoto} />
                 <img src={managerProfile.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png")} alt={`${managerProfile.name} profile portrait`} draggable="false" />
                 <span className="manager-home-profile-change-badge" aria-hidden="true">
                   <Camera size={15} />
@@ -6392,7 +6401,7 @@ function ManagerHomePage() {
               </label>
               <div className="manager-home-profile-copy">
                 <h2>{managerProfile.name}</h2>
-                <p>Head Coach &amp; Manager</p>
+                <p>{roleLabel}</p>
               </div>
               <dl className="manager-home-profile-facts">
                 <div>
@@ -6973,18 +6982,29 @@ function ManagerLauncherPage() {
   const { accountRole, currentManagedAccount, logout, managerAccountAccess, session, showToast, students } = useAppState();
   const location = useLocation();
   const navigate = useNavigate();
+  const isManagerOwner = managerAccountAccess.isManagerOwner;
+  const isStudentPanel = accountRole === "student";
+  const isStaffPanel = accountRole === "staff" && !isManagerOwner;
+  const readPanelProfile = isManagerOwner ? readManagerProfile : readStaffProfile;
+  const writePanelProfile = isManagerOwner ? writeManagerProfile : writeStaffProfile;
+  const profileOwnerLabel = isManagerOwner ? "Manager" : "Staff";
   const [profileOpen, setProfileOpen] = useState(false);
-  const [profileSettings, setProfileSettings] = useState(() => readManagerProfile(session?.email));
+  const [profileSettings, setProfileSettings] = useState(() => readPanelProfile(session?.email));
   const [profilePassword, setProfilePassword] = useState({ newPassword: "", confirmPassword: "" });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const isStudentPanel = accountRole === "student";
   const launcherItems = isStudentPanel
     ? studentLauncherItems
     : managerLauncherItems.filter((item) => managerAccountAccess.allowedTools.includes(item.icon as ManagerAccessKey));
   const selectedLauncherItem = isStudentPanel
     ? getSelectedStudentLauncherItem(location.search)
     : launcherItems.find((item) => item.icon === new URLSearchParams(location.search).get("tool")) ?? launcherItems[0] ?? managerLauncherItems[0];
-  const launcherName = isStudentPanel ? "student" : "manager";
+  const launcherName = isStudentPanel ? "student" : isStaffPanel ? "staff" : "manager";
+  const panelTitle = isStudentPanel ? "Student's Panel" : isStaffPanel ? "STAFF PANEL" : "MANAGER PANEL";
+  const panelAriaLabel = isStudentPanel ? "Student dashboard" : isStaffPanel ? "Staff dashboard" : "Manager dashboard";
+  const panelHeaderAriaLabel = isStudentPanel ? "Student panel page header" : isStaffPanel ? "Staff panel page header" : "Manager panel page header";
+  const panelQuickActionsLabel = isStudentPanel ? "Student panel quick actions" : isStaffPanel ? "Staff panel quick actions" : "Manager panel quick actions";
+  const launcherAriaLabel = isStudentPanel ? "Student app launcher" : isStaffPanel ? "Staff app launcher" : "Manager app launcher";
+  const workspaceFrameLabel = isStudentPanel ? "Student launcher workspace frame" : isStaffPanel ? "Staff launcher workspace frame" : "Manager launcher workspace frame";
   const sidebarToggleLabel = isSidebarCollapsed ? `Expand ${launcherName} app launcher` : `Collapse ${launcherName} app launcher`;
   const studentRecord = selectSessionStudent(students, session?.email, currentManagedAccount?.studentId);
   const studentPanelProfile = isStudentPanel ? readStudentProfile(session?.email, studentRecord) : undefined;
@@ -6993,10 +7013,10 @@ function ManagerLauncherPage() {
     : profileSettings.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png");
   const activeStudentCount = students.filter((student) => (student.status ?? "Active").toLowerCase() === "active").length;
   const managerColorPreview: ProfileColorPreviewData = {
-    kind: "manager",
-    title: "Manager Profile",
-    displayName: profileSettings.name.trim() || "Cho's Manager",
-    roleLabel: "Head Coach & Manager",
+    kind: isManagerOwner ? "manager" : "staff",
+    title: `${profileOwnerLabel} Profile`,
+    displayName: profileSettings.name.trim() || (isManagerOwner ? "Cho's Manager" : "Cho's Staff"),
+    roleLabel: isManagerOwner ? "Head Coach & Manager" : currentManagedAccount?.title?.trim() || "Staff Member",
     portraitSrc: profileSettings.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png"),
     avatarText: "CM",
     facts: [
@@ -7016,15 +7036,15 @@ function ManagerLauncherPage() {
       navigate("/manager", { replace: true });
       return;
     }
-    setProfileSettings(readManagerProfile(session?.email));
+    setProfileSettings(readPanelProfile(session?.email));
     setProfilePassword({ newPassword: "", confirmPassword: "" });
     setProfileOpen(true);
     navigate("/manager", { replace: true });
-  }, [isStudentPanel, location.search, navigate, session?.email]);
+  }, [isStudentPanel, location.search, navigate, readPanelProfile, session?.email]);
 
   const selectProfileTheme = (theme: AppThemeMode) => {
     setProfileSettings((current) => ({ ...current, theme }));
-    writeManagerProfile({ ...readManagerProfile(session?.email), theme }, session?.email);
+    writePanelProfile({ ...readPanelProfile(session?.email), theme }, session?.email);
     writeStoredAppTheme(theme);
   };
 
@@ -7049,17 +7069,17 @@ function ManagerLauncherPage() {
     };
 
     if (!nextProfile.name) {
-      showToast("Enter a manager profile name.");
+      showToast(`Enter a ${profileOwnerLabel.toLowerCase()} profile name.`);
       return;
     }
 
     if (!nextProfile.username) {
-      showToast("Enter a manager username.");
+      showToast(`Enter a ${profileOwnerLabel.toLowerCase()} username.`);
       return;
     }
 
     if (!validateEmail(nextProfile.email)) {
-      showToast("Enter a valid manager profile email.");
+      showToast(`Enter a valid ${profileOwnerLabel.toLowerCase()} profile email.`);
       return;
     }
 
@@ -7070,7 +7090,7 @@ function ManagerLauncherPage() {
       }
 
       if (newPassword !== confirmPassword) {
-        showToast("The manager passwords do not match.");
+        showToast(`The ${profileOwnerLabel.toLowerCase()} passwords do not match.`);
         return;
       }
 
@@ -7079,20 +7099,20 @@ function ManagerLauncherPage() {
 
     applyAppTheme(nextProfile.theme);
     writeStoredAppTheme(nextProfile.theme);
-    writeManagerProfile(nextProfile, session?.email);
+    writePanelProfile(nextProfile, session?.email);
     setProfileSettings(nextProfile);
     setProfilePassword({ newPassword: "", confirmPassword: "" });
     setProfileOpen(false);
     navigate("/", { replace: true });
-    showToast("Manager profile settings saved.");
+    showToast(`${profileOwnerLabel} profile settings saved.`);
   };
 
   return (
-    <section className={`manager-launcher-page${isStudentPanel ? " student-launcher-page" : ""}`} aria-label={isStudentPanel ? "Student dashboard" : "Manager dashboard"}>
+    <section className={`manager-launcher-page${isStudentPanel ? " student-launcher-page" : ""}${isStaffPanel ? " staff-launcher-page" : ""}`} aria-label={panelAriaLabel}>
       <main className="manager-launcher-main">
-        <header className="manager-launcher-topbar manager-page-title-bar" aria-label={isStudentPanel ? "Student panel page header" : "Manager panel page header"}>
-          <ManagerPageTitleFrame title={isStudentPanel ? "Student's Panel" : "MANAGER PANEL"} className="manager-page-title-frame--manager-panel" />
-          <nav className="manager-home-top-actions" aria-label={isStudentPanel ? "Student panel quick actions" : "Manager panel quick actions"}>
+        <header className="manager-launcher-topbar manager-page-title-bar" aria-label={panelHeaderAriaLabel}>
+          <ManagerPageTitleFrame title={panelTitle} className="manager-page-title-frame--manager-panel" />
+          <nav className="manager-home-top-actions" aria-label={panelQuickActionsLabel}>
             <Link className="manager-home-top-action manager-launcher-profile-link" to="/" aria-label="Profile">
               <img
                 className="manager-home-profile-action-photo"
@@ -7108,11 +7128,11 @@ function ManagerLauncherPage() {
             </button>
           </nav>
         </header>
-        <div className={`manager-launcher-body${isSidebarCollapsed ? " is-sidebar-collapsed" : ""}`} role="group" aria-label={isStudentPanel ? "Student launcher workspace frame" : "Manager launcher workspace frame"}>
+        <div className={`manager-launcher-body${isSidebarCollapsed ? " is-sidebar-collapsed" : ""}`} role="group" aria-label={workspaceFrameLabel}>
           <nav
             className="manager-launcher-grid manager-launcher-sidebar"
             id="manager-launcher-sidebar"
-            aria-label={isStudentPanel ? "Student app launcher" : "Manager app launcher"}
+            aria-label={launcherAriaLabel}
             data-orientation="vertical"
             hidden={isSidebarCollapsed}
           >
@@ -7151,13 +7171,13 @@ function ManagerLauncherPage() {
       </main>
       {profileOpen && (
         <div className="modal-backdrop manager-profile-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeProfileSettings()}>
-          <form className="modal-card manager-profile-modal" role="dialog" aria-modal="true" aria-label="Manager profile settings" onSubmit={saveProfileSettings}>
+          <form className="modal-card manager-profile-modal" role="dialog" aria-modal="true" aria-label={`${profileOwnerLabel} profile settings`} onSubmit={saveProfileSettings}>
             <header className="student-modal-head">
               <div>
                 <h2>Profile Settings</h2>
-                <p>Edit manager access, contact settings, and app theme.</p>
+                <p>Edit {profileOwnerLabel.toLowerCase()} contact settings and app theme.</p>
               </div>
-              <button className="student-modal-close" type="button" aria-label="Close manager profile settings" onClick={closeProfileSettings}>
+              <button className="student-modal-close" type="button" aria-label={`Close ${profileOwnerLabel.toLowerCase()} profile settings`} onClick={closeProfileSettings}>
                 <X size={20} />
               </button>
             </header>
@@ -7168,7 +7188,7 @@ function ManagerLauncherPage() {
                   className="input"
                   value={profileSettings.name}
                   onChange={(event) => setProfileSettings({ ...profileSettings, name: event.target.value })}
-                  placeholder="Cho's Manager"
+                  placeholder={isManagerOwner ? "Cho's Manager" : "Cho's Staff"}
                 />
               </label>
               <label className="field-label">
@@ -7178,7 +7198,7 @@ function ManagerLauncherPage() {
                   value={profileSettings.username}
                   onChange={(event) => setProfileSettings({ ...profileSettings, username: event.target.value })}
                   autoComplete="username"
-                  placeholder="chos-manager"
+                  placeholder={isManagerOwner ? "chos-manager" : "chos-staff"}
                 />
               </label>
               <label className="field-label">
@@ -7187,7 +7207,7 @@ function ManagerLauncherPage() {
                   className="input"
                   value={profileSettings.email}
                   onChange={(event) => setProfileSettings({ ...profileSettings, email: event.target.value })}
-                  placeholder="manager@chos.prototype"
+                  placeholder={isManagerOwner ? "manager@chos.prototype" : "staff@chos.prototype"}
                 />
               </label>
               <label className="field-label">
@@ -7275,7 +7295,6 @@ type StaffAccountForm = {
   phone: string;
   title: string;
   notes: string;
-  access: ManagerAccessKey[];
 };
 
 type StudentAccountForm = {
@@ -7314,7 +7333,16 @@ const managerAccessLabelMap: Record<ManagerAccessKey, string> = staffAccessOptio
   {} as Record<ManagerAccessKey, string>
 );
 
-const defaultCreateStaffAccess: ManagerAccessKey[] = ["dashboard", "students", "classes", "scheduling", "messages"];
+const staffPanelAccessOptions = staffAccessOptions.filter((option) => option.key !== "create");
+const staffPanelAccessKeys: ManagerAccessKey[] = staffPanelAccessOptions.map((option) => option.key);
+
+function renderStaffAccessList(displayName: string) {
+  return (
+    <div className="create-account-access-list" aria-label={`${displayName} access`}>
+      {staffPanelAccessKeys.map((key) => <span key={key}>{managerAccessLabelMap[key]}</span>)}
+    </div>
+  );
+}
 
 function makeBlankStaffAccountForm(): StaffAccountForm {
   return {
@@ -7325,8 +7353,7 @@ function makeBlankStaffAccountForm(): StaffAccountForm {
     email: "",
     phone: "",
     title: "Instructor",
-    notes: "",
-    access: defaultCreateStaffAccess
+    notes: ""
   };
 }
 
@@ -7364,7 +7391,6 @@ function CreateAccountsPage() {
     createManagedAccount,
     managedAccounts,
     managedUsernameExists,
-    managerAccountAccess,
     showToast,
     updateManagedAccountStatus
   } = useAppState();
@@ -7373,16 +7399,7 @@ function CreateAccountsPage() {
   const [studentForm, setStudentForm] = useState(makeBlankStudentAccountForm);
   const staffAccounts = managedAccounts.filter((account) => account.role === "staff");
   const studentAccounts = managedAccounts.filter((account) => account.role === "student");
-  const canGrantCreateAccess = managerAccountAccess.canGrantCreateAccess;
-  const visibleStaffAccessOptions = staffAccessOptions.filter((option) => option.key !== "create" || canGrantCreateAccess);
-  const createAccessCount = staffAccounts.filter((account) => account.access.includes("create")).length;
-
-  const toggleStaffAccess = (key: ManagerAccessKey) => {
-    setStaffForm((current) => {
-      const access = current.access.includes(key) ? current.access.filter((item) => item !== key) : [...current.access, key];
-      return { ...current, access };
-    });
-  };
+  const staffToolCount = staffPanelAccessOptions.length;
 
   const validatePasswordPair = (password: string, confirmPassword: string) => {
     if (password.trim().length < 8) {
@@ -7418,7 +7435,6 @@ function CreateAccountsPage() {
       return;
     }
 
-    const access = canGrantCreateAccess ? staffForm.access : staffForm.access.filter((key) => key !== "create");
     const account = createManagedAccount({
       displayName: staffForm.displayName,
       username,
@@ -7429,7 +7445,7 @@ function CreateAccountsPage() {
       phone: staffForm.phone,
       title: staffForm.title,
       notes: staffForm.notes,
-      access
+      access: staffPanelAccessKeys
     });
 
     if (!account) {
@@ -7528,11 +7544,7 @@ function CreateAccountsPage() {
         <span>{account.role === "staff" ? account.title || "Staff" : "Student"}</span>
         <span>{account.status === "active" ? "Active" : "Inactive"}</span>
       </div>
-      {account.role === "staff" && (
-        <div className="create-account-access-list" aria-label={`${account.displayName} access`}>
-          {account.access.length ? account.access.map((key) => <span key={key}>{managerAccessLabelMap[key]}</span>) : <span>No manager tools</span>}
-        </div>
-      )}
+      {account.role === "staff" && renderStaffAccessList(account.displayName)}
       <div className="create-account-card-actions">
         {account.status === "inactive" ? (
           <button type="button" onClick={() => setManagedAccountLifecycleStatus(account, "active")} aria-label={`Reactivate ${account.displayName} account`}>
@@ -7558,7 +7570,7 @@ function CreateAccountsPage() {
       <div className="operations-stats create-account-stats">
         <StatCard label="Staff accounts" value={staffAccounts.length} icon={<ShieldCheck />} />
         <StatCard label="Student logins" value={studentAccounts.length} icon={<Users />} />
-        <StatCard label="Create access" value={createAccessCount} icon={<UserPlus />} />
+        <StatCard label="Staff tools" value={staffToolCount} icon={<UserPlus />} />
       </div>
 
       <section className="operations-panel create-account-builder" aria-label="Create account builder">
@@ -7605,10 +7617,10 @@ function CreateAccountsPage() {
             </div>
 
             <fieldset className="create-account-access-grid">
-              <legend>Manager panel access</legend>
-              {visibleStaffAccessOptions.map((option) => (
+              <legend>Staff panel access</legend>
+              {staffPanelAccessOptions.map((option) => (
                 <label className="create-account-access-option" key={option.key}>
-                  <input aria-label={option.label} type="checkbox" checked={staffForm.access.includes(option.key)} onChange={() => toggleStaffAccess(option.key)} />
+                  <input aria-label={option.label} type="checkbox" checked disabled />
                   <span>
                     <strong>{option.label}</strong>
                     <small>{option.helper}</small>

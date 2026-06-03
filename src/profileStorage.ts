@@ -14,7 +14,7 @@ export type ProfileSettings = {
 
 export const legacyProfileStorageKey = "chos.profile.v1";
 
-export function profileStorageKey(scope: "manager" | "student", sessionEmail?: string) {
+export function profileStorageKey(scope: "manager" | "staff" | "student", sessionEmail?: string) {
   const keyEmail = (sessionEmail ?? `${scope}@chos.prototype`)
     .trim()
     .toLowerCase()
@@ -74,6 +74,19 @@ export function fallbackManagerProfile(sessionEmail?: string): ProfileSettings {
   };
 }
 
+export function fallbackStaffProfile(sessionEmail?: string): ProfileSettings {
+  const email = sessionEmail ?? "staff@chos.prototype";
+  const username = email.split("@")[0]?.replace(/[^a-z0-9._-]/gi, "") || "chos-staff";
+  return {
+    name: "Cho's Staff",
+    username,
+    email,
+    phone: "(262) 555-0100",
+    updates: true,
+    theme: readStoredAppTheme()
+  };
+}
+
 function studentFullName(student: Pick<StudentRecord, "firstName" | "lastName">) {
   return `${student.firstName} ${student.lastName}`.trim();
 }
@@ -103,6 +116,17 @@ export function readManagerProfile(sessionEmail?: string): ProfileSettings {
 export function writeManagerProfile(profile: ProfileSettings, sessionEmail?: string) {
   writeProfileStorage(profileStorageKey("manager", sessionEmail ?? profile.email), profile);
   writeProfileStorage(legacyProfileStorageKey, profile);
+}
+
+export function readStaffProfile(sessionEmail?: string): ProfileSettings {
+  const fallback = fallbackStaffProfile(sessionEmail);
+  const scopedProfile = readProfileStorage(profileStorageKey("staff", sessionEmail), fallback);
+  if (scopedProfile) return scopedProfile;
+  return readProfileStorage(profileStorageKey("manager", sessionEmail), fallback) ?? fallback;
+}
+
+export function writeStaffProfile(profile: ProfileSettings, sessionEmail?: string) {
+  writeProfileStorage(profileStorageKey("staff", sessionEmail ?? profile.email), profile);
 }
 
 export function readStudentProfile(sessionEmail?: string, student?: StudentRecord, child?: ChildAccount): ProfileSettings {

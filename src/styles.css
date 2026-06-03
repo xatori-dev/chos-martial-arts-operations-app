@@ -2956,6 +2956,86 @@ select option { color: #111; }
   margin-top: 8vh;
 }
 
+.register-account-type-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.register-account-type-panel h3 {
+  margin: 0;
+  color: var(--white);
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.register-account-type-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.register-account-type-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 68px;
+  padding: 12px;
+  border: 1px solid rgba(201, 167, 99, 0.28);
+  border-radius: 8px;
+  color: var(--white);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025));
+  text-align: left;
+}
+
+.register-account-type-card:hover,
+.register-account-type-card:focus-visible {
+  border-color: rgba(232, 177, 112, 0.62);
+  background: linear-gradient(145deg, rgba(170, 47, 37, 0.22), rgba(255, 255, 255, 0.05));
+}
+
+.register-account-type-card > span {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  color: #ffd89a;
+  background: rgba(5, 8, 14, 0.42);
+  border: 1px solid rgba(232, 177, 112, 0.24);
+}
+
+.register-account-type-card strong,
+.register-selected-account span {
+  color: var(--white);
+  font-size: 0.98rem;
+  letter-spacing: 0;
+}
+
+.register-account-type-card small {
+  min-width: 0;
+  color: rgba(244, 238, 226, 0.72);
+  line-height: 1.35;
+}
+
+.register-selected-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border: 1px solid rgba(201, 167, 99, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.register-selected-account .btn {
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
 .login-failed-modal {
   width: min(390px, 100%);
   margin-top: clamp(72px, 14dvh, 132px);
@@ -19652,6 +19732,39 @@ html[data-theme="light"] .login-failed-icon {
 
 html[data-theme="light"] .login-failed-content p {
   color: rgba(255, 248, 236, 0.78);
+}
+
+html[data-theme="light"] .register-account-type-panel h3,
+html[data-theme="light"] .register-account-type-card strong,
+html[data-theme="light"] .register-selected-account span {
+  color: #172033;
+}
+
+html[data-theme="light"] .register-account-type-card {
+  color: #172033;
+  border-color: rgba(25, 40, 62, 0.16);
+  background: rgba(255, 255, 255, 0.68);
+}
+
+html[data-theme="light"] .register-account-type-card:hover,
+html[data-theme="light"] .register-account-type-card:focus-visible {
+  border-color: rgba(184, 135, 46, 0.48);
+  background: rgba(255, 249, 235, 0.86);
+}
+
+html[data-theme="light"] .register-account-type-card > span {
+  color: #8a1f1d;
+  background: rgba(255, 255, 255, 0.74);
+  border-color: rgba(184, 135, 46, 0.22);
+}
+
+html[data-theme="light"] .register-account-type-card small {
+  color: rgba(23, 32, 51, 0.68);
+}
+
+html[data-theme="light"] .register-selected-account {
+  border-color: rgba(25, 40, 62, 0.14);
+  background: rgba(255, 255, 255, 0.62);
 }
 
 html[data-theme="light"] .operations-app,

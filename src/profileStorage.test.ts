@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   fallbackManagerProfile,
+  fallbackStaffProfile,
   fallbackStudentProfile,
   legacyProfileStorageKey,
   profileStorageKey,
   readManagerProfile,
+  readStaffProfile,
   readStudentProfile,
   writeManagerProfile,
+  writeStaffProfile,
   writeStudentProfile
 } from "./profileStorage";
 import type { ChildAccount, StudentRecord } from "./types";
@@ -19,6 +22,7 @@ describe("profile storage helpers", () => {
 
   it("keeps scoped profile keys stable across account types", () => {
     expect(profileStorageKey("manager", "Manager123@Chos.Prototype")).toBe("chos.profile.manager.manager123-chos.prototype.v1");
+    expect(profileStorageKey("staff", "Taylor.Staff@Chos.Prototype")).toBe("chos.profile.staff.taylor.staff-chos.prototype.v1");
     expect(profileStorageKey("student", "Kai Cho.Child")).toBe("chos.profile.student.kai-cho.child.v1");
   });
 
@@ -31,6 +35,20 @@ describe("profile storage helpers", () => {
 
     expect(JSON.parse(window.localStorage.getItem(profileStorageKey("manager", "manager123@chos.prototype")) ?? "{}")).toMatchObject({ name: "Scoped Manager" });
     expect(JSON.parse(window.localStorage.getItem(legacyProfileStorageKey) ?? "{}")).toMatchObject({ name: "Scoped Manager" });
+  });
+
+  it("keeps staff profiles scoped while falling back from existing manager-scoped staff profiles", () => {
+    window.localStorage.setItem(
+      profileStorageKey("manager", "taylor.staff"),
+      JSON.stringify({ ...fallbackStaffProfile("taylor.staff"), name: "Existing Staff Profile", email: "taylor.staff" })
+    );
+
+    expect(readStaffProfile("taylor.staff").name).toBe("Existing Staff Profile");
+
+    writeStaffProfile({ ...fallbackStaffProfile("taylor.staff"), name: "Taylor Staff Saved" }, "taylor.staff");
+
+    expect(JSON.parse(window.localStorage.getItem(profileStorageKey("staff", "taylor.staff")) ?? "{}")).toMatchObject({ name: "Taylor Staff Saved" });
+    expect(JSON.parse(window.localStorage.getItem(profileStorageKey("manager", "taylor.staff")) ?? "{}")).toMatchObject({ name: "Existing Staff Profile" });
   });
 
   it("keeps student legacy fallback scoped to the active session", () => {

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 import { publicAsset } from "./appAssets";
 import { useAppState } from "./state";
 import { initializeAppTheme } from "./theme";
+import type { AccountRole } from "./types";
 import {
   createGuestSession,
   getInitialLaunchPhase,
@@ -20,6 +21,26 @@ import {
 
 const LazyOperationsApp = lazy(() => import("./OperationsApp").then(({ OperationsApp }) => ({ default: OperationsApp })));
 const TestOperationsApp = import.meta.env.MODE === "test" ? (await import("./OperationsApp")).OperationsApp : undefined;
+
+type SelfServiceAccountType = "staff" | "parent" | "student";
+
+const selfServiceAccountTypes: { type: SelfServiceAccountType; label: string; role: AccountRole; description: string; icon: ReactNode }[] = [
+  { type: "staff", label: "Staff", role: "staff", description: "Help run the studio workspace and daily operations.", icon: <ShieldCheck size={22} /> },
+  { type: "parent", label: "Parent", role: "guardian", description: "Manage family profiles and student-side handoffs.", icon: <HeartHandshake size={22} /> },
+  { type: "student", label: "Student", role: "student", description: "Open the student profile and training tools.", icon: <Award size={22} /> }
+];
+
+function getSelfServiceAccountType(type: SelfServiceAccountType) {
+  return selfServiceAccountTypes.find((item) => item.type === type);
+}
+
+function selfServiceAccountButtonLabel(type: SelfServiceAccountType) {
+  return getSelfServiceAccountType(type)?.label ?? "Account";
+}
+
+function selfServiceAccountRole(type: SelfServiceAccountType): AccountRole {
+  return getSelfServiceAccountType(type)?.role ?? "guardian";
+}
 
 type FullscreenCapableDocument = Document & {
   webkitFullscreenElement?: Element | null;
@@ -331,6 +352,7 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [portraitVisible, setPortraitVisible] = useState(true);
   const [registerOpen, setRegisterOpen] = useState(false);
+  const [registerAccountType, setRegisterAccountType] = useState<SelfServiceAccountType | null>(null);
   const [guestIntroOpen, setGuestIntroOpen] = useState(false);
   const [loginFailedOpen, setLoginFailedOpen] = useState(false);
   const loginLandingStyle = { "--login-bg-image": `url("${publicAsset("NewFinalBackground.png")}")` } as CSSProperties;
@@ -393,19 +415,36 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
 
   const submitRegister = (event: FormEvent) => {
     event.preventDefault();
+    if (!registerAccountType) {
+      showToast("Choose an account type first.");
+      return;
+    }
     const nextErrors = validateRegisterForm(registerForm);
     setRegisterErrors(nextErrors);
     if (Object.keys(nextErrors).length) {
       showToast("Check the create account fields.");
       return;
     }
-    const registeredAccount = register(registerForm);
+    const role = selfServiceAccountRole(registerAccountType);
+    const registeredAccount = register({ ...registerForm, role });
     if (!registeredAccount) {
       showToast("That account is already registered. Sign in with the saved password.");
       return;
     }
-    login(registeredAccount.email, true, "guardian");
+    login(registeredAccount.email, true, role);
     navigate("/");
+  };
+
+  const openRegister = () => {
+    setRegisterErrors({});
+    setRegisterAccountType(null);
+    setRegisterOpen(true);
+  };
+
+  const closeRegister = () => {
+    setRegisterOpen(false);
+    setRegisterAccountType(null);
+    setRegisterErrors({});
   };
 
   const continueAsGuest = () => {
@@ -464,7 +503,7 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
             Sign In
           </button>
           <div className="login-secondary-actions">
-            <button className="login-create" type="button" onClick={() => setRegisterOpen(true)}>
+            <button className="login-create" type="button" onClick={openRegister}>
               Create New Account
             </button>
             <button className="login-guest" type="button" onClick={() => setGuestIntroOpen(true)}>
@@ -479,25 +518,47 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
         </div>
       </div>
       {registerOpen && (
-        <ModalShell label="Create New Account" onClose={() => setRegisterOpen(false)} panelClass="modal-card login-register-modal">
+        <ModalShell label="Create New Account" onClose={closeRegister} panelClass="modal-card login-register-modal">
           <div className="drawer-head">
             <h2>Create New Account</h2>
-            <button className="icon-button" aria-label="Close create account" onClick={() => setRegisterOpen(false)}>
+            <button className="icon-button" aria-label="Close create account" onClick={closeRegister}>
               <X size={20} />
             </button>
           </div>
-          <form className="modal-form" onSubmit={submitRegister}>
-            <Field label="Email address" error={registerErrors.email}>
-              <input className="input" autoComplete="email" value={registerForm.email} onChange={(event) => setRegisterForm({ ...registerForm, email: event.target.value })} />
-            </Field>
-            <Field label="Password" error={registerErrors.password}>
-              <input className="input" type="password" autoComplete="new-password" value={registerForm.password} onChange={(event) => setRegisterForm({ ...registerForm, password: event.target.value })} />
-            </Field>
-            <p className="muted">This creates a local prototype account only.</p>
-            <button className="btn btn-red" type="submit">
-              Create Account
-            </button>
-          </form>
+          {!registerAccountType ? (
+            <section className="register-account-type-panel" aria-label="Account type choices">
+              <h3>Choose account type</h3>
+              <div className="register-account-type-grid">
+                {selfServiceAccountTypes.map((accountType) => (
+                  <button className="register-account-type-card" key={accountType.type} type="button" aria-label={accountType.label} onClick={() => setRegisterAccountType(accountType.type)}>
+                    <span aria-hidden="true">{accountType.icon}</span>
+                    <strong>{accountType.label}</strong>
+                    <small>{accountType.description}</small>
+                  </button>
+                ))}
+              </div>
+              <p className="muted">This creates a local prototype account only.</p>
+            </section>
+          ) : (
+            <form className="modal-form" onSubmit={submitRegister}>
+              <div className="register-selected-account">
+                <span>{selfServiceAccountButtonLabel(registerAccountType)} account</span>
+                <button className="btn btn-ghost" type="button" onClick={() => setRegisterAccountType(null)}>
+                  <ChevronLeft size={16} /> Back to account types
+                </button>
+              </div>
+              <Field label="Email address" error={registerErrors.email}>
+                <input className="input" autoComplete="email" value={registerForm.email} onChange={(event) => setRegisterForm({ ...registerForm, email: event.target.value })} />
+              </Field>
+              <Field label="Password" error={registerErrors.password}>
+                <input className="input" type="password" autoComplete="new-password" value={registerForm.password} onChange={(event) => setRegisterForm({ ...registerForm, password: event.target.value })} />
+              </Field>
+              <p className="muted">This creates a local prototype account only.</p>
+              <button className="btn btn-red" type="submit">
+                Create {selfServiceAccountButtonLabel(registerAccountType)} Account
+              </button>
+            </form>
+          )}
         </ModalShell>
       )}
       {loginFailedOpen && (

@@ -115,7 +115,7 @@ function renderManagedStudentApp(path: string, account: Record<string, unknown>,
   );
 }
 
-function scopedProfileKey(scope: "manager" | "student", email: string) {
+function scopedProfileKey(scope: "manager" | "staff" | "student", email: string) {
   const keyEmail = email
     .trim()
     .toLowerCase()
@@ -2378,23 +2378,94 @@ describe("login landing", () => {
     expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "parent123@chos.prototype", role: "guardian" });
   });
 
-  it("creates self-service accounts as guardian accounts instead of staff accounts", async () => {
+  it("opens account type choices before self-service credential fields", () => {
     renderLoggedOutApp("/");
 
     fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
     const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
 
+    expect(within(createAccountDialog).getByRole("heading", { name: "Choose account type" })).toBeInTheDocument();
+    expect(within(createAccountDialog).getByRole("button", { name: "Staff" })).toBeInTheDocument();
+    expect(within(createAccountDialog).getByRole("button", { name: "Parent" })).toBeInTheDocument();
+    expect(within(createAccountDialog).getByRole("button", { name: "Student" })).toBeInTheDocument();
+    expect(within(createAccountDialog).queryByLabelText("Email address")).not.toBeInTheDocument();
+
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Staff" }));
+
+    expect(within(createAccountDialog).getByText("Staff account")).toBeInTheDocument();
+    expect(within(createAccountDialog).getByLabelText("Email address")).toBeInTheDocument();
+    expect(within(createAccountDialog).getByRole("button", { name: "Back to account types" })).toBeInTheDocument();
+  });
+
+  it("creates self-service staff accounts with Staff Profile access and no Create tab", async () => {
+    const staffView = renderLoggedOutApp("/");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
+    const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Staff" }));
+    fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "new.staff@example.com" } });
+    fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "StaffPass123" } });
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Staff Account" }));
+
+    expect(await screen.findByRole("heading", { name: "Staff Profile" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Staff Panel" })).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toContainEqual(expect.objectContaining({ email: "new.staff@example.com", role: "staff" }));
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "new.staff@example.com", remembered: true });
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "new.staff@example.com", role: "staff" });
+
+    fireEvent.click(screen.getByRole("link", { name: "Staff Panel" }));
+
+    expect(screen.getByLabelText("Staff app launcher")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "STAFF PANEL" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create" })).not.toBeInTheDocument();
+
+    staffView.unmount();
+    window.localStorage.removeItem("chos.session.v1");
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "new.staff@example.com" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByRole("heading", { name: "Staff Profile" })).toBeInTheDocument();
+  });
+
+  it("creates self-service parent accounts as guardian accounts", async () => {
+    renderLoggedOutApp("/");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
+    const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Parent" }));
     fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "new.family@example.com" } });
     fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "FamilyPass123" } });
-    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Account" }));
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Parent Account" }));
 
     expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Parent Profile" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Staff Panel" })).not.toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toContainEqual(expect.objectContaining({ email: "new.family@example.com" }));
     expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "new.family@example.com", remembered: true });
     expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "new.family@example.com", role: "guardian" });
     expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).not.toContainEqual({ email: "new.family@example.com", role: "staff" });
+  });
+
+  it("creates self-service student accounts as student accounts", async () => {
+    renderLoggedOutApp("/");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
+    const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Student" }));
+    fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "new.student@example.com" } });
+    fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "StudentPass123" } });
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Student Account" }));
+
+    expect(await screen.findByLabelText("Student profile page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Student Panel" })).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toContainEqual(expect.objectContaining({ email: "new.student@example.com", role: "student" }));
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "new.student@example.com", remembered: true });
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "new.student@example.com", role: "student" });
   });
 
   it("keeps registered account creation idempotent when the same signup fires twice before rerender", async () => {
@@ -2430,9 +2501,10 @@ describe("login landing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
     const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
 
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Parent" }));
     fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "manager123@chos.prototype" } });
     fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "FamilyPass123" } });
-    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Account" }));
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Parent Account" }));
 
     expect(await screen.findByText("That account is already registered. Sign in with the saved password.")).toBeInTheDocument();
     expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
@@ -2460,9 +2532,10 @@ describe("login landing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
     const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
 
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Parent" }));
     fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "jordan.staff@example.com" } });
     fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "FamilyPass123" } });
-    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Account" }));
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Parent Account" }));
 
     expect(await screen.findByText("That account is already registered. Sign in with the saved password.")).toBeInTheDocument();
     expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
@@ -2490,9 +2563,10 @@ describe("login landing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
     const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
 
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Parent" }));
     fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "kai.child@example.com" } });
     fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "FamilyPass123" } });
-    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Account" }));
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Parent Account" }));
 
     expect(await screen.findByText("That account is already registered. Sign in with the saved password.")).toBeInTheDocument();
     expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
@@ -2596,9 +2670,10 @@ describe("login landing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
     const createAccountDialog = screen.getByRole("dialog", { name: "Create New Account" });
 
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Parent" }));
     fireEvent.change(within(createAccountDialog).getByLabelText("Email address"), { target: { value: "returning.family@example.com" } });
     fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "FamilyPass123" } });
-    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Account" }));
+    fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Parent Account" }));
 
     expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
 
@@ -2944,7 +3019,7 @@ describe("app fullscreen behavior", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enter as Guest" }));
 
     expect(container.querySelector(".authenticated-app-shell")).toHaveClass("is-login-transitioning");
-    expect(await screen.findByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Staff Profile" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Account type" })).not.toBeInTheDocument();
     expect(screen.queryByText("Signed in as guest.")).not.toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "guest@chos.prototype", role: "staff" });
@@ -3803,7 +3878,7 @@ describe("post-login operations app", () => {
     expect(screen.getByRole("heading", { name: "MANAGER PANEL" })).toBeInTheDocument();
   });
 
-  it("lets the manager create a staff account with Create access that can log in", async () => {
+  it("lets the manager create a staff account that can log in without Create access", async () => {
     const managerView = renderLoggedInApp("/manager");
 
     fireEvent.click(screen.getByRole("link", { name: "Create" }));
@@ -3816,17 +3891,17 @@ describe("post-login operations app", () => {
     fireEvent.change(screen.getByLabelText("Confirm staff password"), { target: { value: "StaffPass123" } });
     fireEvent.change(screen.getByLabelText("Staff email"), { target: { value: "jordan@chos.prototype" } });
     fireEvent.change(screen.getByLabelText("Staff phone"), { target: { value: "(262) 555-0111" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Create account access" }));
+    expect(screen.queryByRole("checkbox", { name: "Create account access" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create Staff Account" }));
 
-    expect(screen.getByRole("article", { name: "Jordan Lee staff account" })).toHaveTextContent("Create");
+    expect(screen.getByRole("article", { name: "Jordan Lee staff account" })).not.toHaveTextContent("Create");
     expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual(expect.arrayContaining([
       expect.objectContaining({
         displayName: "Jordan Lee",
         username: "jordan.staff",
         password: "StaffPass123",
         role: "staff",
-        access: expect.arrayContaining(["create"])
+        access: expect.not.arrayContaining(["create"])
       })
     ]));
 
@@ -3838,9 +3913,10 @@ describe("post-login operations app", () => {
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
-    expect(await screen.findByRole("heading", { name: "Profile" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("link", { name: "Manager's Panel" }));
-    expect(screen.getByRole("link", { name: "Create" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Staff Profile" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "Staff Panel" }));
+    expect(screen.getByLabelText("Staff app launcher")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create" })).not.toBeInTheDocument();
   });
 
   it("lets managers deactivate and reactivate custom logins", async () => {
@@ -3900,7 +3976,7 @@ describe("post-login operations app", () => {
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
-    expect(await screen.findByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Staff Profile" })).toBeInTheDocument();
   });
 
   it("lets the manager create a student account that can log in", async () => {
@@ -4134,7 +4210,7 @@ describe("post-login operations app", () => {
           email: "taylor@example.com",
           phone: "(262) 555-0190",
           title: "Front Desk",
-          access: ["dashboard", "students"]
+          access: expect.arrayContaining(["dashboard", "messages", "students", "classes", "studyGuide", "events", "scheduling", "merchandise", "videos", "reports"])
         })
       ]);
       expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([
@@ -4171,7 +4247,7 @@ describe("post-login operations app", () => {
           email: "taylor@example.com",
           phone: "(262) 555-0190",
           title: "Front Desk",
-          access: ["dashboard", "students"]
+          access: expect.arrayContaining(["dashboard", "messages", "students", "classes", "studyGuide", "events", "scheduling", "merchandise", "videos", "reports"])
         })
       ]);
       expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([
@@ -4180,7 +4256,7 @@ describe("post-login operations app", () => {
     });
   });
 
-  it("hides Create from staff accounts unless the manager granted Create access", () => {
+  it("hides Create from staff accounts even when older stored access includes Create", () => {
     renderManagedStaffApp("/manager", {
       id: "managed-staff-no-create",
       displayName: "Taylor Staff",
@@ -4188,12 +4264,30 @@ describe("post-login operations app", () => {
       password: "StaffPass123",
       role: "staff",
       status: "active",
-      access: ["dashboard", "students"],
+      access: ["dashboard", "students", "create"],
       createdAt: "2026-05-20T10:00:00.000Z"
     });
 
-    expect(screen.getByLabelText("Manager app launcher")).toBeInTheDocument();
+    expect(screen.getByLabelText("Staff app launcher")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Create" })).not.toBeInTheDocument();
+  });
+
+  it("falls staff away from direct Create panel links to the first staff tool", () => {
+    renderManagedStaffApp("/manager?tool=create", {
+      id: "managed-staff-stale-create",
+      displayName: "Taylor Staff",
+      username: "taylor.staff",
+      password: "StaffPass123",
+      role: "staff",
+      status: "active",
+      access: ["create"],
+      createdAt: "2026-05-20T10:00:00.000Z"
+    });
+
+    expect(screen.getByLabelText("Staff app launcher")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "STAFF PANEL" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Create Accounts" })).not.toBeInTheDocument();
   });
 
   it("opens a rebuilt student Profile page with reference layout for student accounts", () => {

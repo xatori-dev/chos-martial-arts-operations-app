@@ -872,11 +872,16 @@ function sanitizeStudyGuideMaterialsForBackup(materials: readonly StudyGuideMate
 function guardianParentIdentitiesForBackup(accounts: readonly unknown[]) {
   const guardianIdentities = new Set(builtInGuardianLoginIdentities);
   accounts.forEach((account) => {
-    if (isRecord(account) && typeof account.email === "string" && account.email.trim()) {
+    if (isRecord(account) && typeof account.email === "string" && account.email.trim() && registeredBackupAccountRole(account) === "guardian") {
       guardianIdentities.add(account.email.trim().toLowerCase());
     }
   });
   return guardianIdentities;
+}
+
+function registeredBackupAccountRole(account: Record<string, unknown>): AccountRole {
+  const role = account.role;
+  return typeof role === "string" && supportedAccountRoles.has(role as AccountRole) ? role as AccountRole : "guardian";
 }
 
 function sanitizeChildAccountForBackup(child: ChildAccount, guardianParentIdentities: Set<string>, seenUsernames: Set<string>) {
@@ -918,7 +923,7 @@ function sanitizeRegisteredAccountsForBackup(accounts: readonly unknown[], custo
     const normalizedEmail = email.toLowerCase();
     if (!email || builtInLoginIdentities.has(normalizedEmail) || customLoginUsernames.has(normalizedEmail) || seenEmails.has(normalizedEmail)) return [];
     seenEmails.add(normalizedEmail);
-    return [{ ...safeAccount, email }];
+    return [{ ...safeAccount, email, role: registeredBackupAccountRole(account) }];
   });
 }
 
@@ -930,7 +935,7 @@ function expectedAccountRolesForBackup(
   const expectedRoles = new Map<string, AccountRole>(builtInLoginRoles);
   accounts.forEach((account) => {
     if (isRecord(account) && typeof account.email === "string" && account.email.trim()) {
-      expectedRoles.set(account.email.trim().toLowerCase(), "guardian");
+      expectedRoles.set(account.email.trim().toLowerCase(), registeredBackupAccountRole(account));
     }
   });
   managedAccounts.forEach((account) => expectedRoles.set(account.username.trim().toLowerCase(), account.role));
@@ -1559,7 +1564,7 @@ function validateAccountRoleConsistency(data: {
   childAccounts: readonly ChildAccountBackup[];
 }) {
   const expectedRoles = new Map<string, AccountRole>(builtInLoginRoles);
-  data.accounts.forEach((account) => expectedRoles.set((account.email as string).trim().toLowerCase(), "guardian"));
+  data.accounts.forEach((account) => expectedRoles.set((account.email as string).trim().toLowerCase(), registeredBackupAccountRole(account)));
   data.managedAccounts.forEach((account) => expectedRoles.set(account.username.trim().toLowerCase(), account.role));
   data.childAccounts.forEach((child) => expectedRoles.set(child.username.trim().toLowerCase(), "student"));
 
