@@ -1,0 +1,70 @@
+{
+  "schema": "xatori.app.manifest.v1",
+  "createdAt": "2026-06-05T09:06:41.7424035Z",
+  "appClass": "client",
+  "ownershipModel": "agency-master",
+  "business": {
+    "name": "Xatori Dev",
+    "domain": "xatoridev.com",
+    "email": "xatori@xatoridev.com",
+    "githubOrg": "xatori-dev"
+  },
+  "app": {
+    "clientSlug": "chos-martial-arts",
+    "projectSlug": "operations-app",
+    "displayName": "Cho's Martial Arts Operations App",
+    "rootPath": "C:\\Dev\\Business\\Clients\\active\\chos-martial-arts\\operations-app",
+    "repoPath": "C:\\Dev\\Business\\Clients\\active\\chos-martial-arts\\operations-app\\repo"
+  },
+  "resources": {
+    "github": {
+      "owner": "xatori-dev",
+      "repository": "chos-martial-arts-operations-app",
+      "fullName": "xatori-dev/chos-martial-arts-operations-app",
+      "defaultBranch": "main"
+    },
+    "googleWorkspace": {
+      "driveFolderName": "chos-martial-arts - operations-app",
+      "gmailLabels": [
+        "Clients",
+        "Clients/chos-martial-arts",
+        "Clients/chos-martial-arts/operations-app"
+      ]
+    },
+    "onePassword": {
+      "developmentVault": "client-chos-martial-arts Development",
+      "productionVault": "client-chos-martial-arts Production",
+      "handoffVault": "client-chos-martial-arts Handoff"
+    },
+    "supabase": {
+      "organization": "Xatori Dev",
+      "stagingProjectName": "chos-martial-arts-operations-app-staging",
+      "productionProjectName": "chos-martial-arts-operations-app-production"
+    },
+    "twilio": {
+      "parentAccount": "Xatori Dev",
+      "developmentSubaccount": "xd-chos-martial-arts-operations-app-dev",
+      "productionSubaccount": "xd-chos-martial-arts-operations-app-prod",
+      "transactionalMessagingService": "xd-chos-martial-arts-operations-app-txn",
+      "broadcastMessagingService": "xd-chos-martial-arts-operations-app-broadcast"
+    },
+    "cloudflare": {
+      "account": "Xatori Dev",
+      "pagesProject": "chos-martial-arts-operations-app",
+      "apiWorker": "xd-chos-martial-arts-operations-app-api",
+      "assetsBucketStaging": "xd-chos-martial-arts-operations-app-assets-staging",
+      "assetsBucketProduction": "xd-chos-martial-arts-operations-app-assets-prod",
+      "kvNamespaceStaging": "xd_chos_martial_arts_operations_app_staging",
+      "kvNamespaceProduction": "xd_chos_martial_arts_operations_app_prod"
+    },
+    "stripe": {
+      "account": "Xatori Dev",
+      "productPrefix": "Cho's Martial Arts Operations App",
+      "metadataClientKey": "xatori_client",
+      "metadataProjectKey": "xatori_project",
+      "metadataEnvironmentKey": "xatori_environment",
+      "testWebhookName": "chos-martial-arts-operations-app-test",
+      "liveWebhookName": "chos-martial-arts-operations-app-live"
+    }
+  }
+}
