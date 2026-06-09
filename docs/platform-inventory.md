@@ -48,10 +48,10 @@ No raw secret values belong in this repository or in chat. Record item names and
 
 | Environment | Target project | Status |
 | --- | --- | --- |
-| Staging | `chos-martial-arts-operations-app-staging` | Reserved name only |
+| Staging | `chos-martial-arts-operations-app-staging` / `zfuwbbepsnmmlpgfkmhz` | Active in Xatori Dev, us-east-2 |
 | Production | `chos-martial-arts-operations-app-production` | Reserved name only |
 
-The current app has no Supabase runtime integration. A separate backend/auth/data migration plan is required before creating schemas, auth policies, RLS, Edge Functions, or production migrations.
+Staging has Supabase Auth profiles, RLS, `account_creation_audit`, and the `manager-create-account` Edge Function. The seeded owner login is `Manager123` with password `123456`; the internal Auth email is `manager123@accounts.chosmartialarts.app`. Production remains uncreated until staging is accepted.
 
 ## Twilio
 

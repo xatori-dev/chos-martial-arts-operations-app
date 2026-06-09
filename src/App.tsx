@@ -3,6 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSPrope
 import { useNavigate } from "react-router";
 import { publicAsset } from "./appAssets";
 import { useAppState } from "./state";
+import { isSupabaseAuthConfigured, signInSupabaseAccount } from "./supabaseAccounts";
 import { initializeAppTheme } from "./theme";
 import type { AccountRole } from "./types";
 import {
@@ -355,6 +356,8 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
   const [registerAccountType, setRegisterAccountType] = useState<SelfServiceAccountType | null>(null);
   const [guestIntroOpen, setGuestIntroOpen] = useState(false);
   const [loginFailedOpen, setLoginFailedOpen] = useState(false);
+  const [loginPending, setLoginPending] = useState(false);
+  const supabaseConfigured = isSupabaseAuthConfigured();
   const loginLandingStyle = { "--login-bg-image": `url("${publicAsset("NewFinalBackground.png")}")` } as CSSProperties;
   const guestIntroImage = publicAsset("assets/guest-intro/cho-guest-class-intro-v2.png");
   const guestIntroStyle = { "--guest-intro-image": `url("${guestIntroImage}")` } as CSSProperties;
@@ -364,7 +367,7 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
     setLoginFailedOpen(true);
   };
 
-  const submitLogin = (event: FormEvent) => {
+  const submitLogin = async (event: FormEvent) => {
     event.preventDefault();
     const nextErrors = validateLoginForm(loginForm);
     setErrors(nextErrors);
@@ -372,6 +375,23 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
       failLogin("Enter a username and password.");
       return;
     }
+
+    if (supabaseConfigured) {
+      setLoginPending(true);
+      try {
+        const supabaseLogin = await signInSupabaseAccount(loginForm);
+        if (supabaseLogin.status === "authenticated") {
+          login(supabaseLogin.sessionEmail, true, supabaseLogin.role);
+          navigate("/");
+          return;
+        }
+        failLogin(supabaseLogin.status === "inactive" ? "The account is inactive." : "Check the Supabase username and password.");
+        return;
+      } finally {
+        setLoginPending(false);
+      }
+    }
+
     if (isPrototypeManagerLogin(loginForm)) {
       login(prototypeManagerLogin.email, true, prototypeManagerLogin.role);
       navigate("/");
@@ -436,6 +456,10 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
   };
 
   const openRegister = () => {
+    if (supabaseConfigured) {
+      showToast("Sign in as Manager123 to create Supabase accounts.");
+      return;
+    }
     setRegisterErrors({});
     setRegisterAccountType(null);
     setRegisterOpen(true);
@@ -499,12 +523,12 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
             </button>
           </label>
           {errors.password && <p className="login-error">{errors.password}</p>}
-          <button className="login-submit" type="submit">
-            Sign In
+          <button className="login-submit" type="submit" disabled={loginPending}>
+            {loginPending ? "Signing In..." : "Sign In"}
           </button>
           <div className="login-secondary-actions">
             <button className="login-create" type="button" onClick={openRegister}>
-              Create New Account
+              {supabaseConfigured ? "Manager Creates Accounts" : "Create New Account"}
             </button>
             <button className="login-guest" type="button" onClick={() => setGuestIntroOpen(true)}>
               Sign in as Guest

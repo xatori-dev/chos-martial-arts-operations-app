@@ -78,7 +78,11 @@
   --motion-focus-glow: rgba(217, 174, 79, 0.34);
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
 html {
   height: 100%;
   min-height: 100%;
@@ -110,8 +114,9 @@ body {
 html::-webkit-scrollbar,
 body::-webkit-scrollbar,
 *::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
 }
 #root {
   width: 100%;
@@ -5430,16 +5435,21 @@ html[data-theme="light"] .guest-intro-scene figcaption {
 }
 
 .operations-page-title-frame {
-  max-width: min(100%, 520px);
+  max-width: min(100%, 420px);
 }
 
 .operations-page-head h1 {
-  font-size: clamp(3rem, 7vw, 6rem);
-  line-height: 0.86;
-  margin: 0 0 8px;
+  font-size: clamp(1.85rem, min(4vw, 4.6svh), 3.2rem);
+  line-height: 0.9;
+  margin: 0 0 3px;
   letter-spacing: 0;
   color: var(--ops-text);
   overflow-wrap: anywhere;
+}
+
+.operations-page-title-frame h1 {
+  font-size: clamp(1.6rem, min(3.4vw, 4svh), 2.7rem);
+  line-height: 0.9;
 }
 
 .operations-page-head p {
@@ -5466,6 +5476,7 @@ html[data-theme="light"] .guest-intro-scene figcaption {
 .operations-page--workflow .operations-page-title-frame {
   grid-column: 1;
   grid-row: 1;
+  max-width: min(100%, 360px);
 }
 
 .operations-page--students .operations-page-title-copy p,
@@ -8554,7 +8565,7 @@ html[data-theme="light"] .guest-intro-scene figcaption {
   }
 
   .operations-page--workflow .manager-page-title-frame h1 {
-    font-size: clamp(1.45rem, 6.2vw, 2.05rem);
+    font-size: clamp(1.08rem, 4.9vw, 1.48rem);
     line-height: 0.9;
     overflow-wrap: normal;
     word-break: keep-all;
@@ -16517,8 +16528,8 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-launcher-workspace .manager-page-title-frame h1 {
-  font-size: clamp(1.24rem, min(2.35vw, 4svh), 2.16rem);
-  line-height: 0.88;
+  font-size: clamp(0.95rem, min(1.85vw, 2.8svh), 1.55rem);
+  line-height: 0.92;
 }
 
 .manager-launcher-workspace .manager-home-title-rule {
@@ -16959,7 +16970,8 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   font-size: clamp(0.78rem, min(1.45vw, 2svh), 1.06rem);
 }
 
-.manager-launcher-calendar .manager-calendar-head a {
+.manager-launcher-calendar .manager-calendar-head a,
+.manager-launcher-calendar .manager-calendar-add-trigger {
   min-height: clamp(32px, 5svh, 42px);
   padding-inline: clamp(10px, 1.8vw, 16px);
 }
@@ -17018,9 +17030,13 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-launcher-calendar .manager-calendar-day > span {
-  width: clamp(17px, 3.1svh, 24px);
-  height: clamp(17px, 3.1svh, 24px);
-  font-size: clamp(0.7rem, min(1.6vw, 1.9svh), 0.92rem);
+  width: clamp(20px, 3.3svh, 26px);
+  height: clamp(20px, 3.3svh, 26px);
+  font-size: clamp(0.82rem, min(1.8vw, 2.05svh), 1rem);
+  transform: translate(
+    calc(-1 * clamp(2px, 0.75svh, 6px)),
+    calc(-1 * clamp(2px, 0.75svh, 6px))
+  );
 }
 
 .manager-launcher-calendar .manager-calendar-day > div {
@@ -17057,6 +17073,18 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   background: linear-gradient(135deg, #fffdf7, var(--manager-theme-gold-soft));
   color: var(--manager-theme-navy);
   box-shadow: 0 12px 24px rgba(201, 167, 99, 0.2);
+}
+
+.manager-launcher-calendar .manager-calendar-add-trigger {
+  border-color: rgba(228, 207, 154, 0.58);
+  color: #fff9e8;
+  background:
+    radial-gradient(circle at 50% 46%, rgba(255, 255, 255, 0.14), transparent 52%),
+    linear-gradient(145deg, rgba(20, 34, 52, 0.96), rgba(8, 15, 27, 0.96));
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 8px 18px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
 .manager-launcher-calendar .manager-calendar-period-nav button:hover,
@@ -17269,6 +17297,65 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   align-self: start;
 }
 
+.manager-full-page-shell--dashboard {
+  height: 100svh;
+  height: 100dvh;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  overflow: clip;
+}
+
+.portrait-app-frame .manager-full-page-shell.manager-full-page-shell--dashboard {
+  overflow: hidden;
+  overflow: clip;
+}
+
+.manager-full-page-shell--dashboard .manager-full-topbar {
+  padding-block: clamp(3px, 0.65svh, 7px);
+}
+
+.manager-full-page-shell--dashboard .manager-subpage-main {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  padding-block: clamp(3px, 0.65svh, 8px);
+  overflow: hidden;
+  overflow: clip;
+}
+
+.portrait-app-frame .manager-full-page-shell.manager-full-page-shell--dashboard .manager-subpage-main {
+  padding-block: clamp(3px, 0.55svh, 6px);
+  overflow: hidden;
+  overflow: clip;
+}
+
+.operations-page--dashboard {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: clamp(4px, 0.8svh, 8px);
+  overflow: hidden;
+  overflow: clip;
+}
+
+.operations-page--dashboard .operations-page-head {
+  min-height: 0;
+}
+
+.operations-page--dashboard .operations-page-head h1 {
+  margin-bottom: 0;
+  font-size: clamp(1.08rem, min(3.1vw, 3.6svh), 1.72rem);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page {
+  height: 100%;
+  min-height: 0;
+  align-self: stretch;
+}
+
 .manager-dashboard-calendar-page.manager-launcher-calendar {
   width: min(100%, 900px);
   height: auto;
@@ -17307,10 +17394,18 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   line-height: 1.08;
 }
 
-.manager-dashboard-calendar-page .manager-calendar-head a {
+.manager-dashboard-calendar-page .manager-calendar-head a,
+.manager-dashboard-calendar-page .manager-calendar-add-trigger {
   min-height: clamp(28px, 4.1svh, 34px);
   padding-inline: clamp(9px, 1.4vw, 13px);
   font-size: clamp(0.72rem, min(1vw, 1.45svh), 0.86rem);
+}
+
+.manager-dashboard-calendar-page .manager-calendar-add-trigger {
+  width: clamp(30px, 4.1svh, 34px);
+  min-width: clamp(30px, 4.1svh, 34px);
+  height: clamp(30px, 4.1svh, 34px);
+  padding: 0;
 }
 
 .manager-dashboard-calendar-page .manager-calendar-view-switch {
@@ -17326,6 +17421,7 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
 .manager-dashboard-calendar-page .manager-calendar-body {
   height: auto;
+  grid-template-rows: auto auto auto;
   gap: clamp(4px, 0.8svh, 7px);
 }
 
@@ -17343,7 +17439,15 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-dashboard-calendar-page .manager-calendar-period-nav strong {
-  font-size: clamp(0.82rem, min(1.4vw, 1.8svh), 1.04rem);
+  height: 100%;
+  min-height: clamp(28px, 4.1svh, 34px);
+  padding: 0 clamp(8px, 1.6vw, 14px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(1.02rem, min(3.2vw, 2.85svh), 1.34rem);
+  line-height: 1;
+  text-shadow: 0 1px 8px rgba(8, 24, 40, 0.42);
 }
 
 .manager-dashboard-calendar-page .manager-calendar-grid {
@@ -17367,9 +17471,13 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-dashboard-calendar-page .manager-calendar-day > span {
-  width: clamp(17px, 2.7svh, 22px);
-  height: clamp(17px, 2.7svh, 22px);
-  font-size: clamp(0.66rem, min(1vw, 1.45svh), 0.82rem);
+  width: clamp(20px, 3svh, 24px);
+  height: clamp(20px, 3svh, 24px);
+  font-size: clamp(0.78rem, min(1.14vw, 1.6svh), 0.9rem);
+  transform: translate(
+    calc(-1 * clamp(2px, 0.55svh, 5px)),
+    calc(-1 * clamp(2px, 0.55svh, 5px))
+  );
 }
 
 .manager-dashboard-calendar-page .manager-calendar-day > div {
@@ -17384,6 +17492,287 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
 .manager-dashboard-calendar-page .manager-calendar-day small {
   font-size: clamp(0.48rem, min(0.78vw, 1.08svh), 0.58rem);
+}
+
+.manager-dashboard-calendar-page .manager-calendar-selected-panel {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.1), rgba(184, 245, 226, 0.055)),
+    rgba(7, 19, 34, 0.68);
+}
+
+.manager-dashboard-calendar-page .manager-calendar-selected-panel h3 {
+  font-size: 1.35rem;
+}
+
+.manager-dashboard-calendar-page .manager-calendar-selected-list {
+  gap: 7px;
+}
+
+.manager-dashboard-calendar-page .manager-calendar-selected-item {
+  grid-template-columns: minmax(84px, 104px) minmax(0, 1fr);
+  align-items: stretch;
+  padding: 9px 10px;
+  border-radius: 13px;
+}
+
+.manager-dashboard-calendar-page .manager-calendar-selected-time {
+  min-height: 48px;
+  font-size: 0.86rem;
+}
+
+.manager-dashboard-calendar-page .manager-calendar-selected-kind {
+  font-size: 0.66rem;
+}
+
+.manager-dashboard-calendar-page .manager-calendar-selected-item strong {
+  font-size: 0.98rem;
+}
+
+.manager-dashboard-calendar-page .manager-calendar-selected-item small {
+  font-size: 0.82rem;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page.manager-launcher-calendar {
+  height: 100%;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-panel {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-head {
+  min-height: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "title views action";
+  align-items: center;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-head > div:first-child {
+  grid-area: title;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-view-switch {
+  grid-area: views;
+  width: 100%;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-add-trigger {
+  grid-area: action;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-head h2 {
+  font-size: clamp(1rem, min(2.4vw, 3svh), 1.45rem);
+  white-space: nowrap;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-head p {
+  display: none;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-head svg {
+  width: clamp(20px, 3.3svh, 26px);
+  height: clamp(20px, 3.3svh, 26px);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-body {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-grid {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-grid--month {
+  grid-template-rows: auto repeat(6, minmax(0, 1fr));
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-panel.manager-calendar-selected-panel--fixed {
+  block-size: clamp(210px, 30svh, 236px);
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  gap: clamp(5px, 0.75svh, 9px);
+  padding: clamp(7px, 1svh, 11px);
+  overflow: hidden;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-panel header {
+  align-items: center;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-panel h3 {
+  font-size: clamp(1rem, min(3.8vw, 2.6svh), 1.28rem);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-panel header p {
+  margin-top: 1px;
+  font-size: clamp(0.72rem, min(2.4vw, 1.7svh), 0.86rem);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-panel header > span {
+  min-height: clamp(24px, 3.6svh, 30px);
+  padding-inline: 10px;
+  font-size: clamp(0.72rem, min(2.3vw, 1.65svh), 0.82rem);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list.manager-calendar-selected-list--no-scrollbar {
+  min-height: 0;
+  gap: clamp(5px, 0.75svh, 8px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list.manager-calendar-selected-list--no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list.manager-calendar-selected-list--crowded {
+  grid-auto-rows: minmax(0, 1fr);
+  gap: clamp(3px, 0.48svh, 5px);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list.manager-calendar-selected-list--dense {
+  gap: 2px;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-item {
+  grid-template-columns: minmax(82px, 98px) minmax(0, 1fr);
+  gap: 8px;
+  padding: clamp(6px, 0.85svh, 9px);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-item {
+  min-height: 0;
+  grid-template-columns: minmax(72px, 86px) minmax(0, 1fr);
+  gap: 6px;
+  padding: clamp(4px, 0.58svh, 6px) clamp(6px, 0.9svh, 8px);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--dense .manager-calendar-selected-item {
+  grid-template-columns: minmax(62px, 74px) minmax(0, 1fr);
+  gap: 5px;
+  padding: 3px 6px;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-time {
+  min-height: clamp(40px, 6svh, 50px);
+  padding-inline: 8px;
+  font-size: 0.78rem;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-time {
+  min-height: 0;
+  height: 100%;
+  padding-inline: 6px;
+  font-size: clamp(0.62rem, min(2vw, 1.36svh), 0.72rem);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--dense .manager-calendar-selected-time {
+  padding-inline: 4px;
+  font-size: clamp(0.56rem, min(1.8vw, 1.16svh), 0.66rem);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-time-divider {
+  min-width: 40px;
+  gap: 2px;
+  font-size: 0.42rem;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-time-divider::before,
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-time-divider::after {
+  width: 7px;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-copy {
+  gap: 2px;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--dense .manager-calendar-selected-copy {
+  gap: 1px;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-kind {
+  padding: 2px 6px;
+  font-size: clamp(0.56rem, min(1.9vw, 1.25svh), 0.66rem);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-kind {
+  padding: 1px 5px;
+  font-size: clamp(0.48rem, min(1.55vw, 1.05svh), 0.58rem);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--dense .manager-calendar-selected-kind {
+  display: none;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-item strong {
+  font-size: clamp(0.78rem, min(2.65vw, 1.9svh), 0.96rem);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-item strong {
+  font-size: clamp(0.68rem, min(2.25vw, 1.5svh), 0.82rem);
+  line-height: 1.04;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--dense .manager-calendar-selected-item strong {
+  font-size: clamp(0.6rem, min(2vw, 1.26svh), 0.74rem);
+  line-height: 1.02;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-item small {
+  font-size: clamp(0.68rem, min(2.2vw, 1.55svh), 0.8rem);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-item small {
+  font-size: clamp(0.58rem, min(1.9vw, 1.22svh), 0.68rem);
+  line-height: 1.05;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--dense .manager-calendar-selected-item small {
+  font-size: clamp(0.52rem, min(1.7vw, 1.08svh), 0.62rem);
+  line-height: 1.02;
+}
+
+@media (max-height: 660px) {
+  .operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-grid--month .manager-calendar-day > div {
+    width: calc(100% + clamp(2px, 0.9svh, 8px));
+    grid-template-columns: 1fr;
+    grid-auto-rows: clamp(6px, 0.9svh, 7px);
+    align-content: start;
+    justify-content: start;
+    gap: 1px;
+    margin-top: clamp(-6px, -0.7svh, -4px);
+    transform: translateX(calc(-1 * clamp(1px, 0.45svh, 4px)));
+  }
+
+  .operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-grid--month .manager-calendar-entry {
+    width: 100%;
+    height: clamp(6px, 0.9svh, 7px);
+    font-size: clamp(0.29rem, 0.58svh, 0.36rem);
+  }
+
+  .operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-day small {
+    align-self: end;
+    font-size: 0;
+    line-height: 0;
+  }
 }
 
 @media (max-width: 760px) {
@@ -17526,7 +17915,8 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
     width: 100%;
   }
 
-  .manager-launcher-calendar .manager-calendar-head > a {
+  .manager-launcher-calendar .manager-calendar-head > a,
+  .manager-launcher-calendar .manager-calendar-add-trigger {
     grid-area: action;
   }
 
@@ -17544,7 +17934,8 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
     line-height: 1;
   }
 
-  .manager-launcher-calendar .manager-calendar-head a {
+  .manager-launcher-calendar .manager-calendar-head a,
+  .manager-launcher-calendar .manager-calendar-add-trigger {
     min-height: clamp(30px, 4.8svh, 38px);
     font-size: clamp(0.72rem, 3.1vw, 0.9rem);
   }
@@ -18399,7 +18790,8 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   line-height: 1.06;
 }
 
-.manager-calendar-head a {
+.manager-calendar-head a,
+.manager-calendar-add-trigger {
   min-height: 44px;
   padding: 0 16px;
   display: inline-flex;
@@ -18412,6 +18804,57 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.manager-calendar-add-trigger {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.manager-calendar-add-trigger svg {
+  color: currentColor;
+  stroke-width: 2.8;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+}
+
+.manager-calendar-action-dialog {
+  width: min(92vw, 380px);
+  display: grid;
+  gap: 18px;
+}
+
+.manager-calendar-action-options {
+  display: grid;
+  gap: 10px;
+}
+
+.manager-calendar-action-options a {
+  min-height: 56px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  border: 1px solid rgba(184, 245, 226, 0.32);
+  border-radius: 14px;
+  color: #f9f6ff;
+  background:
+    linear-gradient(135deg, rgba(184, 245, 226, 0.12), rgba(168, 220, 255, 0.08)),
+    rgba(255, 255, 255, 0.055);
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.manager-calendar-action-options a:hover,
+.manager-calendar-action-options a:focus-visible {
+  border-color: rgba(184, 245, 226, 0.68);
+  color: #172033;
+  background: linear-gradient(135deg, #b8f5e2, #a8dcff);
+  outline: none;
 }
 
 .manager-calendar-view-switch {
@@ -18609,13 +19052,16 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-calendar-day > span {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
+  align-self: start;
+  justify-self: start;
+  transform: translate(-7px, -7px);
   border-radius: 50%;
   color: #f9f6ff;
-  font-size: 0.98rem;
+  font-size: 1.06rem;
   font-weight: 700;
   line-height: 1;
 }
@@ -18629,31 +19075,6 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
 .manager-calendar-day.is-muted {
   opacity: 0.48;
-}
-
-.manager-calendar-day.is-today {
-  border-color: rgba(255, 255, 255, 0.86);
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.48), rgba(231, 246, 255, 0.26)),
-    rgba(255, 255, 255, 0.18);
-}
-
-.manager-calendar-day.is-glowing-today {
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.32),
-    0 0 24px rgba(255, 255, 255, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
-}
-
-.manager-calendar-day.is-transparent-today {
-  color: #f9fbff;
-  text-shadow: 0 1px 10px rgba(8, 13, 24, 0.42);
-  backdrop-filter: blur(10px);
-}
-
-.manager-calendar-day.is-transparent-today > span {
-  color: #172033;
-  text-shadow: none;
 }
 
 .manager-calendar-day:hover,
@@ -18678,25 +19099,13 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   animation: manager-calendar-selected-pulse 1.8s ease-in-out infinite;
 }
 
-.manager-calendar-day.is-transparent-today.is-pulsing-selected {
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.54), rgba(226, 245, 255, 0.32)),
-    rgba(255, 255, 255, 0.22);
-}
-
 .manager-calendar-day.is-today > span {
   color: #172033;
-  background: linear-gradient(135deg, #ffffff, #eaf7ff);
-  box-shadow: 0 0 16px rgba(255, 255, 255, 0.8);
-}
-
-.manager-calendar-day.is-transparent-today .manager-calendar-entry {
-  color: #0e1a2d;
-  background: rgba(184, 245, 226, 0.88);
-}
-
-.manager-calendar-day.is-transparent-today .manager-calendar-entry.event {
-  background: rgba(213, 199, 255, 0.9);
+  background: linear-gradient(135deg, #ffffff, #f8fafc);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.84),
+    0 2px 8px rgba(255, 255, 255, 0.24);
+  text-shadow: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -18706,12 +19115,13 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-calendar-entry {
+  --manager-calendar-entry-color: #b8f5e2;
   min-width: 0;
   padding: 3px 6px;
   border-radius: 7px;
   overflow: hidden;
   color: #162033;
-  background: #b8f5e2;
+  background: var(--manager-calendar-entry-color);
   font-size: 0.68rem;
   font-weight: 700;
   line-height: 1.05;
@@ -18721,7 +19131,57 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-calendar-entry.event {
-  background: #d5c7ff;
+  --manager-calendar-entry-color: #d5c7ff;
+  background: var(--manager-calendar-entry-color);
+}
+
+.manager-calendar-grid--month .manager-calendar-day > div {
+  width: calc(100% + clamp(2px, 0.9svh, 8px));
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-rows: clamp(6px, 0.9svh, 7px);
+  align-content: start;
+  justify-content: start;
+  gap: 1px;
+  margin-top: clamp(-6px, -0.7svh, -4px);
+  transform: translateX(calc(-1 * clamp(1px, 0.45svh, 4px)));
+}
+
+.manager-calendar-grid--month .manager-calendar-entry {
+  width: 100%;
+  height: clamp(6px, 0.9svh, 7px);
+  min-width: 0;
+  padding: 0 1px 0 clamp(5px, 0.9svh, 6px);
+  position: relative;
+  display: block;
+  border-radius: 999px;
+  color: rgba(248, 252, 255, 0.88) !important;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: clamp(0.3rem, 0.62svh, 0.38rem);
+  font-weight: 800;
+  line-height: clamp(6px, 0.9svh, 7px);
+  letter-spacing: 0;
+  text-indent: 0;
+  text-overflow: ellipsis;
+}
+
+.manager-calendar-grid--month .manager-calendar-entry::before {
+  content: "";
+  width: clamp(2.5px, 0.46svh, 3.5px);
+  height: clamp(2.5px, 0.46svh, 3.5px);
+  position: absolute;
+  top: 50%;
+  left: 1px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: var(--manager-calendar-entry-color);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--manager-calendar-entry-color) 58%, transparent);
+}
+
+.manager-calendar-grid--month .manager-calendar-day small {
+  display: none;
 }
 
 .manager-calendar-day small {
@@ -18741,10 +19201,17 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-calendar-selected-panel header {
-  display: flex;
-  justify-content: space-between;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "date count";
   gap: 12px;
   align-items: start;
+}
+
+.manager-calendar-selected-panel header > div {
+  grid-area: date;
+  min-width: 0;
 }
 
 .manager-calendar-selected-panel h3 {
@@ -18761,6 +19228,9 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-calendar-selected-panel header > span {
+  grid-area: count;
+  justify-self: end;
+  align-self: center;
   min-height: 32px;
   padding: 0 12px;
   display: inline-flex;
@@ -18772,9 +19242,10 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   white-space: nowrap;
 }
 
-.manager-calendar-selected-panel > div {
+.manager-calendar-selected-panel > div,
+.manager-calendar-selected-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -18788,48 +19259,107 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   min-width: 0;
   padding: 10px 12px;
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-columns: minmax(88px, 118px) minmax(0, 1fr);
   gap: 10px;
-  align-items: center;
+  align-items: stretch;
   border-radius: 12px;
   color: inherit;
   background: rgba(255, 255, 255, 0.075);
   text-decoration: none;
 }
 
-.manager-calendar-selected-item > span {
-  min-height: 36px;
+.manager-calendar-selected-time {
+  min-height: 52px;
+  min-width: 0;
+  padding: 7px 10px;
   display: grid;
-  place-items: center;
+  grid-auto-rows: min-content;
+  align-items: center;
+  align-content: center;
+  justify-content: center;
+  gap: 2px;
   border-radius: 10px;
   color: #172033;
   background: linear-gradient(135deg, #a8dcff, #d5c7ff);
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-transform: capitalize;
+  font-size: 0.88rem;
+  font-weight: 900;
+  line-height: 1;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
-.manager-calendar-selected-item div {
+.manager-calendar-selected-time-value {
+  max-width: 100%;
+  display: block;
+  overflow: hidden;
+  text-overflow: clip;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 1em;
+  white-space: nowrap;
+}
+
+.manager-calendar-selected-time-divider {
+  min-width: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: rgba(23, 32, 51, 0.64);
+  font-size: 0.5rem;
+  font-family: var(--font-sans);
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.manager-calendar-selected-time-divider::before,
+.manager-calendar-selected-time-divider::after {
+  content: "";
+  width: 10px;
+  height: 1px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(23, 32, 51, 0.28);
+}
+
+.manager-calendar-selected-copy {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  align-content: center;
+  gap: 5px;
 }
 
-.manager-calendar-selected-item strong,
-.manager-calendar-selected-item small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.manager-calendar-selected-kind {
+  width: fit-content;
+  padding: 3px 7px;
+  border: 1px solid rgba(184, 245, 226, 0.24);
+  border-radius: 999px;
+  color: #b8f5e2;
+  background: rgba(184, 245, 226, 0.1);
+  font-size: 0.7rem;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.manager-calendar-selected-kind.event {
+  border-color: rgba(213, 199, 255, 0.28);
+  color: #d5c7ff;
+  background: rgba(213, 199, 255, 0.12);
 }
 
 .manager-calendar-selected-item strong {
   font-size: 1.06rem;
-  line-height: 1.05;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .manager-calendar-selected-item small {
   color: #c9cedf;
   font-size: 0.9rem;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
 }
 
 .manager-lower-grid {
@@ -19410,9 +19940,9 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   }
 
   .manager-calendar-day > span {
-    width: 24px;
-    height: 24px;
-    font-size: 0.92rem;
+    width: 25px;
+    height: 25px;
+    font-size: 0.98rem;
   }
 
   .manager-calendar-entry {
@@ -22218,6 +22748,8 @@ html[data-theme="light"] {
   .manager-back-link,
   .manager-logout-button,
   .manager-calendar-head a,
+  .manager-calendar-add-trigger,
+  .manager-calendar-action-options a,
   .manager-calendar-view-switch button,
   .manager-calendar-period-nav button,
   .manager-calendar-selected-item,
@@ -22266,6 +22798,10 @@ html[data-theme="light"] {
   .manager-logout-button:focus-visible,
   .manager-calendar-head a:hover,
   .manager-calendar-head a:focus-visible,
+  .manager-calendar-add-trigger:hover,
+  .manager-calendar-add-trigger:focus-visible,
+  .manager-calendar-action-options a:hover,
+  .manager-calendar-action-options a:focus-visible,
   .manager-calendar-selected-item:hover,
   .manager-calendar-selected-item:focus-visible,
   .manager-event-list a:hover,
@@ -22770,10 +23306,37 @@ html[data-theme="light"] {
 }
 
 .portrait-app-frame .operations-page-head h1 {
-  font-size: clamp(1.9rem, 6.4svh, 3rem);
+  font-size: clamp(1.18rem, 4.2svh, 1.72rem);
   line-height: 0.9;
   overflow-wrap: normal;
   word-break: normal;
+}
+
+html[data-theme="light"] .manager-launcher-calendar .manager-calendar-add-trigger {
+  border-color: rgba(126, 91, 37, 0.42);
+  color: #2b2014;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(255, 255, 255, 0.82), rgba(255, 250, 238, 0.48) 52%, transparent 54%),
+    linear-gradient(145deg, #e0c071, #aa7827);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.72),
+    0 7px 16px rgba(83, 62, 31, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.68);
+}
+
+html[data-theme="light"] .manager-launcher-calendar .manager-calendar-add-trigger svg {
+  filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.55));
+}
+
+.portrait-app-frame .operations-page-title-frame h1,
+.portrait-app-frame .operations-page--workflow .manager-page-title-frame h1,
+.portrait-app-frame .operations-page--students .manager-page-title-frame h1 {
+  font-size: clamp(1rem, min(4.2vw, 3.4svh), 1.45rem);
+  line-height: 0.92;
+}
+
+.portrait-app-frame .operations-page-title-frame {
+  max-width: min(100%, 280px);
 }
 
 .portrait-app-frame :is(

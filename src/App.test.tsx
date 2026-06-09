@@ -5892,8 +5892,8 @@ describe("post-login operations app", () => {
     expect(screen.queryByLabelText("Direct message center")).not.toBeInTheDocument();
   });
 
-  it("opens the month calendar from the Dashboard icon destination", () => {
-    renderLoggedInApp("/dashboard");
+  it("opens the month calendar from the Dashboard icon destination", async () => {
+    const { container, unmount } = renderLoggedInApp("/dashboard");
 
     expect(screen.getByLabelText("Manager workspace")).toHaveClass("manager-full-page-shell");
     expect(screen.getByRole("link", { name: "Back to Manager Page" })).toHaveAttribute("href", "/manager");
@@ -5902,12 +5902,110 @@ describe("post-login operations app", () => {
     expect(dashboardLogoutButton).toHaveTextContent("");
     expect(dashboardLogoutButton.querySelector("img.manager-logout-icon")).toHaveAttribute("src", expect.stringContaining("ManagerLogoutProfessional.png"));
     expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(container.querySelector(".operations-page-title-copy p")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Manager app launcher")).not.toBeInTheDocument();
     const liveCalendar = screen.getByLabelText("Live studio calendar");
     const calendarViewControls = within(liveCalendar).getByRole("group", { name: "Calendar view" });
     expect(within(calendarViewControls).getByRole("button", { name: "Month" })).toHaveAttribute("aria-pressed", "true");
     expect(within(liveCalendar).getByRole("grid", { name: /Cho's studio calendar/i })).toHaveClass("manager-calendar-grid--month");
-    expect(within(liveCalendar).getByRole("link", { name: "Manage Schedule" })).toHaveAttribute("href", "/schedule");
+    expect(within(liveCalendar).queryByRole("link", { name: "Manage Schedule" })).not.toBeInTheDocument();
+
+    const scheduleActionButton = within(liveCalendar).getByRole("button", { name: "Open schedule actions" });
+    expect(scheduleActionButton.querySelector("svg")).toHaveAttribute("width", "16");
+    expect(scheduleActionButton.querySelector("svg")).toHaveAttribute("height", "16");
+
+    fireEvent.click(scheduleActionButton);
+    const scheduleActionsDialog = screen.getByRole("dialog", { name: "Add to schedule" });
+    expect(within(scheduleActionsDialog).getByRole("link", { name: "Add Event" })).toHaveAttribute("href", "/events?create=event&returnTo=dashboard");
+    expect(within(scheduleActionsDialog).getByRole("link", { name: "Add Class" })).toHaveAttribute("href", "/classes?create=class");
+
+    fireEvent.click(within(scheduleActionsDialog).getByRole("link", { name: "Add Event" }));
+    expect(await screen.findByRole("dialog", { name: "Add Event" })).toBeInTheDocument();
+
+    unmount();
+    renderLoggedInApp("/dashboard");
+    const refreshedLiveCalendar = screen.getByLabelText("Live studio calendar");
+    fireEvent.click(within(refreshedLiveCalendar).getByRole("button", { name: "Open schedule actions" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Add to schedule" })).getByRole("link", { name: "Add Class" }));
+    expect(await screen.findByRole("dialog", { name: "Create Class" })).toBeInTheDocument();
+  });
+
+  it("shows every selected Dashboard calendar item below the calendar in time order", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-09T12:00:00-05:00"));
+    window.localStorage.setItem("chos.operations.classes.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-afternoon", title: "Afternoon Leadership Seminar", date: "2026-06-15", time: "2:00 PM", type: "class", notes: "Leadership drills and mat etiquette." },
+      { id: "schedule-morning", title: "Morning Board Breaking", date: "2026-06-15", time: "9:00 AM", type: "class", notes: "Board breaking fundamentals." }
+    ]));
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([
+      { id: "event-midday", title: "Midday Tournament Check-in", date: "2026-06-15", time: "12:00 PM", details: "Tournament check-in for competitors.", audience: "students" }
+    ]));
+    renderLoggedInApp("/dashboard");
+
+    const liveCalendar = screen.getByLabelText("Live studio calendar");
+    fireEvent.click(within(liveCalendar).getByRole("button", { name: /Select Monday, June 15, 3 calendar items/i }));
+
+    const selectedDateEvents = within(liveCalendar).getByLabelText("Selected date events");
+    expect(within(selectedDateEvents).getByRole("heading", { name: "Monday, June 15" })).toBeInTheDocument();
+    expect(within(selectedDateEvents).getByText("3 events")).toBeInTheDocument();
+    expect(within(selectedDateEvents).getAllByRole("link").map((link) => link.getAttribute("aria-label"))).toEqual([
+      "9:00 AM, Morning Board Breaking, Class",
+      "12:00 PM, Midday Tournament Check-in, students",
+      "2:00 PM, Afternoon Leadership Seminar, Class"
+    ]);
+  });
+
+  it("returns to the Dashboard calendar and selects a saved event created from the calendar add flow", async () => {
+    window.localStorage.setItem("chos.operations.classes.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([]));
+    renderLoggedInApp("/dashboard");
+
+    const liveCalendar = screen.getByLabelText("Live studio calendar");
+    fireEvent.click(within(liveCalendar).getByRole("button", { name: "Open schedule actions" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Add to schedule" })).getByRole("link", { name: "Add Event" }));
+
+    const eventDialog = await screen.findByRole("dialog", { name: "Add Event" });
+    fireEvent.change(within(eventDialog).getByLabelText("Event title"), { target: { value: "Calendar Save Check" } });
+    fireEvent.change(within(eventDialog).getByLabelText("Event date"), { target: { value: "2026-06-15" } });
+    fireEvent.change(within(eventDialog).getByLabelText("Event time"), { target: { value: "7:30 PM" } });
+    fireEvent.change(within(eventDialog).getByLabelText("Event details"), { target: { value: "Real-time dashboard calendar verification." } });
+    fireEvent.click(within(eventDialog).getByRole("button", { name: "Add Event" }));
+
+    const refreshedCalendar = screen.getByLabelText("Live studio calendar");
+    const selectedDateEvents = within(refreshedCalendar).getByLabelText("Selected date events");
+    expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.events.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        title: "Calendar Save Check",
+        date: "2026-06-15",
+        time: "7:30 PM"
+      })
+    ]);
+    expect(within(refreshedCalendar).getByRole("button", { name: /Select Monday, June 15, 1 calendar item/i })).toHaveAttribute("aria-pressed", "true");
+    expect(within(selectedDateEvents).getByRole("heading", { name: "Monday, June 15" })).toBeInTheDocument();
+    expect(within(selectedDateEvents).getByRole("link", { name: "7:30 PM, Calendar Save Check, students" })).toBeInTheDocument();
+  });
+
+  it("keeps the Dashboard selected-day calendar panel fixed and marked to fit without visible scrollbars", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-09T12:00:00-05:00"));
+    window.localStorage.setItem("chos.operations.classes.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([
+      { id: "schedule-morning", title: "Morning Board Breaking", date: "2026-06-09", time: "9:00 AM", type: "class", notes: "Board breaking fundamentals." },
+      { id: "schedule-afternoon", title: "Afternoon Leadership Seminar", date: "2026-06-09", time: "2:00 PM", type: "class", notes: "Leadership drills and mat etiquette." },
+      { id: "schedule-evening", title: "Evening Sparring Prep", date: "2026-06-09", time: "6:00 PM", type: "class", notes: "Controlled sparring rounds." },
+      { id: "schedule-late", title: "Late Open Mat", date: "2026-06-09", time: "7:30 PM", type: "class", notes: "Open mat rounds." }
+    ]));
+    renderLoggedInApp("/dashboard");
+
+    const selectedDateEvents = within(screen.getByLabelText("Live studio calendar")).getByLabelText("Selected date events");
+    const selectedEventList = selectedDateEvents.querySelector(".manager-calendar-selected-list");
+    expect(selectedDateEvents).toHaveClass("manager-calendar-selected-panel--fixed");
+    expect(selectedEventList).toHaveClass("manager-calendar-selected-list--no-scrollbar");
+    expect(selectedEventList).toHaveClass("manager-calendar-selected-list--crowded");
+    expect(selectedEventList).toHaveClass("manager-calendar-selected-list--dense");
   });
 
   it("opens the student launcher for student accounts", () => {

@@ -5,6 +5,7 @@ import { getProduct, studio } from "./data";
 import { parseOperationsBackupSnapshot, type OperationsBackupData } from "./operationsBackup";
 import { getClassReminderCandidates, getLeadCandidates, getMerchandiseTargetStock, getStudentCelebrationEvents, getStudentProfileIssues, hasGuardianSmsConsent, hasStaffSmsConsent, hasStudentSmsConsent, isAttendanceGapFollowUpDue, isBeltTestInviteDue, isLowStockMerchandiseItem, isMilestoneEncouragementDue, isMissedClassFollowUpDue, isNewStudentCheckInDue, isPausedStudentReviewDue, isProfileUpdateRequestDue, isQueuedMessageDeliverable, isStaleOneTimeScheduledClass, isTrialConversionDue } from "./operationsReports";
 import { buildStudentBeltProgress } from "./studentProgress";
+import { clearSupabaseAuthSession } from "./supabaseAccounts";
 import { normalizeTwilioInboundSmsWebhookForServer, normalizeTwilioStatusCallbackForServer, type TwilioInboundSmsWebhook } from "./twilioRelayContract";
 import type {
   AccountRole,
@@ -2800,7 +2801,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [saveRoleForEmail, setSession]
   );
 
-  const logout = useCallback(() => setSession(undefined), [setSession]);
+  const logout = useCallback(() => {
+    clearSupabaseAuthSession();
+    setSession(undefined);
+  }, [setSession]);
 
   const setAccountRole = useCallback(
     (role: AccountRole) => {

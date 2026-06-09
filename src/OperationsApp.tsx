@@ -76,6 +76,7 @@ import {
 } from "./beltCase";
 import { childUsernameFromName, normalizeChildUsername } from "./childAccountUtils";
 import { beltRanks } from "./data";
+import { createSupabaseManagedAccount, isSupabaseAuthConfigured } from "./supabaseAccounts";
 import {
   readManagerProfile,
   readStaffProfile,
@@ -185,7 +186,7 @@ function selectSessionStudent(students: StudentRecord[], sessionEmail?: string, 
 }
 
 function scheduleTimeSortValue(time: string) {
-  const match = time.trim().match(/^(\d{1,2}):(\d{2})\s?(AM|PM)?$/i);
+  const match = time.trim().match(/^(\d{1,2}):(\d{2})\s?(AM|PM)?/i);
   if (!match) return Number.MAX_SAFE_INTEGER;
   let hours = Number(match[1]);
   const minutes = Number(match[2]);
@@ -1203,6 +1204,7 @@ function StaffOperationsShell({
   path: string;
 }) {
   const shellClassName = `manager-shell${accountRole === "student" && path === "/" ? " manager-shell--student-reference" : ""}`;
+  const fullPageShellClassName = `manager-full-page-shell${path === "/dashboard" ? " manager-full-page-shell--dashboard" : ""}`;
 
   if (path === "/" || path === "/manager") {
     return <div className={shellClassName}>{children}</div>;
@@ -1210,7 +1212,7 @@ function StaffOperationsShell({
 
   return (
     <div className={shellClassName}>
-      <section className="manager-full-page-shell" aria-label="Manager workspace">
+      <section className={fullPageShellClassName} aria-label="Manager workspace">
         <header className="manager-full-topbar" aria-label="Manager page controls">
           <Link className="manager-back-link" to="/manager" aria-label="Back to Manager Page">
             <ChevronLeft size={24} />
@@ -1232,13 +1234,13 @@ function StaffOperationsShell({
   );
 }
 
-function OperationsPage({ title, text, action, children, className }: { title: string; text: string; action?: ReactNode; children: ReactNode; className?: string }) {
+function OperationsPage({ title, text, action, children, className }: { title: string; text?: string; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <section className={`operations-page${className ? ` ${className}` : ""}`}>
       <div className="operations-page-head">
         <div className="operations-page-title-copy">
           <ManagerPageTitleFrame title={title} className="operations-page-title-frame" />
-          <p>{text}</p>
+          {text && <p>{text}</p>}
         </div>
         {action && <div className="operations-page-action">{action}</div>}
       </div>
@@ -1286,6 +1288,10 @@ function parseCalendarDate(date: string) {
   return new Date(`${date}T00:00:00`);
 }
 
+function isCalendarDateKey(date: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && toDateKey(parseCalendarDate(date)) === date;
+}
+
 function weekDaysForDate(date: Date) {
   const weekStart = new Date(date);
   weekStart.setDate(date.getDate() - date.getDay());
@@ -1328,7 +1334,20 @@ function formatWeekRange(weekDays: Date[]) {
 }
 
 function compareCalendarEntries(a: ManagerCalendarEntry, b: ManagerCalendarEntry) {
-  return `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`);
+  return (
+    a.date.localeCompare(b.date) ||
+    scheduleTimeSortValue(a.time) - scheduleTimeSortValue(b.time) ||
+    a.title.localeCompare(b.title)
+  );
+}
+
+function splitCalendarTimeRange(time: string) {
+  const match = time.trim().match(/^(.+?)\s*(?:-|\u2013|\u2014)\s*(.+)$/);
+  if (!match) return null;
+  return {
+    start: match[1].trim(),
+    end: match[2].trim()
+  };
 }
 
 function scheduledClassCalendarEntries(item: ScheduledClass, calendarDays: Date[]): ManagerCalendarEntry[] {
@@ -1370,12 +1389,13 @@ function useLiveCalendarDate() {
   return now;
 }
 
-function ManagerLiveCalendar({ scheduledClasses, studioClasses, studioEvents }: { scheduledClasses: ScheduledClass[]; studioClasses: StudioClass[]; studioEvents: StudioEvent[] }) {
+function ManagerLiveCalendar({ scheduledClasses, studioClasses, studioEvents, focusDateKey }: { scheduledClasses: ScheduledClass[]; studioClasses: StudioClass[]; studioEvents: StudioEvent[]; focusDateKey?: string }) {
   const now = useLiveCalendarDate();
   const todayKey = toDateKey(now);
   const [selectedDateKey, setSelectedDateKey] = useState(todayKey);
   const [calendarView, setCalendarView] = useState<ManagerCalendarView>("month");
   const [visibleMonthDate, setVisibleMonthDate] = useState(() => new Date(now.getFullYear(), now.getMonth(), 1));
+  const [scheduleActionsOpen, setScheduleActionsOpen] = useState(false);
   const currentYear = visibleMonthDate.getFullYear();
   const currentMonth = visibleMonthDate.getMonth();
   const monthStart = new Date(currentYear, currentMonth, 1);
@@ -1459,13 +1479,20 @@ function ManagerLiveCalendar({ scheduledClasses, studioClasses, studioEvents }: 
     setVisibleMonthDate(new Date(todayDate.getFullYear(), todayDate.getMonth(), 1));
   }, [todayKey]);
 
+  useEffect(() => {
+    if (!focusDateKey || !isCalendarDateKey(focusDateKey)) return;
+    const focusDate = parseCalendarDate(focusDateKey);
+    setSelectedDateKey(focusDateKey);
+    setVisibleMonthDate(new Date(focusDate.getFullYear(), focusDate.getMonth(), 1));
+  }, [focusDateKey]);
+
   return (
     <section className="manager-calendar-panel" aria-label="Live studio calendar">
       <header className="manager-calendar-head">
         <div>
           <CalendarDays size={34} />
           <div>
-            <h2>{monthLabel}</h2>
+            <h2 className="sr-only">{monthLabel}</h2>
             <p>Live studio calendar · updates from today&apos;s date</p>
           </div>
         </div>
@@ -1481,8 +1508,48 @@ function ManagerLiveCalendar({ scheduledClasses, studioClasses, studioEvents }: 
             </button>
           ))}
         </div>
-        <Link to="/schedule">Manage Schedule</Link>
+        <button
+          type="button"
+          className="manager-calendar-add-trigger"
+          aria-label="Open schedule actions"
+          aria-expanded={scheduleActionsOpen}
+          aria-haspopup="dialog"
+          onClick={() => setScheduleActionsOpen(true)}
+        >
+          <Plus size={16} aria-hidden="true" />
+        </button>
       </header>
+      {scheduleActionsOpen && (
+        <div className="modal-backdrop manager-calendar-action-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setScheduleActionsOpen(false)}>
+          <div
+            aria-labelledby="manager-calendar-action-title"
+            aria-modal="true"
+            className="modal-card manager-calendar-action-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="student-modal-head">
+              <div>
+                <h2 id="manager-calendar-action-title">Add to schedule</h2>
+                <p>Choose the calendar item you want to create.</p>
+              </div>
+              <button type="button" className="student-modal-close" aria-label="Close schedule actions" onClick={() => setScheduleActionsOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="manager-calendar-action-options">
+              <Link to="/events?create=event&returnTo=dashboard" onClick={() => setScheduleActionsOpen(false)}>
+                <CalendarDays size={18} aria-hidden="true" />
+                Add Event
+              </Link>
+              <Link to="/classes?create=class" onClick={() => setScheduleActionsOpen(false)}>
+                <Users size={18} aria-hidden="true" />
+                Add Class
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="manager-calendar-body">
         <div className="manager-calendar-period-nav" role="group" aria-label="Calendar period navigation">
           <button aria-label={`Previous ${calendarView}`} onClick={() => shiftVisiblePeriod(-1)} type="button">
@@ -1500,13 +1567,14 @@ function ManagerLiveCalendar({ scheduledClasses, studioClasses, studioEvents }: 
           {visibleCalendarDays.map((day) => {
             const dateKey = toDateKey(day);
             const dayEntries = entriesByDate[dateKey] ?? [];
+            const dayPreviewLimit = calendarView === "month" ? 2 : 3;
             const isToday = dateKey === todayKey;
             const isOutsideMonth = day.getMonth() !== currentMonth;
             const isSelected = dateKey === selectedDateKey;
             return (
               <button
                 type="button"
-                className={`manager-calendar-day${isToday ? " is-today is-glowing-today is-transparent-today" : ""}${isOutsideMonth ? " is-muted" : ""}${isSelected ? " is-selected is-pulsing-selected" : ""}${dayEntries.length ? " has-items" : ""}`}
+                className={`manager-calendar-day${isToday ? " is-today" : ""}${isOutsideMonth ? " is-muted" : ""}${isSelected ? " is-selected is-pulsing-selected" : ""}${dayEntries.length ? " has-items" : ""}`}
                 key={dateKey}
                 onClick={() => selectCalendarDate(day)}
                 aria-pressed={isSelected}
@@ -1514,36 +1582,55 @@ function ManagerLiveCalendar({ scheduledClasses, studioClasses, studioEvents }: 
               >
                 <span>{day.getDate()}</span>
                 <div>
-                  {dayEntries.slice(0, 3).map((entry) => (
-                    <span className={`manager-calendar-entry ${entry.kind}`} key={entry.id} style={entry.titleColor ? { color: entry.titleColor } : undefined}>
-                      {entry.title}
-                    </span>
-                  ))}
-                  {dayEntries.length > 3 && <small>+{dayEntries.length - 3} more</small>}
+                  {dayEntries.slice(0, dayPreviewLimit).map((entry) => {
+                    const entryStyle = entry.titleColor
+                      ? ({ "--manager-calendar-entry-color": entry.titleColor, color: entry.titleColor } as CSSProperties)
+                      : undefined;
+                    return (
+                      <span className={`manager-calendar-entry ${entry.kind}`} key={entry.id} style={entryStyle} title={entry.title}>
+                        {entry.title}
+                      </span>
+                    );
+                  })}
+                  {dayEntries.length > dayPreviewLimit && <small>+{dayEntries.length - dayPreviewLimit} more</small>}
                 </div>
               </button>
             );
           })}
         </div>
-        <section className="manager-calendar-selected-panel" aria-label="Selected date events" aria-live="polite">
+        <section className="manager-calendar-selected-panel manager-calendar-selected-panel--fixed" aria-label="Selected date events" aria-live="polite">
           <header>
             <div>
               <h3>{selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h3>
               <p>{selectedDateKey === todayKey ? "Today" : "Selected date"}</p>
             </div>
-            <span>{selectedEntries.length} item{selectedEntries.length === 1 ? "" : "s"}</span>
+            <span>{selectedEntries.length} event{selectedEntries.length === 1 ? "" : "s"}</span>
           </header>
           {selectedEntries.length ? (
-            <div>
-              {selectedEntries.map((entry) => (
-                <Link className="manager-calendar-selected-item" key={entry.id} to={entry.path}>
-                  <span>{entry.kind}</span>
-                  <div>
-                    <strong style={entry.titleColor ? { color: entry.titleColor } : undefined}>{entry.title}</strong>
-                    <small>{entry.time} · {entry.meta}</small>
-                  </div>
-                </Link>
-              ))}
+            <div className={`manager-calendar-selected-list manager-calendar-selected-list--no-scrollbar${selectedEntries.length > 2 ? " manager-calendar-selected-list--crowded" : ""}${selectedEntries.length > 3 ? " manager-calendar-selected-list--dense" : ""}`}>
+              {selectedEntries.map((entry) => {
+                const timeRange = splitCalendarTimeRange(entry.time);
+                return (
+                  <Link className="manager-calendar-selected-item" key={entry.id} to={entry.path} aria-label={`${entry.time}, ${entry.title}, ${entry.meta}`}>
+                    <span className={`manager-calendar-selected-time${timeRange ? " is-range" : ""}`} title={entry.time}>
+                      {timeRange ? (
+                        <>
+                          <span className="manager-calendar-selected-time-value">{timeRange.start}</span>
+                          <span className="manager-calendar-selected-time-divider" aria-hidden="true">to</span>
+                          <span className="manager-calendar-selected-time-value">{timeRange.end}</span>
+                        </>
+                      ) : (
+                        <span className="manager-calendar-selected-time-value">{entry.time}</span>
+                      )}
+                    </span>
+                    <div className="manager-calendar-selected-copy">
+                      <span className={`manager-calendar-selected-kind ${entry.kind}`}>{entry.kind}</span>
+                      <strong style={entry.titleColor ? { color: entry.titleColor } : undefined}>{entry.title}</strong>
+                      <small>{entry.meta}</small>
+                    </div>
+                  </Link>
+                );
+              })}
             </div>
           ) : (
             <p>No classes or events scheduled for this date.</p>
@@ -8420,6 +8507,7 @@ function CreateAccountsPage() {
   const [mode, setMode] = useState<"staff" | "student">("staff");
   const [staffForm, setStaffForm] = useState(makeBlankStaffAccountForm);
   const [studentForm, setStudentForm] = useState(makeBlankStudentAccountForm);
+  const [savingAccountType, setSavingAccountType] = useState<"staff" | "student" | null>(null);
   const staffAccounts = managedAccounts.filter((account) => account.role === "staff");
   const studentAccounts = managedAccounts.filter((account) => account.role === "student");
   const staffToolCount = staffPanelAccessOptions.length;
@@ -8438,7 +8526,7 @@ function CreateAccountsPage() {
     return true;
   };
 
-  const submitStaffAccount = (event: FormEvent) => {
+  const submitStaffAccount = async (event: FormEvent) => {
     event.preventDefault();
     const username = normalizeCreateUsername(staffForm.username);
     if (!staffForm.displayName.trim() || !username || !staffForm.email.trim() || !staffForm.phone.trim()) {
@@ -8458,7 +8546,7 @@ function CreateAccountsPage() {
       return;
     }
 
-    const account = createManagedAccount({
+    const accountInput = {
       displayName: staffForm.displayName,
       username,
       password: staffForm.password,
@@ -8469,7 +8557,25 @@ function CreateAccountsPage() {
       title: staffForm.title,
       notes: staffForm.notes,
       access: staffPanelAccessKeys
-    });
+    } as const;
+
+    if (isSupabaseAuthConfigured()) {
+      setSavingAccountType("staff");
+      const supabaseAccount = await createSupabaseManagedAccount(accountInput);
+      setSavingAccountType(null);
+      if (supabaseAccount.status !== "created") {
+        showToast(
+          supabaseAccount.status === "missing-session"
+            ? "Sign in again as Manager123 before creating Supabase accounts."
+            : supabaseAccount.status === "unauthorized" || supabaseAccount.status === "error"
+              ? supabaseAccount.message
+              : "Unable to create Supabase staff account."
+        );
+        return;
+      }
+    }
+
+    const account = createManagedAccount(accountInput);
 
     if (!account) {
       showToast("Unable to create staff account.");
@@ -8480,7 +8586,7 @@ function CreateAccountsPage() {
     showToast(`${account.displayName} staff account created.`);
   };
 
-  const submitStudentAccount = (event: FormEvent) => {
+  const submitStudentAccount = async (event: FormEvent) => {
     event.preventDefault();
     const username = normalizeCreateUsername(studentForm.username);
     if (!studentForm.fullName.trim() || !username || !studentForm.studentEmail.trim() || !studentForm.guardianPhone.trim()) {
@@ -8498,6 +8604,33 @@ function CreateAccountsPage() {
     if (managedUsernameExists(username)) {
       showToast("That username is already in use.");
       return;
+    }
+
+    if (isSupabaseAuthConfigured()) {
+      setSavingAccountType("student");
+      const supabaseAccount = await createSupabaseManagedAccount({
+        displayName: studentForm.fullName,
+        username,
+        password: studentForm.password,
+        role: "student",
+        status: "active",
+        email: studentForm.studentEmail,
+        phone: studentForm.guardianPhone,
+        title: `${studentForm.beltRank} Belt Student`,
+        notes: studentForm.notes,
+        access: []
+      });
+      setSavingAccountType(null);
+      if (supabaseAccount.status !== "created") {
+        showToast(
+          supabaseAccount.status === "missing-session"
+            ? "Sign in again as Manager123 before creating Supabase accounts."
+            : supabaseAccount.status === "unauthorized" || supabaseAccount.status === "error"
+              ? supabaseAccount.message
+              : "Unable to create Supabase student account."
+        );
+        return;
+      }
     }
 
     const student = addOperationsStudent({
@@ -8658,8 +8791,8 @@ function CreateAccountsPage() {
             </label>
 
             <div className="student-editor-actions">
-              <button type="submit">
-                <UserPlus size={18} /> Create Staff Account
+              <button type="submit" disabled={savingAccountType === "staff"}>
+                <UserPlus size={18} /> {savingAccountType === "staff" ? "Creating Staff..." : "Create Staff Account"}
               </button>
             </div>
           </form>
@@ -8738,8 +8871,8 @@ function CreateAccountsPage() {
             </label>
 
             <div className="student-editor-actions">
-              <button type="submit">
-                <UserPlus size={18} /> Create Student Account
+              <button type="submit" disabled={savingAccountType === "student"}>
+                <UserPlus size={18} /> {savingAccountType === "student" ? "Creating Student..." : "Create Student Account"}
               </button>
             </div>
           </form>
@@ -8768,11 +8901,14 @@ function CreateAccountsPage() {
 
 function DashboardPage() {
   const { scheduledClasses, studioClasses, studioEvents } = useAppState();
+  const location = useLocation();
+  const focusDateParam = new URLSearchParams(location.search).get("date") ?? "";
+  const focusDateKey = isCalendarDateKey(focusDateParam) ? focusDateParam : undefined;
 
   return (
-    <OperationsPage title="Dashboard" text="Review the live studio month calendar and jump into schedule management.">
+    <OperationsPage className="operations-page--dashboard" title="Dashboard">
       <div className="manager-dashboard-calendar-page manager-launcher-calendar">
-        <ManagerLiveCalendar scheduledClasses={scheduledClasses} studioClasses={studioClasses} studioEvents={studioEvents} />
+        <ManagerLiveCalendar scheduledClasses={scheduledClasses} studioClasses={studioClasses} studioEvents={studioEvents} focusDateKey={focusDateKey} />
       </div>
     </OperationsPage>
   );
@@ -9981,6 +10117,8 @@ function ClassCard({ studioClass, onSelect }: { studioClass: StudioClass; onSele
 
 function ClassesPage() {
   const { studioClasses, addStudioClass, updateStudioClass, deleteStudioClass, showToast } = useAppState();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [selectedClassId, setSelectedClassId] = useState("");
   const selectedClass = studioClasses.find((studioClass) => studioClass.id === selectedClassId);
   const [form, setForm] = useState(blankClassForm);
@@ -9992,6 +10130,14 @@ function ClassesPage() {
     ].filter((group) => group.items.length > 0),
     [studioClasses]
   );
+
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get("create") !== "class") return;
+    setSelectedClassId("");
+    setForm(blankClassForm);
+    setClassModalOpen(true);
+    navigate("/classes", { replace: true });
+  }, [location.search, navigate]);
 
   const resetForm = () => {
     setSelectedClassId("");
@@ -12074,9 +12220,13 @@ function EventCard({ event }: { event: StudioEvent }) {
 
 function EventsPage() {
   const { accountRole, studioEvents, addStudioEvent, showToast } = useAppState();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [form, setForm] = useState({ title: "", date: "2026-06-01", time: "6:00 PM", details: "", audience: "students" as StudioEvent["audience"] });
   const [eventModalOpen, setEventModalOpen] = useState(false);
   const isStudent = accountRole === "student";
+  const eventSearchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const shouldReturnToDashboard = eventSearchParams.get("returnTo") === "dashboard";
   const eventGroups = useMemo(
     () => Array.from(new Set(studioEvents.map((event) => event.audience)))
       .sort((left, right) => audienceLabel(left).localeCompare(audienceLabel(right), undefined, { sensitivity: "base" }))
@@ -12087,6 +12237,12 @@ function EventsPage() {
       })),
     [studioEvents]
   );
+
+  useEffect(() => {
+    if (isStudent || eventSearchParams.get("create") !== "event") return;
+    setEventModalOpen(true);
+    navigate(shouldReturnToDashboard ? "/events?returnTo=dashboard" : "/events", { replace: true });
+  }, [eventSearchParams, isStudent, navigate, shouldReturnToDashboard]);
 
   const openEventModal = () => {
     setEventModalOpen(true);
@@ -12107,6 +12263,9 @@ function EventsPage() {
     setForm({ title: "", date: form.date, time: form.time, details: "", audience: "students" });
     setEventModalOpen(false);
     showToast(`${created.title} added to events.`);
+    if (shouldReturnToDashboard) {
+      navigate(`/dashboard?date=${created.date}`);
+    }
   };
 
   return (
