@@ -27,7 +27,6 @@ create unique index if not exists profiles_username_unique on public.profiles (l
 create unique index if not exists profiles_auth_email_unique on public.profiles (lower(auth_email));
 create unique index if not exists profiles_contact_email_unique on public.profiles (lower(contact_email)) where contact_email is not null;
 create unique index if not exists profiles_single_owner on public.profiles (is_owner) where is_owner;
-create index if not exists profiles_created_by_idx on public.profiles (created_by);
 
 create table if not exists public.account_creation_audit (
   id bigint generated always as identity primary key,
@@ -41,8 +40,6 @@ create table if not exists public.account_creation_audit (
   user_agent text,
   created_at timestamptz not null default now()
 );
-create index if not exists account_creation_audit_created_by_idx on public.account_creation_audit (created_by);
-create index if not exists account_creation_audit_created_user_id_idx on public.account_creation_audit (created_user_id);
 
 create schema if not exists private;
 
@@ -91,12 +88,27 @@ grant select on public.account_creation_audit to authenticated;
 alter table public.profiles enable row level security;
 alter table public.account_creation_audit enable row level security;
 
-drop policy if exists "Profiles readable by owner manager or self" on public.profiles;
-create policy "Profiles readable by owner manager or self"
+drop policy if exists "Profiles can read own row" on public.profiles;
+create policy "Profiles can read own row"
   on public.profiles
   for select
   to authenticated
-  using (id = (select auth.uid()) or private.is_manager_owner());
+  using (id = (select auth.uid()));
+
+drop policy if exists "Owner manager can read profiles" on public.profiles;
+create policy "Owner manager can read profiles"
+  on public.profiles
+  for select
+  to authenticated
+  using (private.is_manager_owner());
+
+drop policy if exists "Owner manager can manage profiles" on public.profiles;
+create policy "Owner manager can manage profiles"
+  on public.profiles
+  for all
+  to authenticated
+  using (private.is_manager_owner())
+  with check (private.is_manager_owner());
 
 drop policy if exists "Owner manager can read account audit" on public.account_creation_audit;
 create policy "Owner manager can read account audit"
