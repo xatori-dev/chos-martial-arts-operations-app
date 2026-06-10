@@ -1577,16 +1577,26 @@ function ManagerLiveCalendar({
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          className="manager-calendar-add-trigger"
-          aria-label="Open schedule actions"
-          aria-expanded={scheduleActionsOpen}
-          aria-haspopup="dialog"
-          onClick={() => setScheduleActionsOpen(true)}
-        >
-          <Plus size={16} aria-hidden="true" />
-        </button>
+        <div className="manager-calendar-header-actions">
+          <button
+            type="button"
+            className="manager-calendar-starter-trigger"
+            onClick={openStarterProgram}
+          >
+            <UserPlus size={15} aria-hidden="true" />
+            Starter Program
+          </button>
+          <button
+            type="button"
+            className="manager-calendar-add-trigger"
+            aria-label="Open schedule actions"
+            aria-expanded={scheduleActionsOpen}
+            aria-haspopup="dialog"
+            onClick={() => setScheduleActionsOpen(true)}
+          >
+            <Plus size={16} aria-hidden="true" />
+          </button>
+        </div>
       </header>
       {scheduleActionsOpen && (
         <div className="modal-backdrop manager-calendar-action-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setScheduleActionsOpen(false)}>
@@ -1615,10 +1625,6 @@ function ManagerLiveCalendar({
                 <Users size={18} aria-hidden="true" />
                 Add Class
               </Link>
-              <button type="button" onClick={openStarterProgram}>
-                <UserPlus size={18} aria-hidden="true" />
-                Starter Program
-              </button>
             </div>
           </div>
         </div>

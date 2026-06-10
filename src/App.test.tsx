@@ -5998,8 +5998,7 @@ describe("post-login operations app", () => {
 
     const liveCalendar = screen.getByLabelText("Live studio calendar");
     fireEvent.click(within(liveCalendar).getByRole("button", { name: /Select Monday, June 15, no calendar items/i }));
-    fireEvent.click(within(liveCalendar).getByRole("button", { name: "Open schedule actions" }));
-    fireEvent.click(within(screen.getByRole("dialog", { name: "Add to schedule" })).getByRole("button", { name: "Starter Program" }));
+    fireEvent.click(within(liveCalendar).getByRole("button", { name: "Starter Program" }));
 
     const starterDialog = screen.getByRole("dialog", { name: "Starter Program" });
     expect(within(starterDialog).getByText("Monday, June 15")).toBeInTheDocument();

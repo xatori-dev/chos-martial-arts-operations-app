@@ -17395,10 +17395,16 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-dashboard-calendar-page .manager-calendar-head a,
+.manager-dashboard-calendar-page .manager-calendar-starter-trigger,
 .manager-dashboard-calendar-page .manager-calendar-add-trigger {
   min-height: clamp(28px, 4.1svh, 34px);
   padding-inline: clamp(9px, 1.4vw, 13px);
   font-size: clamp(0.72rem, min(1vw, 1.45svh), 0.86rem);
+}
+
+.manager-dashboard-calendar-page .manager-calendar-starter-trigger {
+  padding-inline: clamp(9px, 1.1vw, 12px);
+  gap: 5px;
 }
 
 .manager-dashboard-calendar-page .manager-calendar-add-trigger {
@@ -17560,10 +17566,13 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
 .operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-view-switch {
   grid-area: views;
-  width: 100%;
+  width: max-content;
+  max-width: 100%;
+  justify-self: end;
+  grid-template-columns: repeat(3, auto);
 }
 
-.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-add-trigger {
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-header-actions {
   grid-area: action;
 }
 
@@ -18799,6 +18808,7 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-calendar-head a,
+.manager-calendar-starter-trigger,
 .manager-calendar-add-trigger {
   min-height: 44px;
   padding: 0 16px;
@@ -18814,6 +18824,18 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   white-space: nowrap;
 }
 
+.manager-calendar-header-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.manager-calendar-starter-trigger {
+  cursor: pointer;
+}
+
 .manager-calendar-add-trigger {
   width: 44px;
   min-width: 44px;
@@ -18823,6 +18845,7 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   cursor: pointer;
 }
 
+.manager-calendar-starter-trigger svg,
 .manager-calendar-add-trigger svg {
   width: clamp(13px, 1.9svh, 16px);
   height: clamp(13px, 1.9svh, 16px);
@@ -22879,6 +22902,7 @@ html[data-theme="light"] {
   .manager-back-link,
   .manager-logout-button,
   .manager-calendar-head a,
+  .manager-calendar-starter-trigger,
   .manager-calendar-add-trigger,
   .manager-calendar-action-options a,
   .manager-calendar-view-switch button,
@@ -22929,6 +22953,8 @@ html[data-theme="light"] {
   .manager-logout-button:focus-visible,
   .manager-calendar-head a:hover,
   .manager-calendar-head a:focus-visible,
+  .manager-calendar-starter-trigger:hover,
+  .manager-calendar-starter-trigger:focus-visible,
   .manager-calendar-add-trigger:hover,
   .manager-calendar-add-trigger:focus-visible,
   .manager-calendar-action-options a:hover,
