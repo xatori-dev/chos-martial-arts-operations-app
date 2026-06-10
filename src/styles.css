@@ -18936,7 +18936,7 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   color: #111827;
 }
 
-.manager-starter-program-date {
+.manager-starter-program-dialog .manager-starter-program-date {
   min-width: 0;
   padding: 12px 14px;
   position: relative;
@@ -18952,9 +18952,13 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   overflow: hidden;
 }
 
-.manager-starter-program-date:focus-within {
+.manager-starter-program-dialog .manager-starter-program-date:focus-within {
   outline: 2px solid rgba(184, 245, 226, 0.86);
   outline-offset: 2px;
+}
+
+.manager-starter-program-date svg {
+  color: #25324a;
 }
 
 .manager-starter-program-date span {
@@ -18972,6 +18976,7 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
 .manager-starter-program-date strong {
   min-width: 0;
+  color: #172033;
   overflow: hidden;
   font-size: 1.03rem;
   font-style: italic;
