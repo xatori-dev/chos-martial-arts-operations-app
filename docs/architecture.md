@@ -16,7 +16,7 @@ The app is still primarily browser-local, but the staging Supabase project now o
 | Auth | Supabase Auth for configured staging manager/accounts; local prototype fallback only when Supabase env is absent | Harden production Auth settings before real users |
 | Payments | None | Future Stripe test/live resources only if product scope requires payments |
 | Messaging | Browser queue/export contracts for Twilio and Web Push | Private server owns provider credentials, consent, audit logs, and sends |
-| Hosting | GitHub Pages workflow in the legacy repo | Mirror to Xatori repo first, then prove Pages or Cloudflare staging |
+| Hosting | GitHub Pages workflow; Xatori repo mirror exists, deployment still needs proof from target repo | Prove GitHub Pages or Cloudflare staging from the Xatori repo |
 | Monitoring | None | Future per-app monitoring project if the app becomes production-backed |
 
 ## Data Boundaries

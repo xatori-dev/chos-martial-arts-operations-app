@@ -21,19 +21,19 @@ npm audit --audit-level=moderate
 
 ## Current Deployment
 
+- Xatori repository: `xatori-dev/chos-martial-arts-operations-app`
 - Legacy repository: `projektoutside/chos-martial-arts-prototype`
 - Legacy Pages URL: `https://projektoutside.github.io/chos-martial-arts-prototype/`
 - Workflow: `.github/workflows/deploy-pages.yml`
-- Status: keep live until the Xatori mirror and staging deployment are proven.
+- Status: keep legacy live until deployment from the Xatori repo is proven or the exception is explicitly retained.
 
-## Xatori Mirror Workflow
+## Xatori Deployment Workflow
 
-1. Confirm GitHub CLI or connector identity is ready for `xatori-dev`.
-2. Create `xatori-dev/chos-martial-arts-operations-app`.
-3. Push from `C:\Dev\Business\Clients\active\chos-martial-arts\operations-app\repo`.
-4. Enable Actions and Pages or Cloudflare Pages staging.
-5. Run the Pages workflow and verify the deployed URL.
-6. Only after verification, decide whether to update the primary remote, archive the legacy repo, redirect users, or leave a documented exception.
+1. Confirm GitHub CLI or connector identity is ready for `xatori-dev`; local `gh` currently authenticates as `projektoutside`.
+2. Confirm the intended source branch, since local `main` still tracks `desktop-source/main` while `origin/main` is the Xatori target.
+3. Enable Actions and Pages or Cloudflare Pages staging from the Xatori repo.
+4. Run the Pages workflow and verify the deployed URL.
+5. Only after verification, decide whether to update branch tracking, archive the legacy repo, redirect users, or leave a documented exception.
 
 ## Messaging And Notifications
 

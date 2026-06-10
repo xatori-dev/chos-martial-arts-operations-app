@@ -16,7 +16,7 @@ App: Cho's Martial Arts Operations App
 | Platform | Current state | Cutover status |
 | --- | --- | --- |
 | GitHub | `projektoutside/chos-martial-arts-prototype` | Temporary legacy source |
-| GitHub Pages | `https://projektoutside.github.io/chos-martial-arts-prototype/` | Keep live until Xatori mirror is proven |
+| GitHub Pages | `https://projektoutside.github.io/chos-martial-arts-prototype/` | Keep live until Xatori deployment is proven |
 | Backend/database/payments/email/auth | Not integrated | No migration required in phase 1 |
 | Twilio/Web Push | Credential-free browser handoff contracts | Private server still required for live sends |
 

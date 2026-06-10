@@ -1,6 +1,6 @@
 # Platform Inventory
 
-Last updated: 2026-06-05
+Last updated: 2026-06-10
 
 ## GitHub
 
@@ -12,7 +12,9 @@ Last updated: 2026-06-05
 | Default branch | `main` |
 | Working branch for onboarding | `codex/xatori-infra-standardization` |
 | Branch protection | Not configured on target repo yet |
-| Target repo status | Planned, not created in phase 1 while local `gh` is authenticated as `projektoutside` |
+| Target repo status | Created and reachable at `https://github.com/xatori-dev/chos-martial-arts-operations-app`; `origin/main` is the Xatori target branch |
+| Local branch tracking | Local `main` still tracks `desktop-source/main`; active onboarding branch is checked out locally |
+| Local GitHub CLI identity | `gh auth status` reports `projektoutside`; switch identity before live Xatori repo administration |
 
 ## Hosting
 
@@ -21,7 +23,7 @@ Last updated: 2026-06-05
 | Legacy hosting | GitHub Pages |
 | Legacy Pages URL | `https://projektoutside.github.io/chos-martial-arts-prototype/` |
 | Legacy workflow | `.github/workflows/deploy-pages.yml` |
-| Target staging hosting | GitHub Pages or Cloudflare Pages after Xatori repo creation |
+| Target staging hosting | GitHub Pages or Cloudflare Pages from the Xatori repo; not yet verified from this checkout |
 | Target Cloudflare Pages name | `chos-martial-arts-operations-app` |
 | DNS/custom domain | Not configured in phase 1 |
 
@@ -31,8 +33,9 @@ Last updated: 2026-06-05
 | --- | --- |
 | Account | `xatori@xatoridev.com` |
 | Drive folder | `chos-martial-arts - operations-app` |
+| Drive package document | `Cho's Martial Arts Operations App - Xatori Onboarding and Handoff Package` / https://docs.google.com/document/d/1E22ubixiSzLEZPNklvmA8Wiujq63J7olDCSN1YEkkh4/edit?usp=drivesdk |
 | Gmail labels | `Clients`, `Clients/chos-martial-arts`, `Clients/chos-martial-arts/operations-app` |
-| Status | Planned; write action requires connector/account confirmation at execution time |
+| Status | Drive account confirmed as `xatori@xatoridev.com`; package document created for the current handoff refresh |
 
 ## 1Password
 
