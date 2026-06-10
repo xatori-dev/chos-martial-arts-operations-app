@@ -1383,9 +1383,6 @@ function normalizeMessagePhone(value: string) {
   return digits || value.trim().toLowerCase();
 }
 
-function hasSmsOptOut(value?: string) {
-  return Boolean(value?.trim());
-}
 
 function hasStudentSmsSendConsent(student: StudentRecord) {
   return Boolean(student.phone.trim() && hasStudentSmsConsent(student));
