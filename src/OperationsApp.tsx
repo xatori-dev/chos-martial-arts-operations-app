@@ -1418,6 +1418,7 @@ function ManagerLiveCalendar({
     studentName: "",
     guardianName: "",
     notificationContact: "",
+    appointmentDate: todayKey,
     appointmentTime: "4:30 PM"
   });
   const currentYear = visibleMonthDate.getFullYear();
@@ -1472,6 +1473,8 @@ function ManagerLiveCalendar({
   );
   const selectedEntries = entriesByDate[selectedDateKey] ?? [];
   const selectedDate = parseCalendarDate(selectedDateKey);
+  const starterProgramAppointmentDateKey = isCalendarDateKey(starterProgramForm.appointmentDate) ? starterProgramForm.appointmentDate : selectedDateKey;
+  const starterProgramAppointmentDate = parseCalendarDate(starterProgramAppointmentDateKey);
   const selectedWeekDays = useMemo(() => weekDaysForDate(selectedDate), [selectedDateKey]);
   const visibleCalendarDays = calendarView === "month" ? calendarDays : calendarView === "week" ? selectedWeekDays : [selectedDate];
   const visibleWeekdayLabels = calendarView === "day" ? [selectedDate.toLocaleDateString("en-US", { weekday: "short" })] : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1499,12 +1502,13 @@ function ManagerLiveCalendar({
 
   const openStarterProgram = () => {
     setScheduleActionsOpen(false);
+    setStarterProgramForm((current) => ({ ...current, appointmentDate: selectedDateKey }));
     setStarterProgramOpen(true);
   };
 
   const closeStarterProgram = () => {
     setStarterProgramOpen(false);
-    setStarterProgramForm({ studentName: "", guardianName: "", notificationContact: "", appointmentTime: starterProgramForm.appointmentTime });
+    setStarterProgramForm({ studentName: "", guardianName: "", notificationContact: "", appointmentDate: selectedDateKey, appointmentTime: starterProgramForm.appointmentTime });
   };
 
   const submitStarterProgram = (event: FormEvent) => {
@@ -1520,9 +1524,14 @@ function ManagerLiveCalendar({
       showToast("Enter a parent or guardian email or phone for notifications.");
       return;
     }
+    if (!isCalendarDateKey(starterProgramForm.appointmentDate)) {
+      showToast("Choose a valid Starter Program appointment date.");
+      return;
+    }
+    const appointmentDate = parseCalendarDate(starterProgramForm.appointmentDate);
     const created = addScheduledClass({
       title: `Starter Program - ${studentName}`,
-      date: selectedDateKey,
+      date: starterProgramForm.appointmentDate,
       time: starterProgramForm.appointmentTime,
       type: "starter-program",
       recurring: false,
@@ -1537,9 +1546,10 @@ function ManagerLiveCalendar({
       showToast("Starter Program appointment could not be booked.");
       return;
     }
-    setStarterProgramForm({ studentName: "", guardianName: "", notificationContact: "", appointmentTime: starterProgramForm.appointmentTime });
+    selectCalendarDate(appointmentDate);
+    setStarterProgramForm({ studentName: "", guardianName: "", notificationContact: "", appointmentDate: starterProgramForm.appointmentDate, appointmentTime: starterProgramForm.appointmentTime });
     setStarterProgramOpen(false);
-    showToast(`${created.title} booked for ${selectedDate.toLocaleDateString("en-US", { month: "long", day: "numeric" })}.`);
+    showToast(`${created.title} booked for ${appointmentDate.toLocaleDateString("en-US", { month: "long", day: "numeric" })}.`);
   };
 
   useEffect(() => {
@@ -1655,10 +1665,18 @@ function ManagerLiveCalendar({
             <div className="manager-starter-program-date" aria-label="Starter appointment date">
               <CalendarDays size={18} aria-hidden="true" />
               <span>
-                <small>Selected date</small>
-                <strong>{selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</strong>
+                <small>Appointment date</small>
+                <strong>{starterProgramAppointmentDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</strong>
               </span>
             </div>
+            <label>
+              Appointment Date
+              <input
+                type="date"
+                value={starterProgramForm.appointmentDate}
+                onChange={(event) => setStarterProgramForm((current) => ({ ...current, appointmentDate: event.target.value }))}
+              />
+            </label>
             <label>
               Student&apos;s Name
               <input
