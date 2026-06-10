@@ -17701,14 +17701,7 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-time-divider {
-  min-width: 40px;
-  gap: 2px;
-  font-size: 0.42rem;
-}
-
-.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-time-divider::before,
-.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-time-divider::after {
-  width: 7px;
+  font-size: clamp(0.46rem, min(1.42vw, 0.98svh), 0.54rem);
 }
 
 .operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-copy {
@@ -19449,19 +19442,21 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 .manager-calendar-selected-time {
   min-height: 52px;
   min-width: 0;
-  padding: 7px 10px;
+  padding: 7px 9px;
   display: grid;
   grid-auto-rows: min-content;
   align-items: center;
   align-content: center;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
+  border: 1px solid rgba(232, 238, 255, 0.09);
   border-radius: 10px;
-  color: #172033;
-  background: linear-gradient(135deg, #a8dcff, #d5c7ff);
-  font-size: 0.88rem;
-  font-weight: 900;
-  line-height: 1;
+  color: #d9e3f1;
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.08;
   text-align: center;
   overflow: hidden;
   white-space: nowrap;
@@ -19478,27 +19473,15 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-calendar-selected-time-divider {
-  min-width: 52px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  color: rgba(23, 32, 51, 0.64);
-  font-size: 0.5rem;
+  color: rgba(217, 227, 241, 0.56);
+  font-size: 0.58rem;
   font-family: var(--font-sans);
-  font-weight: 900;
+  font-weight: 600;
   line-height: 1;
-  text-transform: uppercase;
-}
-
-.manager-calendar-selected-time-divider::before,
-.manager-calendar-selected-time-divider::after {
-  content: "";
-  width: 10px;
-  height: 1px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: rgba(23, 32, 51, 0.28);
+  text-transform: lowercase;
 }
 
 .manager-calendar-selected-copy {
