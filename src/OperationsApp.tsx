@@ -1421,6 +1421,7 @@ function ManagerLiveCalendar({
     appointmentDate: todayKey,
     appointmentTime: "4:30 PM"
   });
+  const starterProgramDateInputRef = useRef<HTMLInputElement>(null);
   const currentYear = visibleMonthDate.getFullYear();
   const currentMonth = visibleMonthDate.getMonth();
   const monthStart = new Date(currentYear, currentMonth, 1);
@@ -1509,6 +1510,17 @@ function ManagerLiveCalendar({
   const closeStarterProgram = () => {
     setStarterProgramOpen(false);
     setStarterProgramForm({ studentName: "", guardianName: "", notificationContact: "", appointmentDate: selectedDateKey, appointmentTime: starterProgramForm.appointmentTime });
+  };
+
+  const openStarterProgramDatePicker = () => {
+    const dateInput = starterProgramDateInputRef.current;
+    if (!dateInput) return;
+    dateInput.focus();
+    try {
+      dateInput.showPicker?.();
+    } catch {
+      // The native date input click still opens the picker when showPicker is unavailable or blocked.
+    }
   };
 
   const submitStarterProgram = (event: FormEvent) => {
@@ -1662,7 +1674,7 @@ function ManagerLiveCalendar({
                 <X size={18} />
               </button>
             </div>
-            <label className="manager-starter-program-date">
+            <label className="manager-starter-program-date" onClick={openStarterProgramDatePicker}>
               <CalendarDays size={18} aria-hidden="true" />
               <span>
                 <small>Appointment date</small>
@@ -1671,6 +1683,7 @@ function ManagerLiveCalendar({
               <input
                 aria-label="Appointment Date"
                 className="manager-starter-program-date-input"
+                ref={starterProgramDateInputRef}
                 type="date"
                 value={starterProgramForm.appointmentDate}
                 onChange={(event) => setStarterProgramForm((current) => ({ ...current, appointmentDate: event.target.value }))}

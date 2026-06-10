@@ -6091,6 +6091,40 @@ describe("post-login operations app", () => {
     expect(within(selectedDateEvents).getByRole("link", { name: "5:30 PM, Starter Program - Noah Park, Starter Program" })).toBeInTheDocument();
   });
 
+  it("opens the native date picker when managers click the Starter Program appointment date box", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-09T12:00:00-05:00"));
+    window.localStorage.setItem("chos.operations.classes.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([]));
+    const originalShowPicker = HTMLInputElement.prototype.showPicker;
+    const showPicker = vi.fn();
+    Object.defineProperty(HTMLInputElement.prototype, "showPicker", { configurable: true, value: showPicker });
+
+    try {
+      renderLoggedInApp("/dashboard");
+
+      const liveCalendar = screen.getByLabelText("Live studio calendar");
+      fireEvent.click(within(liveCalendar).getByRole("button", { name: "Starter Program" }));
+
+      const starterDialog = screen.getByRole("dialog", { name: "Starter Program" });
+      const appointmentDateInput = within(starterDialog).getByLabelText("Appointment Date");
+      const appointmentDateBox = within(starterDialog).getByText("Tuesday, June 9").closest("label");
+      expect(appointmentDateBox).not.toBeNull();
+
+      fireEvent.click(appointmentDateBox!);
+
+      expect(appointmentDateInput).toHaveFocus();
+      expect(showPicker).toHaveBeenCalled();
+    } finally {
+      if (originalShowPicker) {
+        Object.defineProperty(HTMLInputElement.prototype, "showPicker", { configurable: true, value: originalShowPicker });
+      } else {
+        delete (HTMLInputElement.prototype as Partial<HTMLInputElement>).showPicker;
+      }
+    }
+  });
+
   it("keeps the Dashboard selected-day calendar panel fixed and marked to fit without visible scrollbars", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-09T12:00:00-05:00"));
