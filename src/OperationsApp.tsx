@@ -1581,10 +1581,14 @@ function ManagerLiveCalendar({
           <button
             type="button"
             className="manager-calendar-starter-trigger"
+            aria-label="Starter Program"
             onClick={openStarterProgram}
           >
             <UserPlus size={15} aria-hidden="true" />
-            Starter Program
+            <span className="manager-calendar-starter-label" aria-hidden="true">
+              <span>Starter</span>
+              <span>Program</span>
+            </span>
           </button>
           <button
             type="button"

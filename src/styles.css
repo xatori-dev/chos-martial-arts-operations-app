@@ -17403,8 +17403,10 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-dashboard-calendar-page .manager-calendar-starter-trigger {
-  padding-inline: clamp(9px, 1.1vw, 12px);
-  gap: 5px;
+  min-height: clamp(32px, 4.6svh, 38px);
+  padding-inline: clamp(8px, 0.9vw, 10px);
+  gap: 6px;
+  font-size: clamp(0.66rem, min(0.86vw, 1.18svh), 0.76rem);
 }
 
 .manager-dashboard-calendar-page .manager-calendar-add-trigger {
@@ -18834,6 +18836,17 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
 .manager-calendar-starter-trigger {
   cursor: pointer;
+}
+
+.manager-calendar-starter-label {
+  display: grid;
+  gap: 0;
+  line-height: 0.86;
+  text-align: left;
+}
+
+.manager-calendar-starter-label span {
+  display: block;
 }
 
 .manager-calendar-add-trigger {
