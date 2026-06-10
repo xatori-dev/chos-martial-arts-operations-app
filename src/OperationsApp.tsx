@@ -1662,16 +1662,15 @@ function ManagerLiveCalendar({
                 <X size={18} />
               </button>
             </div>
-            <div className="manager-starter-program-date" aria-label="Starter appointment date">
+            <label className="manager-starter-program-date">
               <CalendarDays size={18} aria-hidden="true" />
               <span>
                 <small>Appointment date</small>
                 <strong>{starterProgramAppointmentDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</strong>
               </span>
-            </div>
-            <label>
-              Appointment Date
               <input
+                aria-label="Appointment Date"
+                className="manager-starter-program-date-input"
                 type="date"
                 value={starterProgramForm.appointmentDate}
                 onChange={(event) => setStarterProgramForm((current) => ({ ...current, appointmentDate: event.target.value }))}
