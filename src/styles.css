@@ -18842,7 +18842,8 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   gap: 10px;
 }
 
-.manager-calendar-action-options a {
+.manager-calendar-action-options a,
+.manager-calendar-action-options button {
   min-height: 56px;
   padding: 0 16px;
   display: inline-flex;
@@ -18855,15 +18856,118 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   background:
     linear-gradient(135deg, rgba(184, 245, 226, 0.12), rgba(168, 220, 255, 0.08)),
     rgba(255, 255, 255, 0.055);
+  font: inherit;
   font-weight: 900;
   text-decoration: none;
+  cursor: pointer;
 }
 
 .manager-calendar-action-options a:hover,
-.manager-calendar-action-options a:focus-visible {
+.manager-calendar-action-options a:focus-visible,
+.manager-calendar-action-options button:hover,
+.manager-calendar-action-options button:focus-visible {
   border-color: rgba(184, 245, 226, 0.68);
   color: #172033;
   background: linear-gradient(135deg, #b8f5e2, #a8dcff);
+  outline: none;
+}
+
+.manager-starter-program-dialog {
+  width: min(92vw, 460px);
+  display: grid;
+  gap: 14px;
+}
+
+.manager-starter-program-dialog label {
+  display: grid;
+  gap: 6px;
+  color: #f9f6ff;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.manager-starter-program-dialog input,
+.manager-starter-program-dialog select {
+  min-height: 44px;
+  width: 100%;
+  border: 1px solid rgba(218, 226, 255, 0.18);
+  border-radius: 12px;
+  color: #f9f6ff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.manager-starter-program-dialog select option {
+  color: #111827;
+}
+
+.manager-starter-program-date {
+  min-width: 0;
+  padding: 12px 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(242, 223, 171, 0.3);
+  border-radius: 14px;
+  color: #172033;
+  background: linear-gradient(135deg, #f2dfab, #b8f5e2);
+}
+
+.manager-starter-program-date span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.manager-starter-program-date small {
+  color: rgba(23, 32, 51, 0.68);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.manager-starter-program-date strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 1.03rem;
+  font-style: italic;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-starter-program-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.manager-starter-program-actions button {
+  min-height: 44px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(218, 226, 255, 0.18);
+  border-radius: 12px;
+  color: #f9f6ff;
+  background: rgba(255, 255, 255, 0.08);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.manager-starter-program-actions button[type="submit"] {
+  border-color: rgba(242, 223, 171, 0.46);
+  color: #172033;
+  background: linear-gradient(135deg, #f2dfab, #b8f5e2);
+}
+
+.manager-starter-program-actions button:hover,
+.manager-starter-program-actions button:focus-visible {
+  border-color: rgba(184, 245, 226, 0.68);
   outline: none;
 }
 
@@ -20670,6 +20774,23 @@ html[data-theme="light"] .modal-card {
   background:
     radial-gradient(circle at 12% 0%, rgba(184, 135, 46, 0.12), transparent 32%),
     linear-gradient(145deg, rgba(255, 253, 248, 0.98), rgba(242, 236, 226, 0.98));
+}
+
+html[data-theme="light"] .manager-starter-program-dialog label {
+  color: #172033;
+}
+
+html[data-theme="light"] .manager-starter-program-dialog input,
+html[data-theme="light"] .manager-starter-program-dialog select {
+  border-color: rgba(25, 40, 62, 0.16);
+  color: #172033;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+html[data-theme="light"] .manager-starter-program-actions button:not([type="submit"]) {
+  border-color: rgba(25, 40, 62, 0.16);
+  color: #172033;
+  background: rgba(255, 255, 255, 0.68);
 }
 
 html[data-theme="light"] .login-landing {

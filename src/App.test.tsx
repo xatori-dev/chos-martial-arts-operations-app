@@ -5988,6 +5988,45 @@ describe("post-login operations app", () => {
     expect(within(selectedDateEvents).getByRole("link", { name: "7:30 PM, Calendar Save Check, students" })).toBeInTheDocument();
   });
 
+  it("books a Starter Program appointment from the selected Dashboard calendar date", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-09T12:00:00-05:00"));
+    window.localStorage.setItem("chos.operations.classes.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([]));
+    renderLoggedInApp("/dashboard");
+
+    const liveCalendar = screen.getByLabelText("Live studio calendar");
+    fireEvent.click(within(liveCalendar).getByRole("button", { name: /Select Monday, June 15, no calendar items/i }));
+    fireEvent.click(within(liveCalendar).getByRole("button", { name: "Open schedule actions" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Add to schedule" })).getByRole("button", { name: "Starter Program" }));
+
+    const starterDialog = screen.getByRole("dialog", { name: "Starter Program" });
+    expect(within(starterDialog).getByText("Monday, June 15")).toBeInTheDocument();
+    fireEvent.change(within(starterDialog).getByLabelText("Student's Name"), { target: { value: "Maya Chen" } });
+    fireEvent.change(within(starterDialog).getByLabelText("Guardian/Parent Name"), { target: { value: "Olivia Chen" } });
+    fireEvent.change(within(starterDialog).getByLabelText("Notification Email or Phone"), { target: { value: "olivia@example.com" } });
+    fireEvent.change(within(starterDialog).getByLabelText("Appointment Time"), { target: { value: "4:30 PM" } });
+    fireEvent.click(within(starterDialog).getByRole("button", { name: "Book Starter Appointment" }));
+
+    expect(screen.queryByRole("dialog", { name: "Starter Program" })).not.toBeInTheDocument();
+    const savedSchedule = JSON.parse(window.localStorage.getItem("chos.operations.schedule.v1") ?? "[]");
+    expect(savedSchedule).toEqual([
+      expect.objectContaining({
+        title: "Starter Program - Maya Chen",
+        date: "2026-06-15",
+        time: "4:30 PM",
+        type: "starter-program",
+        notes: expect.stringContaining("Guardian/Parent: Olivia Chen")
+      })
+    ]);
+    expect(savedSchedule[0].notes).toContain("Notification contact: olivia@example.com");
+
+    const selectedDateEvents = within(liveCalendar).getByLabelText("Selected date events");
+    expect(within(selectedDateEvents).getByText("1 event")).toBeInTheDocument();
+    expect(within(selectedDateEvents).getByRole("link", { name: "4:30 PM, Starter Program - Maya Chen, Starter Program" })).toBeInTheDocument();
+  });
+
   it("keeps the Dashboard selected-day calendar panel fixed and marked to fit without visible scrollbars", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-09T12:00:00-05:00"));

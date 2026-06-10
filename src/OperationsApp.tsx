@@ -121,8 +121,11 @@ const weekdayOptions: { value: ClassWeekday; label: string; short: string }[] = 
 const defaultScheduleTypeOptions = [
   { value: "class", label: "Class" },
   { value: "private-lesson", label: "Private lesson" },
+  { value: "starter-program", label: "Starter Program" },
   { value: "testing-prep", label: "Testing prep" }
 ];
+
+const starterProgramAppointmentTimes = ["9:00 AM", "10:30 AM", "12:00 PM", "2:00 PM", "4:30 PM", "5:30 PM", "6:30 PM"];
 
 type ManagerLauncherIconKind = "dashboard" | "messages" | "students" | "classes" | "studyGuide" | "events" | "scheduling" | "merchandise" | "videos" | "reports" | "create" | "study" | "test";
 
@@ -1389,13 +1392,34 @@ function useLiveCalendarDate() {
   return now;
 }
 
-function ManagerLiveCalendar({ scheduledClasses, studioClasses, studioEvents, focusDateKey }: { scheduledClasses: ScheduledClass[]; studioClasses: StudioClass[]; studioEvents: StudioEvent[]; focusDateKey?: string }) {
+function ManagerLiveCalendar({
+  addScheduledClass,
+  focusDateKey,
+  scheduledClasses,
+  showToast,
+  studioClasses,
+  studioEvents
+}: {
+  addScheduledClass: (scheduledClass: { title: string; date: string; time: string; type: string; recurring?: boolean; titleColor?: string; studentId?: string; notes?: string }) => ScheduledClass | undefined;
+  focusDateKey?: string;
+  scheduledClasses: ScheduledClass[];
+  showToast: (message: string) => void;
+  studioClasses: StudioClass[];
+  studioEvents: StudioEvent[];
+}) {
   const now = useLiveCalendarDate();
   const todayKey = toDateKey(now);
   const [selectedDateKey, setSelectedDateKey] = useState(todayKey);
   const [calendarView, setCalendarView] = useState<ManagerCalendarView>("month");
   const [visibleMonthDate, setVisibleMonthDate] = useState(() => new Date(now.getFullYear(), now.getMonth(), 1));
   const [scheduleActionsOpen, setScheduleActionsOpen] = useState(false);
+  const [starterProgramOpen, setStarterProgramOpen] = useState(false);
+  const [starterProgramForm, setStarterProgramForm] = useState({
+    studentName: "",
+    guardianName: "",
+    notificationContact: "",
+    appointmentTime: "4:30 PM"
+  });
   const currentYear = visibleMonthDate.getFullYear();
   const currentMonth = visibleMonthDate.getMonth();
   const monthStart = new Date(currentYear, currentMonth, 1);
@@ -1473,6 +1497,51 @@ function ManagerLiveCalendar({ scheduledClasses, studioClasses, studioEvents, fo
     selectCalendarDate(shiftCalendarPeriod(selectedDate, calendarView, direction));
   };
 
+  const openStarterProgram = () => {
+    setScheduleActionsOpen(false);
+    setStarterProgramOpen(true);
+  };
+
+  const closeStarterProgram = () => {
+    setStarterProgramOpen(false);
+    setStarterProgramForm({ studentName: "", guardianName: "", notificationContact: "", appointmentTime: starterProgramForm.appointmentTime });
+  };
+
+  const submitStarterProgram = (event: FormEvent) => {
+    event.preventDefault();
+    const studentName = starterProgramForm.studentName.trim();
+    const guardianName = starterProgramForm.guardianName.trim();
+    const notificationContact = starterProgramForm.notificationContact.trim();
+    if (!studentName) {
+      showToast("Enter the student's name for the starter appointment.");
+      return;
+    }
+    if (guardianName && !notificationContact) {
+      showToast("Enter a parent or guardian email or phone for notifications.");
+      return;
+    }
+    const created = addScheduledClass({
+      title: `Starter Program - ${studentName}`,
+      date: selectedDateKey,
+      time: starterProgramForm.appointmentTime,
+      type: "starter-program",
+      recurring: false,
+      titleColor: "#f2dfab",
+      notes: [
+        "Starter Program first meeting session.",
+        guardianName ? `Guardian/Parent: ${guardianName}` : "Guardian/Parent: Not provided",
+        notificationContact ? `Notification contact: ${notificationContact}` : "Notification contact: Not provided"
+      ].join("\n")
+    });
+    if (!created) {
+      showToast("Starter Program appointment could not be booked.");
+      return;
+    }
+    setStarterProgramForm({ studentName: "", guardianName: "", notificationContact: "", appointmentTime: starterProgramForm.appointmentTime });
+    setStarterProgramOpen(false);
+    showToast(`${created.title} booked for ${selectedDate.toLocaleDateString("en-US", { month: "long", day: "numeric" })}.`);
+  };
+
   useEffect(() => {
     const todayDate = parseCalendarDate(todayKey);
     setSelectedDateKey(todayKey);
@@ -1546,8 +1615,81 @@ function ManagerLiveCalendar({ scheduledClasses, studioClasses, studioEvents, fo
                 <Users size={18} aria-hidden="true" />
                 Add Class
               </Link>
+              <button type="button" onClick={openStarterProgram}>
+                <UserPlus size={18} aria-hidden="true" />
+                Starter Program
+              </button>
             </div>
           </div>
+        </div>
+      )}
+      {starterProgramOpen && (
+        <div className="modal-backdrop manager-calendar-action-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeStarterProgram()}>
+          <form
+            aria-labelledby="starter-program-title"
+            aria-modal="true"
+            className="modal-card modal-form manager-starter-program-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={submitStarterProgram}
+          >
+            <div className="student-modal-head">
+              <div>
+                <h2 id="starter-program-title">Starter Program</h2>
+                <p>Book the first meeting session required before joining class.</p>
+              </div>
+              <button type="button" className="student-modal-close" aria-label="Close Starter Program" onClick={closeStarterProgram}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="manager-starter-program-date" aria-label="Starter appointment date">
+              <CalendarDays size={18} aria-hidden="true" />
+              <span>
+                <small>Selected date</small>
+                <strong>{selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</strong>
+              </span>
+            </div>
+            <label>
+              Student&apos;s Name
+              <input
+                autoFocus
+                value={starterProgramForm.studentName}
+                onChange={(event) => setStarterProgramForm((current) => ({ ...current, studentName: event.target.value }))}
+              />
+            </label>
+            <label>
+              Guardian/Parent Name
+              <input
+                value={starterProgramForm.guardianName}
+                onChange={(event) => setStarterProgramForm((current) => ({ ...current, guardianName: event.target.value }))}
+              />
+            </label>
+            <label>
+              Notification Email or Phone
+              <input
+                value={starterProgramForm.notificationContact}
+                onChange={(event) => setStarterProgramForm((current) => ({ ...current, notificationContact: event.target.value }))}
+              />
+            </label>
+            <label>
+              Appointment Time
+              <select
+                value={starterProgramForm.appointmentTime}
+                onChange={(event) => setStarterProgramForm((current) => ({ ...current, appointmentTime: event.target.value }))}
+              >
+                {starterProgramAppointmentTimes.map((time) => (
+                  <option key={time} value={time}>{time}</option>
+                ))}
+              </select>
+            </label>
+            <div className="manager-starter-program-actions">
+              <button type="button" onClick={closeStarterProgram}>Cancel</button>
+              <button type="submit">
+                <UserPlus size={18} aria-hidden="true" />
+                Book Starter Appointment
+              </button>
+            </div>
+          </form>
         </div>
       )}
       <div className="manager-calendar-body">
@@ -8900,7 +9042,7 @@ function CreateAccountsPage() {
 }
 
 function DashboardPage() {
-  const { scheduledClasses, studioClasses, studioEvents } = useAppState();
+  const { addScheduledClass, scheduledClasses, showToast, studioClasses, studioEvents } = useAppState();
   const location = useLocation();
   const focusDateParam = new URLSearchParams(location.search).get("date") ?? "";
   const focusDateKey = isCalendarDateKey(focusDateParam) ? focusDateParam : undefined;
@@ -8908,7 +9050,14 @@ function DashboardPage() {
   return (
     <OperationsPage className="operations-page--dashboard" title="Dashboard">
       <div className="manager-dashboard-calendar-page manager-launcher-calendar">
-        <ManagerLiveCalendar scheduledClasses={scheduledClasses} studioClasses={studioClasses} studioEvents={studioEvents} focusDateKey={focusDateKey} />
+        <ManagerLiveCalendar
+          addScheduledClass={addScheduledClass}
+          scheduledClasses={scheduledClasses}
+          showToast={showToast}
+          studioClasses={studioClasses}
+          studioEvents={studioEvents}
+          focusDateKey={focusDateKey}
+        />
       </div>
     </OperationsPage>
   );
