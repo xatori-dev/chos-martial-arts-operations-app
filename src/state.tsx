@@ -1043,6 +1043,34 @@ function removeStorage(key: string) {
   }
 }
 
+function readSessionStorage<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeSessionStorage<T>(key: string, value: T) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Session storage can fail in blocked-storage contexts.
+  }
+}
+
+function removeSessionStorage(key: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Session storage can fail in blocked-storage contexts.
+  }
+}
+
 function useStoredState<T>(key: string, fallback: T) {
   const [value, setValue] = useState<T>(() => readStorage<T>(key, fallback));
   const update = useCallback(
@@ -1147,8 +1175,7 @@ function hasValidManagedStudentInputLink(account: Pick<ManagedAccountInput, "rol
   return Boolean(studentId && linkedStudent && isCurrentStudentEnrollment(linkedStudent));
 }
 
-function readPrototypeSession() {
-  const session = readStorage<AccountSession | undefined>(keys.session, undefined);
+function validatePrototypeSession(session: AccountSession | undefined) {
   if (!session?.email) return undefined;
   const normalizedEmail = session.email.toLowerCase();
   if (normalizedEmail === prototypeManagerLogin.email.toLowerCase()) return session;
@@ -1166,6 +1193,15 @@ function readPrototypeSession() {
   const students = readStorage<StudentRecord[]>(keys.students, seedStudents);
   if (managedAccounts.some((account) => account.username.toLowerCase() === normalizedEmail && account.status !== "inactive" && hasValidManagedStudentLink(account, students))) return session;
   if (childAccounts.some((child) => child.username.toLowerCase() === normalizedEmail)) return session;
+  removeStorage(keys.session);
+  return undefined;
+}
+
+function readPrototypeSession() {
+  const session = readSessionStorage<AccountSession | undefined>(keys.session, undefined);
+  const validatedSession = validatePrototypeSession(session);
+  if (validatedSession) return validatedSession;
+  removeSessionStorage(keys.session);
   removeStorage(keys.session);
   return undefined;
 }
@@ -1197,8 +1233,10 @@ function useSessionState() {
       const resolved = typeof next === "function" ? (next as (previous: AccountSession | undefined) => AccountSession | undefined)(previous) : next;
       if (resolved) {
         writeStorage(keys.session, resolved);
+        writeSessionStorage(keys.session, resolved);
       } else {
         removeStorage(keys.session);
+        removeSessionStorage(keys.session);
       }
       return resolved;
     });

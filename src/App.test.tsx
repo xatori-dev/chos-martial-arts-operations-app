@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { buildOperationsBackupSnapshot, type OperationsBackupInput } from "./operationsBackup";
 import { AppStateProvider, useAppState } from "./state";
+import type { AccountSession } from "./types";
 import serviceWorkerSource from "../public/cho-service-worker.js?raw";
 
 function stubMatchMedia(matches = false) {
@@ -68,6 +69,17 @@ function stubScreenOrientationLock(lock = vi.fn().mockResolvedValue(undefined)) 
   return lock;
 }
 
+function seedActiveSession(session: AccountSession) {
+  const serializedSession = JSON.stringify(session);
+  window.localStorage.setItem("chos.session.v1", serializedSession);
+  window.sessionStorage.setItem("chos.session.v1", serializedSession);
+}
+
+function clearActiveSession() {
+  window.localStorage.removeItem("chos.session.v1");
+  window.sessionStorage.removeItem("chos.session.v1");
+}
+
 function renderLoggedInApp(path = "/", role: "staff" | "student" | "guardian" = "staff") {
   const email =
     role === "guardian"
@@ -75,7 +87,7 @@ function renderLoggedInApp(path = "/", role: "staff" | "student" | "guardian" = 
       : role === "student"
         ? "student123@chos.prototype"
         : "manager123@chos.prototype";
-  window.localStorage.setItem("chos.session.v1", JSON.stringify({ email, remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+  seedActiveSession({ email, remembered: true, createdAt: "2026-05-10T00:00:00.000Z" });
   window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email, role }]));
 
   return render(
@@ -137,7 +149,7 @@ function loadChoServiceWorkerForTest(
 
 function renderManagedStaffApp(path: string, account: Record<string, unknown>) {
   window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([account]));
-  window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: account.username, remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+  seedActiveSession({ email: String(account.username), remembered: true, createdAt: "2026-05-10T00:00:00.000Z" });
   window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: account.username, role: "staff" }]));
 
   return render(
@@ -152,7 +164,7 @@ function renderManagedStaffApp(path: string, account: Record<string, unknown>) {
 function renderManagedStudentApp(path: string, account: Record<string, unknown>, students: Record<string, unknown>[]) {
   window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([account]));
   window.localStorage.setItem("chos.operations.students.v1", JSON.stringify(students));
-  window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: account.username, remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+  seedActiveSession({ email: String(account.username), remembered: true, createdAt: "2026-05-10T00:00:00.000Z" });
   window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: account.username, role: "student" }]));
 
   return render(
@@ -2287,6 +2299,7 @@ function RegisteredAccountDoubleCreateHarness() {
 describe("login landing", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
     resetDocumentTheme();
     window.scrollTo = vi.fn();
     stubMatchMedia();
@@ -2478,7 +2491,7 @@ describe("login landing", () => {
     expect(screen.queryByRole("link", { name: "Create" })).not.toBeInTheDocument();
 
     staffView.unmount();
-    window.localStorage.removeItem("chos.session.v1");
+    clearActiveSession();
     renderLoggedOutApp("/");
 
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "new.staff@example.com" } });
@@ -2735,7 +2748,7 @@ describe("login landing", () => {
 
     expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
 
-    window.localStorage.removeItem("chos.session.v1");
+    clearActiveSession();
     firstRender.unmount();
 
     renderLoggedOutApp("/");
@@ -2818,6 +2831,19 @@ describe("login landing", () => {
     expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).not.toContainEqual({ email: "unknown.staff", role: "staff" });
   });
 
+  it("returns refreshed Manager123 sessions to the login screen on a fresh app start", () => {
+    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "manager123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" }));
+    window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "manager123@chos.prototype", role: "staff" }]));
+
+    renderLoggedOutApp("/");
+
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Username")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(window.sessionStorage.getItem("chos.session.v1")).toBeNull();
+  });
+
   it("returns refreshed guest sessions to the opening login animation", () => {
     window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "guest@chos.prototype", remembered: false, createdAt: "2026-05-16T00:00:00.000Z" }));
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "guest@chos.prototype", role: "staff" }]));
@@ -2856,7 +2882,7 @@ describe("login landing", () => {
       }
     ]));
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "kai-cho.child", role: "staff" }]));
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "kai-cho.child", remembered: true, createdAt: "2026-06-01T09:05:00.000Z" }));
+    seedActiveSession({ email: "kai-cho.child", remembered: true, createdAt: "2026-06-01T09:05:00.000Z" });
 
     renderLoggedOutApp("/reports");
 
@@ -2868,7 +2894,7 @@ describe("login landing", () => {
   });
 
   it("keeps built-in prototype roles authoritative over stale stored role records", () => {
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "student123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" }));
+    seedActiveSession({ email: "student123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" });
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "student123@chos.prototype", role: "staff" }]));
 
     renderLoggedOutApp("/");
@@ -2880,7 +2906,7 @@ describe("login landing", () => {
   });
 
   it("keeps a refreshed Manager123 session on the Profile page", () => {
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "manager123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" }));
+    seedActiveSession({ email: "manager123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" });
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "manager123@chos.prototype", role: "staff" }]));
 
     renderLoggedOutApp("/");
@@ -2891,7 +2917,7 @@ describe("login landing", () => {
   });
 
   it("keeps a refreshed Student123 session in student mode when role storage is missing", () => {
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "student123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" }));
+    seedActiveSession({ email: "student123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" });
 
     renderLoggedOutApp("/");
 
@@ -2902,7 +2928,7 @@ describe("login landing", () => {
   });
 
   it("keeps a refreshed Parent123 session in guardian mode when role storage is missing", () => {
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" }));
+    seedActiveSession({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" });
 
     renderLoggedOutApp("/");
 
@@ -2921,7 +2947,7 @@ describe("login landing", () => {
       }
     ]));
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "returning.family@example.com", role: "guardian" }]));
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "returning.family@example.com", remembered: true, createdAt: "2026-06-01T09:05:00.000Z" }));
+    seedActiveSession({ email: "returning.family@example.com", remembered: true, createdAt: "2026-06-01T09:05:00.000Z" });
 
     renderLoggedOutApp("/");
 
@@ -2941,7 +2967,7 @@ describe("login landing", () => {
       }
     ]));
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "returning.family@example.com", role: "staff" }]));
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "returning.family@example.com", remembered: true, createdAt: "2026-06-01T09:05:00.000Z" }));
+    seedActiveSession({ email: "returning.family@example.com", remembered: true, createdAt: "2026-06-01T09:05:00.000Z" });
 
     renderLoggedOutApp("/reports");
 
@@ -2992,6 +3018,7 @@ describe("login landing", () => {
 describe("app fullscreen behavior", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
     resetDocumentTheme();
     window.scrollTo = vi.fn();
     stubMatchMedia();
@@ -3101,6 +3128,7 @@ describe("app fullscreen behavior", () => {
 describe("post-login operations app", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
     resetDocumentTheme();
     window.scrollTo = vi.fn();
     stubMatchMedia();
@@ -3646,7 +3674,7 @@ describe("post-login operations app", () => {
   });
 
   it("rejects child usernames that collide with prototype or managed logins", async () => {
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+    seedActiveSession({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" });
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "parent123@chos.prototype", role: "guardian" }]));
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
     window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
@@ -3684,7 +3712,7 @@ describe("post-login operations app", () => {
   });
 
   it("keeps child account creation idempotent when the same child fires twice before rerender", async () => {
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+    seedActiveSession({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" });
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "parent123@chos.prototype", role: "guardian" }]));
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
     window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
@@ -3721,7 +3749,7 @@ describe("post-login operations app", () => {
   });
 
   it("opens a newly created child account in the same handoff action", async () => {
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+    seedActiveSession({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" });
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "parent123@chos.prototype", role: "guardian" }]));
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
     window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
@@ -3754,7 +3782,7 @@ describe("post-login operations app", () => {
   });
 
   it("logs into a newly created child account by credentials in the same action", async () => {
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+    seedActiveSession({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" });
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "parent123@chos.prototype", role: "guardian" }]));
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
     window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
@@ -3787,7 +3815,7 @@ describe("post-login operations app", () => {
   });
 
   it("does not switch to a child account owned by another parent", async () => {
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" }));
+    seedActiveSession({ email: "parent123@chos.prototype", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" });
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "parent123@chos.prototype", role: "guardian" }]));
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([
       {
@@ -3964,7 +3992,7 @@ describe("post-login operations app", () => {
     ]));
 
     managerView.unmount();
-    window.localStorage.removeItem("chos.session.v1");
+    clearActiveSession();
     renderLoggedOutApp("/");
 
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "jordan.staff" } });
@@ -4007,7 +4035,7 @@ describe("post-login operations app", () => {
     ]));
 
     managerView.unmount();
-    window.localStorage.removeItem("chos.session.v1");
+    clearActiveSession();
     const inactiveLoginView = renderLoggedOutApp("/");
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "jordan.staff" } });
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
@@ -4028,7 +4056,7 @@ describe("post-login operations app", () => {
     ]));
 
     reactivationView.unmount();
-    window.localStorage.removeItem("chos.session.v1");
+    clearActiveSession();
     renderLoggedOutApp("/");
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "jordan.staff" } });
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
@@ -4065,7 +4093,7 @@ describe("post-login operations app", () => {
     ]));
 
     managerView.unmount();
-    window.localStorage.removeItem("chos.session.v1");
+    clearActiveSession();
     renderLoggedOutApp("/");
 
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "avery.student" } });
@@ -4102,7 +4130,7 @@ describe("post-login operations app", () => {
     };
     window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([account]));
     window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([student]));
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: account.username, remembered: true, createdAt: "2026-06-02T10:00:00.000Z" }));
+    seedActiveSession({ email: account.username, remembered: true, createdAt: "2026-06-02T10:00:00.000Z" });
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: account.username, role: "staff" }]));
 
     render(
@@ -7625,7 +7653,7 @@ describe("post-login operations app", () => {
       ]);
     });
 
-    window.localStorage.removeItem("chos.session.v1");
+    clearActiveSession();
     restoreRender.unmount();
     renderLoggedOutApp("/");
 
@@ -7644,7 +7672,7 @@ describe("post-login operations app", () => {
       createdAt: "2026-06-01T09:00:00.000Z"
     };
     window.localStorage.setItem("chos.accounts.v1", JSON.stringify([registeredAccount]));
-    window.localStorage.setItem("chos.session.v1", JSON.stringify({ email: registeredAccount.email, remembered: true, createdAt: "2026-06-02T09:00:00.000Z" }));
+    seedActiveSession({ email: registeredAccount.email, remembered: true, createdAt: "2026-06-02T09:00:00.000Z" });
     const backup = buildOperationsBackupSnapshot(
       makeOperationsBackupInput({
         accounts: [registeredAccount]
@@ -9549,7 +9577,7 @@ describe("post-login operations app", () => {
     expect(deletedStudentAccountCard).toHaveTextContent("Inactive");
 
     accountManagementView.unmount();
-    window.localStorage.removeItem("chos.session.v1");
+    clearActiveSession();
     renderLoggedOutApp("/");
 
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "ari.student" } });
@@ -9810,7 +9838,7 @@ describe("post-login operations app", () => {
     expect(await screen.findByText("Unable to update account status.")).toBeInTheDocument();
 
     accountManagementView.unmount();
-    window.localStorage.removeItem("chos.session.v1");
+    clearActiveSession();
     renderLoggedOutApp("/");
 
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "ari.student" } });
