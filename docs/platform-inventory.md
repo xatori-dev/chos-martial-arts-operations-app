@@ -25,7 +25,7 @@ Last updated: 2026-06-12
 | Legacy workflow | `.github/workflows/deploy-pages.yml` |
 | Target staging hosting | GitHub Pages from the Xatori repo, verified |
 | Target Pages URL | `https://xatori-dev.github.io/chos-martial-arts-operations-app/` |
-| Latest verified target deployment | Workflow `Deploy to GitHub Pages`, run `27249196766`, commit `32e91f5`, environment `github-pages`, status `success` |
+| Target deployment workflow | `Deploy to GitHub Pages` deploys `main` to the `github-pages` environment |
 | SPA fallback behavior | `dist/404.html` is deployed. Deep links such as `/messages` return GitHub Pages HTTP 404 while serving the app shell, which is expected for the static SPA fallback. |
 | Target Cloudflare Pages name | `chos-martial-arts-operations-app` |
 | DNS/custom domain | Not configured in phase 1 |

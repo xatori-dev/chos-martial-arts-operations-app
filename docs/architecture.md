@@ -32,5 +32,5 @@ The app is still primarily browser-local, but the staging Supabase project now o
 - `src/main.tsx` derives the React Router basename from `import.meta.env.BASE_URL`.
 - `vite.config.ts` sets the production base path from `GITHUB_REPOSITORY`, preserving GitHub Pages project-subpath hosting.
 - `.github/workflows/deploy-pages.yml` runs tests, builds the app, creates `dist/404.html`, and deploys through GitHub Pages.
-- The Xatori target Pages deployment is verified from workflow run `27249196766` on commit `32e91f5`.
+- The Xatori target Pages deployment is verified through the `Deploy to GitHub Pages` workflow from `main`.
 - GitHub Pages deep links use the deployed `404.html` SPA fallback. Direct paths can return HTTP 404 while still serving the app shell.

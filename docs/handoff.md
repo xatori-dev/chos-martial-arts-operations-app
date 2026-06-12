@@ -8,7 +8,7 @@ This project is not ready for client handoff as a production system. It is a Xat
 
 - Repository: `xatori-dev/chos-martial-arts-operations-app`
 - Verified staging URL: `https://xatori-dev.github.io/chos-martial-arts-operations-app/`
-- Latest verified target deployment: GitHub Pages workflow run `27249196766`, commit `32e91f5`, environment `github-pages`
+- Deployment proof path: the `Deploy to GitHub Pages` workflow deploys `main` to the `github-pages` environment
 - Current local branch: `main`, tracking `origin/main`
 - Current remote map: `origin` points to Xatori, `legacy-origin` points to `projektoutside`, and `desktop-source` points to the local desktop source checkout
 - Google Drive package: [Cho's Martial Arts Operations App - Xatori Onboarding and Handoff Package](https://docs.google.com/document/d/1E22ubixiSzLEZPNklvmA8Wiujq63J7olDCSN1YEkkh4/edit?usp=drivesdk)
