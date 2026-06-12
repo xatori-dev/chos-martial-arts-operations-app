@@ -18,6 +18,7 @@ import {
   MoreHorizontal,
   Package,
   Palette,
+  Pencil,
   Plus,
   ShieldCheck,
   ShoppingCart,
@@ -1246,6 +1247,11 @@ function StatCard({ label, value, icon }: { label: string; value: string | numbe
   );
 }
 
+type ManagerCalendarEntrySource =
+  | { type: "studio-class"; id: string }
+  | { type: "scheduled-class"; id: string }
+  | { type: "studio-event"; id: string };
+
 type ManagerCalendarEntry = {
   id: string;
   title: string;
@@ -1254,8 +1260,41 @@ type ManagerCalendarEntry = {
   kind: "class" | "event";
   meta: string;
   path: string;
+  source: ManagerCalendarEntrySource;
   titleColor?: string;
 };
+
+type ManagerCalendarEditForm = {
+  title: string;
+  date: string;
+  time: string;
+  type: string;
+  recurring: boolean;
+  titleColor: string;
+  notes: string;
+  daysOfWeek: StudioClass["daysOfWeek"];
+  startTime: string;
+  endTime: string;
+  details: string;
+  audience: StudioEvent["audience"];
+};
+
+function emptyManagerCalendarEditForm(date: string): ManagerCalendarEditForm {
+  return {
+    title: "",
+    date,
+    time: "",
+    type: "class",
+    recurring: false,
+    titleColor: "#b8f5e2",
+    notes: "",
+    daysOfWeek: [],
+    startTime: "17:00",
+    endTime: "17:45",
+    details: "",
+    audience: "students"
+  };
+}
 
 type ManagerCalendarView = "day" | "week" | "month";
 
@@ -1345,6 +1384,7 @@ function scheduledClassCalendarEntries(item: ScheduledClass, calendarDays: Date[
     kind: "class",
     meta,
     path: "/schedule",
+    source: { type: "scheduled-class", id: item.id },
     titleColor: item.titleColor
   });
 
@@ -1376,18 +1416,30 @@ function useLiveCalendarDate() {
 
 function ManagerLiveCalendar({
   addScheduledClass,
+  deleteScheduledClass,
+  deleteStudioClass,
+  deleteStudioEvent,
   focusDateKey,
   scheduledClasses,
   showToast,
   studioClasses,
-  studioEvents
+  studioEvents,
+  updateScheduledClass,
+  updateStudioClass,
+  updateStudioEvent
 }: {
   addScheduledClass: (scheduledClass: { title: string; date: string; time: string; type: string; recurring?: boolean; titleColor?: string; studentId?: string; notes?: string }) => ScheduledClass | undefined;
+  deleteScheduledClass: (scheduledClassId: string) => ScheduledClass | undefined;
+  deleteStudioClass: (classId: string) => StudioClass | undefined;
+  deleteStudioEvent: (eventId: string) => StudioEvent | undefined;
   focusDateKey?: string;
   scheduledClasses: ScheduledClass[];
   showToast: (message: string) => void;
   studioClasses: StudioClass[];
   studioEvents: StudioEvent[];
+  updateScheduledClass: (scheduledClassId: string, scheduledClass: { title: string; date: string; time: string; type: string; recurring?: boolean; titleColor?: string; studentId?: string; notes?: string }) => ScheduledClass | undefined;
+  updateStudioClass: (classId: string, studioClass: { name: string; daysOfWeek: StudioClass["daysOfWeek"]; startTime: string; endTime: string; recurring?: boolean; titleColor?: string; notes?: string }) => StudioClass | undefined;
+  updateStudioEvent: (eventId: string, event: { title: string; date: string; time: string; details: string; audience: StudioEvent["audience"] }) => StudioEvent | undefined;
 }) {
   const now = useLiveCalendarDate();
   const todayKey = toDateKey(now);
@@ -1395,6 +1447,9 @@ function ManagerLiveCalendar({
   const [calendarView, setCalendarView] = useState<ManagerCalendarView>("month");
   const [visibleMonthDate, setVisibleMonthDate] = useState(() => new Date(now.getFullYear(), now.getMonth(), 1));
   const [scheduleActionsOpen, setScheduleActionsOpen] = useState(false);
+  const [calendarEditTarget, setCalendarEditTarget] = useState<ManagerCalendarEntrySource | null>(null);
+  const [calendarEditForm, setCalendarEditForm] = useState<ManagerCalendarEditForm>(() => emptyManagerCalendarEditForm(todayKey));
+  const [calendarDeleteTarget, setCalendarDeleteTarget] = useState<ManagerCalendarEntry | null>(null);
   const [starterProgramOpen, setStarterProgramOpen] = useState(false);
   const [starterProgramForm, setStarterProgramForm] = useState({
     studentName: "",
@@ -1431,6 +1486,7 @@ function ManagerLiveCalendar({
                 kind: "class" as const,
                 meta: "recurring class",
                 path: "/classes",
+                source: { type: "studio-class" as const, id: studioClass.id },
                 titleColor: studioClass.titleColor
               }))
       ),
@@ -1442,7 +1498,8 @@ function ManagerLiveCalendar({
         time: event.time,
         kind: "event" as const,
         meta: event.audience,
-        path: "/events"
+        path: "/events",
+        source: { type: "studio-event" as const, id: event.id }
       }))
     ].sort(compareCalendarEntries),
     [calendarDays, scheduledClasses, studioClasses, studioEvents]
@@ -1473,6 +1530,18 @@ function ManagerLiveCalendar({
       : calendarView === "week"
         ? formatWeekRange(selectedWeekDays)
         : selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const calendarEditScheduleTypeOptions = useMemo(() => {
+    const options = new Map(defaultScheduleTypeOptions.map((option) => [option.value, option]));
+    scheduledClasses.forEach((item) => {
+      if (item.type.trim() && !options.has(item.type)) {
+        options.set(item.type, { value: item.type, label: scheduleTypeLabel(item.type) });
+      }
+    });
+    if (calendarEditForm.type.trim() && !options.has(calendarEditForm.type)) {
+      options.set(calendarEditForm.type, { value: calendarEditForm.type, label: scheduleTypeLabel(calendarEditForm.type) });
+    }
+    return [...options.values()];
+  }, [calendarEditForm.type, scheduledClasses]);
 
   const selectCalendarDate = (date: Date) => {
     setSelectedDateKey(toDateKey(date));
@@ -1545,6 +1614,176 @@ function ManagerLiveCalendar({
     setStarterProgramOpen(false);
     showToast(`${created.title} booked for ${appointmentDate.toLocaleDateString("en-US", { month: "long", day: "numeric" })}.`);
   };
+
+  const closeCalendarEntryEditor = () => {
+    setCalendarEditTarget(null);
+    setCalendarEditForm(emptyManagerCalendarEditForm(selectedDateKey));
+  };
+
+  const openCalendarEntryEditor = (entry: ManagerCalendarEntry) => {
+    if (entry.source.type === "studio-class") {
+      const studioClass = studioClasses.find((item) => item.id === entry.source.id);
+      if (!studioClass) {
+        showToast("That class is no longer available.");
+        return;
+      }
+      setCalendarEditTarget(entry.source);
+      setCalendarEditForm({
+        ...emptyManagerCalendarEditForm(entry.date),
+        title: studioClass.name,
+        daysOfWeek: studioClass.daysOfWeek,
+        startTime: studioClass.startTime,
+        endTime: studioClass.endTime,
+        titleColor: studioClass.titleColor ?? "#b8f5e2",
+        notes: studioClass.notes ?? ""
+      });
+      return;
+    }
+
+    if (entry.source.type === "scheduled-class") {
+      const scheduledClass = scheduledClasses.find((item) => item.id === entry.source.id);
+      if (!scheduledClass) {
+        showToast("That schedule item is no longer available.");
+        return;
+      }
+      setCalendarEditTarget(entry.source);
+      setCalendarEditForm({
+        ...emptyManagerCalendarEditForm(scheduledClass.date),
+        title: scheduledClass.title,
+        date: scheduledClass.date,
+        time: scheduledClass.time,
+        type: scheduledClass.type,
+        recurring: Boolean(scheduledClass.recurring),
+        titleColor: scheduledClass.titleColor ?? "#b8f5e2",
+        notes: scheduledClass.notes ?? ""
+      });
+      return;
+    }
+
+    const studioEvent = studioEvents.find((event) => event.id === entry.source.id);
+    if (!studioEvent) {
+      showToast("That event is no longer available.");
+      return;
+    }
+    setCalendarEditTarget(entry.source);
+    setCalendarEditForm({
+      ...emptyManagerCalendarEditForm(studioEvent.date),
+      title: studioEvent.title,
+      date: studioEvent.date,
+      time: studioEvent.time,
+      details: studioEvent.details,
+      audience: studioEvent.audience
+    });
+  };
+
+  const requestCalendarEntryDelete = (entry: ManagerCalendarEntry) => {
+    setCalendarDeleteTarget(entry);
+  };
+
+  const closeCalendarEntryDelete = () => {
+    setCalendarDeleteTarget(null);
+  };
+
+  const removeCalendarEntry = (entry: ManagerCalendarEntry) => {
+    if (entry.source.type === "studio-class") {
+      const removed = deleteStudioClass(entry.source.id);
+      showToast(removed ? `${removed.name} removed from classes.` : "That class is no longer available.");
+      return;
+    }
+    if (entry.source.type === "scheduled-class") {
+      const removed = deleteScheduledClass(entry.source.id);
+      showToast(removed ? `${removed.title} removed from schedule.` : "That schedule item is no longer available.");
+      return;
+    }
+    const removed = deleteStudioEvent(entry.source.id);
+    showToast(removed ? `${removed.title} removed from events.` : "That event is no longer available.");
+  };
+
+  const confirmCalendarEntryDelete = () => {
+    if (!calendarDeleteTarget) return;
+    removeCalendarEntry(calendarDeleteTarget);
+    closeCalendarEntryDelete();
+  };
+
+  const toggleCalendarEditWeekday = (weekday: ClassWeekday) => {
+    setCalendarEditForm((current) => {
+      const daysOfWeek = current.daysOfWeek.includes(weekday)
+        ? current.daysOfWeek.filter((day) => day !== weekday)
+        : [...current.daysOfWeek, weekday].sort((left, right) => left - right);
+      return { ...current, daysOfWeek: daysOfWeek as StudioClass["daysOfWeek"] };
+    });
+  };
+
+  const submitCalendarEntryEdit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!calendarEditTarget) return;
+
+    if (calendarEditTarget.type === "studio-class") {
+      const updated = updateStudioClass(calendarEditTarget.id, {
+        name: calendarEditForm.title,
+        daysOfWeek: calendarEditForm.daysOfWeek,
+        startTime: calendarEditForm.startTime,
+        endTime: calendarEditForm.endTime,
+        recurring: true,
+        titleColor: calendarEditForm.titleColor,
+        notes: calendarEditForm.notes
+      });
+      if (!updated) {
+        showToast("Enter a class name, day, start time, and end time.");
+        return;
+      }
+      showToast(`${updated.name} updated.`);
+      closeCalendarEntryEditor();
+      return;
+    }
+
+    if (calendarEditTarget.type === "scheduled-class") {
+      const existing = scheduledClasses.find((item) => item.id === calendarEditTarget.id);
+      const updated = updateScheduledClass(calendarEditTarget.id, {
+        title: calendarEditForm.title,
+        date: calendarEditForm.date,
+        time: calendarEditForm.time,
+        type: calendarEditForm.type,
+        recurring: calendarEditForm.recurring,
+        titleColor: calendarEditForm.titleColor,
+        studentId: existing?.studentId,
+        notes: calendarEditForm.notes
+      });
+      if (!updated) {
+        showToast("Enter a schedule title, date, time, and type.");
+        return;
+      }
+      selectCalendarDate(parseCalendarDate(updated.date));
+      showToast(`${updated.title} updated.`);
+      closeCalendarEntryEditor();
+      return;
+    }
+
+    const updated = updateStudioEvent(calendarEditTarget.id, {
+      title: calendarEditForm.title,
+      date: calendarEditForm.date,
+      time: calendarEditForm.time,
+      details: calendarEditForm.details,
+      audience: calendarEditForm.audience
+    });
+    if (!updated) {
+      showToast("Enter event title, date, and time.");
+      return;
+    }
+    selectCalendarDate(parseCalendarDate(updated.date));
+    showToast(`${updated.title} updated.`);
+    closeCalendarEntryEditor();
+  };
+
+  const calendarEntryEditorTitle = calendarEditTarget?.type === "studio-event"
+    ? "Edit Event"
+    : calendarEditTarget?.type === "scheduled-class"
+      ? "Edit Schedule Item"
+      : "Edit Class";
+  const calendarDeleteConfirmLabel = calendarDeleteTarget?.kind === "event" ? "Delete Event" : "Delete Class";
+  const calendarDeleteDateLabel = calendarDeleteTarget
+    ? parseCalendarDate(calendarDeleteTarget.date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+    : "";
 
   useEffect(() => {
     const todayDate = parseCalendarDate(todayKey);
@@ -1714,6 +1953,169 @@ function ManagerLiveCalendar({
           </form>
         </div>
       )}
+      {calendarEditTarget && (
+        <div className="modal-backdrop manager-calendar-action-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeCalendarEntryEditor()}>
+          <form
+            aria-labelledby="manager-calendar-edit-title"
+            aria-modal="true"
+            className="modal-card modal-form manager-calendar-edit-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={submitCalendarEntryEdit}
+          >
+            <div className="student-modal-head">
+              <div>
+                <h2 id="manager-calendar-edit-title">{calendarEntryEditorTitle}</h2>
+                <p>Update the calendar item shown in the selected date panel.</p>
+              </div>
+              <button type="button" className="student-modal-close" aria-label="Close calendar item editor" onClick={closeCalendarEntryEditor}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <label>
+              {calendarEditTarget.type === "studio-class" ? "Class title" : calendarEditTarget.type === "studio-event" ? "Event title" : "Schedule title"}
+              <input
+                autoFocus
+                value={calendarEditForm.title}
+                onChange={(event) => setCalendarEditForm((current) => ({ ...current, title: event.target.value }))}
+              />
+            </label>
+
+            {calendarEditTarget.type === "studio-class" ? (
+              <>
+                <fieldset className="manager-calendar-edit-weekdays">
+                  <legend>Class days</legend>
+                  <div>
+                    {weekdayOptions.map((weekday) => (
+                      <label key={weekday.value}>
+                        <input
+                          type="checkbox"
+                          checked={calendarEditForm.daysOfWeek.includes(weekday.value)}
+                          onChange={() => toggleCalendarEditWeekday(weekday.value)}
+                        />
+                        {weekday.short}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <div className="manager-calendar-edit-two-up">
+                  <label>
+                    Start time
+                    <input type="time" value={calendarEditForm.startTime} onChange={(event) => setCalendarEditForm((current) => ({ ...current, startTime: event.target.value }))} />
+                  </label>
+                  <label>
+                    End time
+                    <input type="time" value={calendarEditForm.endTime} onChange={(event) => setCalendarEditForm((current) => ({ ...current, endTime: event.target.value }))} />
+                  </label>
+                </div>
+                <label>
+                  Title color
+                  <input type="color" value={calendarEditForm.titleColor} onChange={(event) => setCalendarEditForm((current) => ({ ...current, titleColor: event.target.value }))} />
+                </label>
+                <label>
+                  Notes
+                  <textarea rows={3} value={calendarEditForm.notes} onChange={(event) => setCalendarEditForm((current) => ({ ...current, notes: event.target.value }))} />
+                </label>
+              </>
+            ) : calendarEditTarget.type === "scheduled-class" ? (
+              <>
+                <label>
+                  Schedule date
+                  <input type="date" value={calendarEditForm.date} onChange={(event) => setCalendarEditForm((current) => ({ ...current, date: event.target.value }))} />
+                </label>
+                <label>
+                  Schedule time
+                  <input value={calendarEditForm.time} onChange={(event) => setCalendarEditForm((current) => ({ ...current, time: event.target.value }))} />
+                </label>
+                <label>
+                  Schedule type
+                  <select value={calendarEditForm.type} onChange={(event) => setCalendarEditForm((current) => ({ ...current, type: event.target.value }))}>
+                    {calendarEditScheduleTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Title color
+                  <input type="color" value={calendarEditForm.titleColor} onChange={(event) => setCalendarEditForm((current) => ({ ...current, titleColor: event.target.value }))} />
+                </label>
+                <label className="checkbox-row operations-checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={calendarEditForm.recurring}
+                    onChange={(event) => setCalendarEditForm((current) => ({ ...current, recurring: event.target.checked }))}
+                  />
+                  Recurring
+                </label>
+                <label>
+                  Notes
+                  <textarea rows={3} value={calendarEditForm.notes} onChange={(event) => setCalendarEditForm((current) => ({ ...current, notes: event.target.value }))} />
+                </label>
+              </>
+            ) : (
+              <>
+                <label>
+                  Event date
+                  <input type="date" value={calendarEditForm.date} onChange={(event) => setCalendarEditForm((current) => ({ ...current, date: event.target.value }))} />
+                </label>
+                <label>
+                  Event time
+                  <input value={calendarEditForm.time} onChange={(event) => setCalendarEditForm((current) => ({ ...current, time: event.target.value }))} />
+                </label>
+                <label>
+                  Event details
+                  <textarea rows={4} value={calendarEditForm.details} onChange={(event) => setCalendarEditForm((current) => ({ ...current, details: event.target.value }))} />
+                </label>
+                <label>
+                  Audience
+                  <select value={calendarEditForm.audience} onChange={(event) => setCalendarEditForm((current) => ({ ...current, audience: event.target.value as StudioEvent["audience"] }))}>
+                    <option value="students">Students</option>
+                    <option value="families">Families</option>
+                    <option value="public">Public</option>
+                  </select>
+                </label>
+              </>
+            )}
+
+            <div className="manager-starter-program-actions">
+              <button type="button" onClick={closeCalendarEntryEditor}>Cancel</button>
+              <button type="submit">
+                <CheckCircle2 size={18} aria-hidden="true" />
+                Save Changes
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {calendarDeleteTarget && (
+        <div className="modal-backdrop manager-calendar-action-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeCalendarEntryDelete()}>
+          <div
+            aria-labelledby="manager-calendar-delete-title"
+            aria-modal="true"
+            className="modal-card modal-form manager-calendar-delete-dialog"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="student-modal-head">
+              <div>
+                <h2 id="manager-calendar-delete-title">Delete calendar item?</h2>
+                <p>Are you sure you want to delete {calendarDeleteTarget.title} from {calendarDeleteDateLabel}?</p>
+              </div>
+              <button type="button" className="student-modal-close" aria-label="Close delete confirmation" onClick={closeCalendarEntryDelete}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="manager-starter-program-actions manager-calendar-delete-actions">
+              <button type="button" onClick={closeCalendarEntryDelete}>Cancel</button>
+              <button type="button" className="manager-calendar-delete-confirm" onClick={confirmCalendarEntryDelete}>
+                <Trash2 size={18} aria-hidden="true" />
+                {calendarDeleteConfirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="manager-calendar-body">
         <div className="manager-calendar-period-nav" role="group" aria-label="Calendar period navigation">
           <button aria-label={`Previous ${calendarView}`} onClick={() => shiftVisiblePeriod(-1)} type="button">
@@ -1775,24 +2177,34 @@ function ManagerLiveCalendar({
               {selectedEntries.map((entry) => {
                 const timeRange = splitCalendarTimeRange(entry.time);
                 return (
-                  <Link className="manager-calendar-selected-item" key={entry.id} to={entry.path} aria-label={`${entry.time}, ${entry.title}, ${entry.meta}`}>
-                    <span className={`manager-calendar-selected-time${timeRange ? " is-range" : ""}`} title={entry.time}>
-                      {timeRange ? (
-                        <>
-                          <span className="manager-calendar-selected-time-value">{timeRange.start}</span>
-                          <span className="manager-calendar-selected-time-divider" aria-hidden="true">to</span>
-                          <span className="manager-calendar-selected-time-value">{timeRange.end}</span>
-                        </>
-                      ) : (
-                        <span className="manager-calendar-selected-time-value">{entry.time}</span>
-                      )}
-                    </span>
-                    <div className="manager-calendar-selected-copy">
-                      <span className={`manager-calendar-selected-kind ${entry.kind}`}>{entry.kind}</span>
-                      <strong style={entry.titleColor ? { color: entry.titleColor } : undefined}>{entry.title}</strong>
-                      <small>{entry.meta}</small>
+                  <article className="manager-calendar-selected-item" key={entry.id}>
+                    <Link className="manager-calendar-selected-main" to={entry.path} aria-label={`${entry.time}, ${entry.title}, ${entry.meta}`}>
+                      <span className={`manager-calendar-selected-time${timeRange ? " is-range" : ""}`} title={entry.time}>
+                        {timeRange ? (
+                          <>
+                            <span className="manager-calendar-selected-time-value">{timeRange.start}</span>
+                            <span className="manager-calendar-selected-time-divider" aria-hidden="true">to</span>
+                            <span className="manager-calendar-selected-time-value">{timeRange.end}</span>
+                          </>
+                        ) : (
+                          <span className="manager-calendar-selected-time-value">{entry.time}</span>
+                        )}
+                      </span>
+                      <div className="manager-calendar-selected-copy">
+                        <span className={`manager-calendar-selected-kind ${entry.kind}`}>{entry.kind}</span>
+                        <strong style={entry.titleColor ? { color: entry.titleColor } : undefined}>{entry.title}</strong>
+                        <small>{entry.meta}</small>
+                      </div>
+                    </Link>
+                    <div className="manager-calendar-selected-actions" aria-label={`${entry.title} actions`}>
+                      <button type="button" aria-label={`Edit ${entry.title}`} onClick={() => openCalendarEntryEditor(entry)}>
+                        <Pencil size={13} aria-hidden="true" />
+                      </button>
+                      <button type="button" aria-label={`Delete ${entry.title}`} onClick={() => requestCalendarEntryDelete(entry)}>
+                        <Trash2 size={13} aria-hidden="true" />
+                      </button>
                     </div>
-                  </Link>
+                  </article>
                 );
               })}
             </div>
@@ -7550,7 +7962,19 @@ function CreateAccountsPage() {
 }
 
 function DashboardPage() {
-  const { addScheduledClass, scheduledClasses, showToast, studioClasses, studioEvents } = useAppState();
+  const {
+    addScheduledClass,
+    deleteScheduledClass,
+    deleteStudioClass,
+    deleteStudioEvent,
+    scheduledClasses,
+    showToast,
+    studioClasses,
+    studioEvents,
+    updateScheduledClass,
+    updateStudioClass,
+    updateStudioEvent
+  } = useAppState();
   const location = useLocation();
   const focusDateParam = new URLSearchParams(location.search).get("date") ?? "";
   const focusDateKey = isCalendarDateKey(focusDateParam) ? focusDateParam : undefined;
@@ -7560,10 +7984,16 @@ function DashboardPage() {
       <div className="manager-dashboard-calendar-page manager-launcher-calendar">
         <ManagerLiveCalendar
           addScheduledClass={addScheduledClass}
+          deleteScheduledClass={deleteScheduledClass}
+          deleteStudioClass={deleteStudioClass}
+          deleteStudioEvent={deleteStudioEvent}
           scheduledClasses={scheduledClasses}
           showToast={showToast}
           studioClasses={studioClasses}
           studioEvents={studioEvents}
+          updateScheduledClass={updateScheduledClass}
+          updateStudioClass={updateStudioClass}
+          updateStudioEvent={updateStudioEvent}
           focusDateKey={focusDateKey}
         />
       </div>

@@ -2314,6 +2314,29 @@ describe("login landing", () => {
     expect(portrait?.parentElement).toHaveAttribute("aria-hidden", "true");
   });
 
+  it("anchors the portrait bottom slightly under the username field", async () => {
+    const getBoundingClientRect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("login-field")) {
+        return { bottom: 568, height: 48, left: 24, right: 360, top: 520, width: 336, x: 24, y: 520, toJSON: () => ({}) } as DOMRect;
+      }
+      if (this.classList.contains("login-portrait-stage")) {
+        return { bottom: 581, height: 412, left: 23, right: 353, top: 169, width: 330, x: 23, y: 169, toJSON: () => ({}) } as DOMRect;
+      }
+      return { bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    });
+
+    try {
+      const { container } = renderLoggedOutApp("/");
+      const landing = container.querySelector(".login-landing") as HTMLElement;
+
+      await waitFor(() => {
+        expect(landing.style.getPropertyValue("--login-portrait-anchor-y")).toBe("373.52px");
+      });
+    } finally {
+      getBoundingClientRect.mockRestore();
+    }
+  });
+
   it("renders logged-out users inside the portrait app shell", () => {
     const { container } = renderLoggedOutApp("/");
 
@@ -5981,6 +6004,60 @@ describe("post-login operations app", () => {
       "9:00 AM, Morning Board Breaking, Class",
       "12:00 PM, Midday Tournament Check-in, students",
       "2:00 PM, Afternoon Leadership Seminar, Class"
+    ]);
+  });
+
+  it("edits and deletes selected Dashboard calendar events from their cards", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-09T12:00:00-05:00"));
+    window.localStorage.setItem("chos.operations.classes.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.schedule.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.events.v1", JSON.stringify([
+      { id: "event-orientation", title: "Parent Orientation", date: "2026-06-15", time: "6:00 PM", details: "New family orientation.", audience: "families" },
+      { id: "event-picnic", title: "Family Picnic", date: "2026-06-15", time: "7:00 PM", details: "Outdoor family event.", audience: "public" }
+    ]));
+    renderLoggedInApp("/dashboard");
+
+    const liveCalendar = screen.getByLabelText("Live studio calendar");
+    fireEvent.click(within(liveCalendar).getByRole("button", { name: /Select Monday, June 15, 2 calendar items/i }));
+
+    let selectedDateEvents = within(liveCalendar).getByLabelText("Selected date events");
+    fireEvent.click(within(selectedDateEvents).getByRole("button", { name: "Edit Parent Orientation" }));
+
+    const editDialog = screen.getByRole("dialog", { name: "Edit Event" });
+    fireEvent.change(within(editDialog).getByLabelText("Event title"), { target: { value: "Family Orientation" } });
+    fireEvent.change(within(editDialog).getByLabelText("Event time"), { target: { value: "6:30 PM" } });
+    fireEvent.click(within(editDialog).getByRole("button", { name: "Save Changes" }));
+    expect(screen.queryByRole("dialog", { name: "Edit Event" })).not.toBeInTheDocument();
+
+    selectedDateEvents = within(screen.getByLabelText("Live studio calendar")).getByLabelText("Selected date events");
+    expect(within(selectedDateEvents).getByRole("link", { name: "6:30 PM, Family Orientation, families" })).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.events.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "event-orientation", title: "Family Orientation", time: "6:30 PM" })
+    ]));
+
+    fireEvent.click(within(selectedDateEvents).getByRole("button", { name: "Delete Family Picnic" }));
+
+    selectedDateEvents = within(screen.getByLabelText("Live studio calendar")).getByLabelText("Selected date events");
+    expect(within(selectedDateEvents).getByText("2 events")).toBeInTheDocument();
+    expect(within(selectedDateEvents).getByRole("link", { name: "7:00 PM, Family Picnic, public" })).toBeInTheDocument();
+
+    const deleteDialog = screen.getByRole("dialog", { name: "Delete calendar item?" });
+    expect(deleteDialog).toHaveClass("modal-form");
+    expect(within(deleteDialog).getByText(/Are you sure you want to delete Family Picnic/i)).toBeInTheDocument();
+    expect(within(deleteDialog).queryByText(/This keeps accidental taps/i)).not.toBeInTheDocument();
+    fireEvent.click(within(deleteDialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Delete calendar item?" })).not.toBeInTheDocument();
+    expect(within(selectedDateEvents).getByRole("link", { name: "7:00 PM, Family Picnic, public" })).toBeInTheDocument();
+
+    fireEvent.click(within(selectedDateEvents).getByRole("button", { name: "Delete Family Picnic" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Delete calendar item?" })).getByRole("button", { name: "Delete Event" }));
+
+    selectedDateEvents = within(screen.getByLabelText("Live studio calendar")).getByLabelText("Selected date events");
+    expect(within(selectedDateEvents).getByText("1 event")).toBeInTheDocument();
+    expect(within(selectedDateEvents).queryByRole("link", { name: "7:00 PM, Family Picnic, public" })).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.events.v1") ?? "[]")).toEqual([
+      expect.objectContaining({ id: "event-orientation", title: "Family Orientation", time: "6:30 PM" })
     ]);
   });
 

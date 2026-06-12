@@ -711,6 +711,25 @@ type StudioClassInput = {
   notes?: string;
 };
 
+type ScheduledClassInput = {
+  title: string;
+  date: string;
+  time: string;
+  type: string;
+  recurring?: boolean;
+  titleColor?: string;
+  studentId?: string;
+  notes?: string;
+};
+
+type StudioEventInput = {
+  title: string;
+  date: string;
+  time: string;
+  details: string;
+  audience: StudioEvent["audience"];
+};
+
 const seedChildAccounts: ChildAccount[] = [
   {
     id: "child-mina-cho",
@@ -967,10 +986,13 @@ interface AppState {
   addStudioClass: (studioClass: StudioClassInput) => StudioClass | undefined;
   updateStudioClass: (classId: string, studioClass: StudioClassInput) => StudioClass | undefined;
   deleteStudioClass: (classId: string) => StudioClass | undefined;
-  addScheduledClass: (scheduledClass: { title: string; date: string; time: string; type: string; recurring?: boolean; titleColor?: string; studentId?: string; notes?: string }) => ScheduledClass | undefined;
+  addScheduledClass: (scheduledClass: ScheduledClassInput) => ScheduledClass | undefined;
+  updateScheduledClass: (scheduledClassId: string, scheduledClass: ScheduledClassInput) => ScheduledClass | undefined;
   deleteScheduledClass: (scheduledClassId: string) => ScheduledClass | undefined;
   deletePastOneTimeScheduledClasses: (todayKey: string) => ScheduledClass[];
-  addStudioEvent: (event: { title: string; date: string; time: string; details: string; audience: StudioEvent["audience"] }) => StudioEvent | undefined;
+  addStudioEvent: (event: StudioEventInput) => StudioEvent | undefined;
+  updateStudioEvent: (eventId: string, event: StudioEventInput) => StudioEvent | undefined;
+  deleteStudioEvent: (eventId: string) => StudioEvent | undefined;
   addTrainingVideoFolder: (folder: TrainingVideoFolderInput) => TrainingVideoFolder | undefined;
   addTrainingVideo: (video: TrainingVideoInput) => TrainingVideo | undefined;
   addStudyGuideFolder: (folder: StudyGuideFolderInput) => StudyGuideFolder | undefined;
@@ -3091,15 +3113,13 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [setCheckIns, setDirectMessages, setMessageLogs, setStudents, updateManagedAccountsState, updateScheduledClassesState]
   );
 
-  const addScheduledClass = useCallback(
-    (scheduledClass: { title: string; date: string; time: string; type: string; recurring?: boolean; titleColor?: string; studentId?: string; notes?: string }) => {
+  const cleanScheduledClass = useCallback((scheduledClass: ScheduledClassInput) => {
       const title = scheduledClass.title.trim();
       const type = scheduledClass.type.trim();
       if (!title || !scheduledClass.date || !scheduledClass.time.trim() || !type) return undefined;
       const studentId = scheduledClass.studentId?.trim();
       if (studentId && !studentsRef.current.some((student) => student.id === studentId && isCurrentStudentEnrollment(student))) return undefined;
-      const createdClass: ScheduledClass = {
-        id: createPrototypeId("schedule"),
+      return {
         title,
         date: scheduledClass.date,
         time: scheduledClass.time.trim(),
@@ -3109,12 +3129,38 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         studentId: studentId || undefined,
         notes: scheduledClass.notes?.trim()
       };
+    }, []);
+
+  const addScheduledClass = useCallback(
+    (scheduledClass: ScheduledClassInput) => {
+      const cleaned = cleanScheduledClass(scheduledClass);
+      if (!cleaned) return undefined;
+      const createdClass: ScheduledClass = {
+        id: createPrototypeId("schedule"),
+        ...cleaned
+      };
       const existingClass = scheduledClassesRef.current.find((item) => scheduledClassCreationKey(item) === scheduledClassCreationKey(createdClass));
       if (existingClass) return existingClass;
       updateScheduledClassesState((current) => [createdClass, ...current]);
       return createdClass;
     },
-    [updateScheduledClassesState]
+    [cleanScheduledClass, updateScheduledClassesState]
+  );
+
+  const updateScheduledClass = useCallback(
+    (scheduledClassId: string, scheduledClass: ScheduledClassInput) => {
+      const existing = scheduledClassesRef.current.find((item) => item.id === scheduledClassId);
+      if (!existing) return undefined;
+      const cleaned = cleanScheduledClass(scheduledClass);
+      if (!cleaned) return undefined;
+      const updatedClass: ScheduledClass = {
+        ...existing,
+        ...cleaned
+      };
+      updateScheduledClassesState((current) => current.map((item) => (item.id === scheduledClassId ? updatedClass : item)));
+      return updatedClass;
+    },
+    [cleanScheduledClass, updateScheduledClassesState]
   );
 
   const deleteScheduledClass = useCallback(
@@ -3197,22 +3243,56 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [updateStudioClassesState]
   );
 
+  const cleanStudioEvent = useCallback((event: StudioEventInput) => {
+    const title = event.title.trim();
+    if (!title || !event.date || !event.time.trim()) return undefined;
+    return {
+      title,
+      date: event.date,
+      time: event.time.trim(),
+      details: event.details.trim(),
+      audience: event.audience
+    };
+  }, []);
+
   const addStudioEvent = useCallback(
-    (event: { title: string; date: string; time: string; details: string; audience: StudioEvent["audience"] }) => {
-      const title = event.title.trim();
-      if (!title || !event.date || !event.time.trim()) return undefined;
+    (event: StudioEventInput) => {
+      const cleaned = cleanStudioEvent(event);
+      if (!cleaned) return undefined;
       const createdEvent: StudioEvent = {
         id: createPrototypeId("event"),
-        title,
-        date: event.date,
-        time: event.time.trim(),
-        details: event.details.trim(),
-        audience: event.audience
+        ...cleaned
       };
       const existingEvent = studioEventsRef.current.find((item) => studioEventCreationKey(item) === studioEventCreationKey(createdEvent));
       if (existingEvent) return existingEvent;
       updateStudioEventsState((current) => [createdEvent, ...current]);
       return createdEvent;
+    },
+    [cleanStudioEvent, updateStudioEventsState]
+  );
+
+  const updateStudioEvent = useCallback(
+    (eventId: string, event: StudioEventInput) => {
+      const existing = studioEventsRef.current.find((item) => item.id === eventId);
+      if (!existing) return undefined;
+      const cleaned = cleanStudioEvent(event);
+      if (!cleaned) return undefined;
+      const updatedEvent: StudioEvent = {
+        ...existing,
+        ...cleaned
+      };
+      updateStudioEventsState((current) => current.map((item) => (item.id === eventId ? updatedEvent : item)));
+      return updatedEvent;
+    },
+    [cleanStudioEvent, updateStudioEventsState]
+  );
+
+  const deleteStudioEvent = useCallback(
+    (eventId: string) => {
+      const existing = studioEventsRef.current.find((item) => item.id === eventId);
+      if (!existing) return undefined;
+      updateStudioEventsState((current) => current.filter((item) => item.id !== eventId));
+      return existing;
     },
     [updateStudioEventsState]
   );
@@ -4359,9 +4439,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     updateStudioClass,
     deleteStudioClass,
     addScheduledClass,
+    updateScheduledClass,
     deleteScheduledClass,
     deletePastOneTimeScheduledClasses,
     addStudioEvent,
+    updateStudioEvent,
+    deleteStudioEvent,
     addTrainingVideoFolder,
     addTrainingVideo,
     addStudyGuideFolder,

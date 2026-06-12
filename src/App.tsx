@@ -346,6 +346,9 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
   const { childUsernameExists, login, loginChildCredentials, loginManagedAccount, loginRegisteredAccount, managedUsernameExists, register, showToast } = useAppState();
   const navigate = useNavigate();
   const prefersReducedMotion = usePrefersReducedMotion();
+  const loginLandingRef = useRef<HTMLElement | null>(null);
+  const portraitStageRef = useRef<HTMLDivElement | null>(null);
+  const usernameFieldRef = useRef<HTMLLabelElement | null>(null);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [registerForm, setRegisterForm] = useState({ email: "", password: "" });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -361,6 +364,46 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
   const loginLandingStyle = { "--login-bg-image": `url("${publicAsset("NewFinalBackground.png")}")` } as CSSProperties;
   const guestIntroImage = publicAsset("assets/guest-intro/cho-guest-class-intro-v2.png");
   const guestIntroStyle = { "--guest-intro-image": `url("${guestIntroImage}")` } as CSSProperties;
+
+  useEffect(() => {
+    const landing = loginLandingRef.current;
+    const portraitStage = portraitStageRef.current;
+    const usernameField = usernameFieldRef.current;
+    if (!portraitVisible || !landing || !portraitStage || !usernameField) return undefined;
+
+    let animationFrame = 0;
+    const updatePortraitAnchor = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        const usernameRect = usernameField.getBoundingClientRect();
+        const portraitHeight = parseFloat(window.getComputedStyle(portraitStage).height) || portraitStage.getBoundingClientRect().height;
+        if (usernameRect.height <= 0 || portraitHeight <= 0) return;
+
+        const usernameUnderlap = Math.min(14, Math.max(8, usernameRect.height * 0.24));
+        const anchoredCenterY = usernameRect.bottom + usernameUnderlap - portraitHeight / 2;
+        landing.style.setProperty("--login-portrait-anchor-y", `${anchoredCenterY}px`);
+      });
+    };
+
+    const resizeObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(updatePortraitAnchor);
+    resizeObserver?.observe(landing);
+    resizeObserver?.observe(portraitStage);
+    resizeObserver?.observe(usernameField);
+    window.addEventListener("resize", updatePortraitAnchor);
+    window.addEventListener("orientationchange", updatePortraitAnchor);
+    window.visualViewport?.addEventListener("resize", updatePortraitAnchor);
+    void document.fonts?.ready.then(updatePortraitAnchor).catch(() => undefined);
+    updatePortraitAnchor();
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updatePortraitAnchor);
+      window.removeEventListener("orientationchange", updatePortraitAnchor);
+      window.visualViewport?.removeEventListener("resize", updatePortraitAnchor);
+      landing.style.removeProperty("--login-portrait-anchor-y");
+    };
+  }, [handoffActive, portraitVisible, visible]);
 
   const failLogin = (message: string) => {
     showToast(message);
@@ -478,7 +521,7 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
   };
 
   return (
-    <section className={`login-landing ${visible ? "is-visible" : ""} ${handoffActive ? "is-handoff" : ""}`} style={loginLandingStyle} aria-label="Cho's Martial Arts login">
+    <section ref={loginLandingRef} className={`login-landing ${visible ? "is-visible" : ""} ${handoffActive ? "is-handoff" : ""}`} style={loginLandingStyle} aria-label="Cho's Martial Arts login">
       <div className="login-scrim"></div>
       <button
         className="login-portrait-toggle is-above-launch"
@@ -491,13 +534,13 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
         {portraitVisible ? <EyeOff size={20} /> : <Eye size={20} />}
       </button>
       {portraitVisible && (
-        <div className="login-portrait-stage" aria-hidden="true">
+        <div ref={portraitStageRef} className="login-portrait-stage" aria-hidden="true">
           <img src={publicAsset("Perfect1.png")} alt="" draggable={false} />
         </div>
       )}
       <div className="login-panel-wrap">
         <form className="login-panel" onSubmit={submitLogin}>
-          <label className="login-field">
+          <label ref={usernameFieldRef} className="login-field">
             <User size={34} aria-hidden="true" />
             <span className="sr-only">Username</span>
             <input

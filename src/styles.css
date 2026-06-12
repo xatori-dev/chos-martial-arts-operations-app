@@ -2640,7 +2640,7 @@ select option { color: #111; }
 .login-portrait-stage {
   position: fixed;
   left: var(--login-portrait-left);
-  top: var(--login-portrait-top);
+  top: var(--login-portrait-anchor-y, calc(var(--login-portrait-top) + var(--login-portrait-top-offset, 0px)));
   z-index: 38;
   width: var(--login-portrait-width);
   height: var(--login-portrait-height);
@@ -9901,6 +9901,12 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-home-profile-card {
+  --profile-corner-control-size: 34px;
+  --profile-corner-control-icon-size: 26px;
+  --profile-camera-control-size: 30px;
+  --profile-control-inset: 10px;
+  --profile-control-gap: 8px;
+  --profile-control-clearance: calc(var(--profile-control-inset) + var(--profile-corner-control-size) + var(--profile-control-gap));
   position: relative;
   min-width: 0;
   min-height: clamp(320px, 42vw, 410px);
@@ -9908,7 +9914,7 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   align-content: center;
   justify-items: center;
   gap: clamp(10px, 1.6vw, 16px);
-  padding: clamp(10px, 1.6vw, 18px);
+  padding: max(clamp(10px, 1.6vw, 18px), var(--profile-control-clearance)) clamp(10px, 1.6vw, 18px) clamp(10px, 1.6vw, 18px);
   color: var(--home-text);
 }
 
@@ -9971,13 +9977,7 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
   .student-profile-page .manager-home-profile-card {
     gap: 7px;
-  }
-
-  .student-profile-page .manager-home-profile-settings-link,
-  .student-profile-page .manager-home-profile-theme-toggle {
-    top: 10px;
-    width: 42px;
-    border-radius: 12px;
+    padding-top: var(--profile-control-clearance);
   }
 
   .student-profile-page .manager-home-profile-frame {
@@ -10077,13 +10077,17 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
 .manager-home-profile-settings-link {
   position: absolute;
-  top: clamp(10px, 1.6vw, 18px);
-  left: clamp(10px, 1.6vw, 18px);
+  top: var(--profile-control-inset);
+  left: var(--profile-control-inset);
   z-index: 3;
-  width: clamp(46px, 5.8vw, 56px);
-  aspect-ratio: 1;
+  width: var(--profile-corner-control-size);
+  min-width: var(--profile-corner-control-size);
+  max-width: var(--profile-corner-control-size);
+  height: var(--profile-corner-control-size);
+  min-height: var(--profile-corner-control-size);
+  max-height: var(--profile-corner-control-size);
   border: 1px solid transparent;
-  border-radius: 14px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
   color: var(--home-text);
@@ -10106,21 +10110,25 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-home-profile-settings-icon {
-  width: clamp(38px, 4.8vw, 46px);
-  height: clamp(38px, 4.8vw, 46px);
+  width: var(--profile-corner-control-icon-size);
+  height: var(--profile-corner-control-icon-size);
   object-fit: contain;
   filter: drop-shadow(0 5px 9px rgba(4, 16, 29, 0.22));
 }
 
 .manager-home-profile-theme-toggle {
   position: absolute;
-  top: clamp(10px, 1.6vw, 18px);
-  right: clamp(10px, 1.6vw, 18px);
+  top: var(--profile-control-inset);
+  right: var(--profile-control-inset);
   z-index: 3;
-  width: clamp(46px, 5.8vw, 56px);
-  aspect-ratio: 1;
+  width: var(--profile-corner-control-size);
+  min-width: var(--profile-corner-control-size);
+  max-width: var(--profile-corner-control-size);
+  height: var(--profile-corner-control-size);
+  min-height: var(--profile-corner-control-size);
+  max-height: var(--profile-corner-control-size);
   border: 1px solid rgba(170, 141, 255, 0.22);
-  border-radius: 14px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
   color: var(--home-text);
@@ -10247,11 +10255,15 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
 .manager-home-profile-change-badge {
   position: absolute;
-  left: 7%;
-  bottom: 7%;
+  left: max(7%, 8px);
+  bottom: max(7%, 8px);
   z-index: 2;
-  width: clamp(22px, 3.8vw, 34px);
-  aspect-ratio: 1;
+  width: var(--profile-camera-control-size);
+  min-width: var(--profile-camera-control-size);
+  max-width: var(--profile-camera-control-size);
+  height: var(--profile-camera-control-size);
+  min-height: var(--profile-camera-control-size);
+  max-height: var(--profile-camera-control-size);
   border: 2px solid rgba(255, 255, 255, 0.88);
   border-radius: 50%;
   display: grid;
@@ -14958,30 +14970,11 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
     min-height: 318px;
     gap: 8px;
     align-content: start;
-    padding: 8px 7px 10px;
-  }
-
-  .manager-home-profile-settings-link {
-    top: 8px;
-    left: 8px;
-    width: 38px;
-    border-radius: 11px;
-  }
-
-  .manager-home-profile-theme-toggle {
-    top: 8px;
-    right: 8px;
-    width: 38px;
-    border-radius: 11px;
-  }
-
-  .manager-home-profile-settings-icon {
-    width: 31px;
-    height: 31px;
+    padding: var(--profile-control-clearance) 7px 10px;
   }
 
   .manager-home-profile-frame {
-    margin-top: 32px;
+    margin-top: 0;
     width: clamp(98px, 20vw, 136px);
     border-width: 3px;
   }
@@ -17662,24 +17655,43 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   gap: 1px;
 }
 
-.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-item {
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-main {
   grid-template-columns: minmax(82px, 98px) minmax(0, 1fr);
   gap: 8px;
-  padding: clamp(6px, 0.85svh, 9px);
+  padding: clamp(6px, 0.85svh, 9px) 58px clamp(6px, 0.85svh, 9px) clamp(6px, 0.85svh, 9px);
 }
 
 .operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-item {
   min-height: 0;
-  grid-template-columns: minmax(72px, 86px) minmax(0, 1fr);
-  gap: 6px;
-  padding: clamp(4px, 0.58svh, 6px) clamp(6px, 0.9svh, 8px);
 }
 
-.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--dense .manager-calendar-selected-item {
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--crowded .manager-calendar-selected-main {
+  grid-template-columns: minmax(72px, 86px) minmax(0, 1fr);
+  gap: 6px;
+  padding: clamp(4px, 0.58svh, 6px) 50px clamp(4px, 0.58svh, 6px) clamp(6px, 0.9svh, 8px);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--dense .manager-calendar-selected-main {
   grid-template-columns: minmax(62px, 74px) minmax(0, 1fr);
   gap: 5px;
-  padding: 3px 6px;
+  padding: 3px 42px 3px 6px;
   overflow: hidden;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-actions {
+  top: clamp(4px, 0.62svh, 7px);
+  right: clamp(4px, 0.62svh, 7px);
+  gap: 3px;
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-actions button {
+  width: clamp(20px, 3.25svh, 24px);
+  height: clamp(20px, 3.25svh, 24px);
+}
+
+.operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-list--dense .manager-calendar-selected-actions button {
+  width: 18px;
+  height: 18px;
 }
 
 .operations-page--dashboard .manager-dashboard-calendar-page .manager-calendar-selected-time {
@@ -19028,6 +19040,78 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   outline: none;
 }
 
+.manager-calendar-edit-dialog {
+  max-width: min(94vw, 560px);
+}
+
+.manager-calendar-delete-dialog {
+  max-width: min(92vw, 430px);
+}
+
+.manager-calendar-delete-actions .manager-calendar-delete-confirm {
+  border-color: rgba(255, 143, 143, 0.52);
+  color: #fff4f4;
+  background:
+    linear-gradient(145deg, rgba(255, 102, 102, 0.2), rgba(89, 11, 22, 0.82)),
+    rgba(111, 18, 31, 0.82);
+}
+
+.manager-calendar-delete-actions .manager-calendar-delete-confirm:hover,
+.manager-calendar-delete-actions .manager-calendar-delete-confirm:focus-visible {
+  border-color: rgba(255, 190, 190, 0.76);
+  color: #ffffff;
+}
+
+.manager-calendar-edit-two-up {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.manager-calendar-edit-weekdays {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.manager-calendar-edit-weekdays legend {
+  margin: 0 0 8px;
+  color: #c9cedf;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.manager-calendar-edit-weekdays > div {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.manager-calendar-edit-weekdays label {
+  min-height: 38px;
+  padding: 0 6px;
+  border: 1px solid rgba(218, 226, 255, 0.18);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #f9f6ff;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.manager-calendar-edit-weekdays input {
+  width: 13px;
+  height: 13px;
+}
+
 .manager-calendar-view-switch {
   min-width: 0;
   padding: 4px;
@@ -19428,15 +19512,67 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
 .manager-calendar-selected-item {
   min-width: 0;
-  padding: 10px 12px;
+  position: relative;
+  border-radius: 12px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.075);
+  overflow: hidden;
+}
+
+.manager-calendar-selected-main {
+  min-width: 0;
+  padding: 10px 64px 10px 12px;
   display: grid;
   grid-template-columns: minmax(88px, 118px) minmax(0, 1fr);
   gap: 10px;
   align-items: stretch;
-  border-radius: 12px;
   color: inherit;
-  background: rgba(255, 255, 255, 0.075);
   text-decoration: none;
+}
+
+.manager-calendar-selected-main:hover,
+.manager-calendar-selected-main:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.manager-calendar-selected-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.manager-calendar-selected-actions button {
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(232, 238, 255, 0.16);
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  color: #e6eefc;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.045)),
+    rgba(15, 30, 51, 0.72);
+  box-shadow: 0 8px 16px rgba(4, 12, 24, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  cursor: pointer;
+}
+
+.manager-calendar-selected-actions button:hover,
+.manager-calendar-selected-actions button:focus-visible {
+  outline: none;
+  border-color: rgba(184, 245, 226, 0.46);
+  color: #b8f5e2;
+  transform: translateY(-1px);
+}
+
+.manager-calendar-selected-actions button:last-child:hover,
+.manager-calendar-selected-actions button:last-child:focus-visible {
+  border-color: rgba(255, 143, 143, 0.58);
+  color: #ffd1d1;
 }
 
 .manager-calendar-selected-time {
@@ -20404,21 +20540,7 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   .manager-home-profile-card {
     min-height: 252px;
     gap: 5px;
-    padding: 7px 5px 8px;
-  }
-
-  .manager-home-profile-settings-link {
-    top: 7px;
-    left: 7px;
-    width: 30px;
-    border-radius: 9px;
-  }
-
-  .manager-home-profile-theme-toggle {
-    top: 7px;
-    right: 7px;
-    width: 30px;
-    border-radius: 9px;
+    padding: var(--profile-control-clearance) 5px 8px;
   }
 
   .manager-home-profile-theme-icons {
@@ -20427,13 +20549,8 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
     padding: 1px;
   }
 
-  .manager-home-profile-settings-icon {
-    width: 26px;
-    height: 26px;
-  }
-
   .manager-home-profile-frame {
-    margin-top: 30px;
+    margin-top: 0;
     width: clamp(82px, 23vw, 96px);
     box-shadow:
       0 12px 24px rgba(5, 13, 26, 0.15),
@@ -20455,7 +20572,6 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   }
 
   .manager-home-profile-change-badge {
-    width: clamp(18px, 5vw, 22px);
     border-width: 1px;
   }
 
@@ -23228,7 +23344,9 @@ html[data-theme="light"] {
 
 .portrait-app-frame .auth-gate {
   --auth-logo-center-width: min(86%, 430px);
-  --login-portrait-width: clamp(238px, 82%, 360px);
+  --login-portrait-left: 49%;
+  --login-portrait-top-offset: -12px;
+  --login-portrait-width: clamp(238px, 86%, 372px);
   --login-character-width: min(30%, 150px);
 }
 
@@ -23355,11 +23473,11 @@ html[data-theme="light"] {
 .portrait-app-frame .manager-home-profile-card {
   min-height: 252px;
   gap: 5px;
-  padding: 7px 5px 8px;
+  padding: var(--profile-control-clearance) 5px 8px;
 }
 
 .portrait-app-frame .manager-home-profile-frame {
-  margin-top: 30px;
+  margin-top: 0;
   width: clamp(82px, 23vw, 96px);
 }
 
@@ -25196,9 +25314,15 @@ html[data-theme="light"] .student-panel-action-row a + a {
 }
 
 .student-reference-profile-card {
+  --profile-corner-control-size: 34px;
+  --profile-corner-control-icon-size: 24px;
+  --profile-camera-control-size: 32px;
+  --profile-control-inset: 16px;
+  --profile-control-gap: 8px;
+  --profile-control-clearance: calc(var(--profile-control-inset) + var(--profile-corner-control-size) + var(--profile-control-gap));
   position: relative;
   min-height: 310px;
-  padding: 22px 16px 18px;
+  padding: max(22px, var(--profile-control-clearance)) 16px 18px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -25230,30 +25354,38 @@ html[data-theme="light"] .student-panel-action-row a + a {
 }
 
 .student-reference-profile-settings {
-  top: 26px;
-  left: 28px;
-  width: 48px;
-  height: 48px;
+  top: var(--profile-control-inset);
+  left: var(--profile-control-inset);
+  width: var(--profile-corner-control-size);
+  min-width: var(--profile-corner-control-size);
+  max-width: var(--profile-corner-control-size);
+  height: var(--profile-corner-control-size);
+  min-height: var(--profile-corner-control-size);
+  max-height: var(--profile-corner-control-size);
 }
 
 .student-reference-profile-settings img {
-  width: 27px;
-  height: 27px;
+  width: var(--profile-corner-control-icon-size);
+  height: var(--profile-corner-control-icon-size);
   object-fit: contain;
 }
 
 .student-reference-theme-switch {
-  top: 40px;
-  right: 26px;
-  width: 44px;
-  height: 44px;
+  top: var(--profile-control-inset);
+  right: var(--profile-control-inset);
+  width: var(--profile-corner-control-size);
+  min-width: var(--profile-corner-control-size);
+  max-width: var(--profile-corner-control-size);
+  height: var(--profile-corner-control-size);
+  min-height: var(--profile-corner-control-size);
+  max-height: var(--profile-corner-control-size);
 }
 
 .student-reference-portrait-wrap {
   position: relative;
   width: 148px;
   height: 148px;
-  margin-top: 28px;
+  margin-top: 0;
   padding: 7px;
   border-radius: 999px;
   background:
@@ -25271,10 +25403,14 @@ html[data-theme="light"] .student-panel-action-row a + a {
 }
 
 .student-reference-camera {
-  right: -4px;
+  left: 8px;
   bottom: 8px;
-  width: 48px;
-  height: 48px;
+  width: var(--profile-camera-control-size);
+  min-width: var(--profile-camera-control-size);
+  max-width: var(--profile-camera-control-size);
+  height: var(--profile-camera-control-size);
+  min-height: var(--profile-camera-control-size);
+  max-height: var(--profile-camera-control-size);
   cursor: pointer;
 }
 
@@ -25879,6 +26015,10 @@ html[data-theme="light"] .student-panel-action-row a + a {
     padding: 14px;
   }
 
+  .student-reference-profile-card {
+    padding: var(--profile-control-clearance) 14px 14px;
+  }
+
   .student-reference-week-head {
     grid-template-columns: 38px 1fr 38px;
     padding: 10px;
@@ -26047,13 +26187,19 @@ html[data-theme="light"] .student-panel-action-row a + a {
 }
 
 .manager-shell--student-reference .student-reference-profile-card {
+  --profile-corner-control-size: 32px;
+  --profile-corner-control-icon-size: 22px;
+  --profile-camera-control-size: 28px;
+  --profile-control-inset: 9px;
+  --profile-control-gap: 7px;
+  --profile-control-clearance: calc(var(--profile-control-inset) + var(--profile-corner-control-size) + var(--profile-control-gap));
   display: grid;
   grid-template-columns: clamp(54px, 8vh, 74px) minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr);
   align-content: start;
   align-items: center;
   justify-items: stretch;
-  padding: clamp(8px, 1.5vh, 14px);
+  padding: var(--profile-control-clearance) clamp(8px, 1.5vh, 14px) clamp(8px, 1.5vh, 14px);
   text-align: left;
 }
 
@@ -26062,22 +26208,22 @@ html[data-theme="light"] .student-panel-action-row a + a {
 }
 
 .manager-shell--student-reference .student-reference-profile-settings {
-  top: clamp(9px, 1.6vh, 18px);
-  left: clamp(9px, 1.8vw, 18px);
-  width: clamp(28px, 5.2vh, 40px);
-  height: clamp(28px, 5.2vh, 40px);
+  top: var(--profile-control-inset);
+  left: var(--profile-control-inset);
+  width: var(--profile-corner-control-size);
+  height: var(--profile-corner-control-size);
 }
 
 .manager-shell--student-reference .student-reference-profile-settings img {
-  width: clamp(18px, 3.2vh, 24px);
-  height: clamp(18px, 3.2vh, 24px);
+  width: var(--profile-corner-control-icon-size);
+  height: var(--profile-corner-control-icon-size);
 }
 
 .manager-shell--student-reference .student-reference-theme-switch {
-  top: clamp(10px, 1.8vh, 20px);
-  right: clamp(9px, 1.8vw, 18px);
-  width: clamp(28px, 5.2vh, 38px);
-  height: clamp(28px, 5.2vh, 38px);
+  top: var(--profile-control-inset);
+  right: var(--profile-control-inset);
+  width: var(--profile-corner-control-size);
+  height: var(--profile-corner-control-size);
 }
 
 .manager-shell--student-reference .student-reference-portrait-wrap {
@@ -26085,16 +26231,16 @@ html[data-theme="light"] .student-panel-action-row a + a {
   grid-column: 1;
   width: clamp(54px, 8vh, 74px);
   height: clamp(54px, 8vh, 74px);
-  margin-top: clamp(14px, 2vh, 20px);
+  margin-top: 0;
   padding: clamp(3px, 0.8vh, 6px);
   box-shadow: 0 0 0 clamp(3px, 0.7vh, 6px) rgba(119, 70, 255, 0.18), 0 0 24px rgba(168, 85, 247, 0.5);
 }
 
 .manager-shell--student-reference .student-reference-camera {
-  right: -3px;
+  left: 4px;
   bottom: 4px;
-  width: clamp(28px, 5.4vh, 40px);
-  height: clamp(28px, 5.4vh, 40px);
+  width: var(--profile-camera-control-size);
+  height: var(--profile-camera-control-size);
 }
 
 .manager-shell--student-reference .student-reference-profile-card h2 {
@@ -26483,11 +26629,15 @@ html[data-theme="light"] .student-panel-action-row a + a {
     text-align: left;
   }
 
-  .manager-shell--student-reference .student-reference-camera,
+  .manager-shell--student-reference .student-reference-camera {
+    width: var(--profile-camera-control-size);
+    height: var(--profile-camera-control-size);
+  }
+
   .manager-shell--student-reference .student-reference-profile-settings,
   .manager-shell--student-reference .student-reference-theme-switch {
-    width: clamp(24px, 4.7vh, 32px);
-    height: clamp(24px, 4.7vh, 32px);
+    width: var(--profile-corner-control-size);
+    height: var(--profile-corner-control-size);
   }
 
   .manager-shell--student-reference .student-reference-facts {
