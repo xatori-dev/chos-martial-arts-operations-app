@@ -2,12 +2,14 @@
 
 ## Current Status
 
-This project is not ready for client handoff as a production system. It is a Xatori-managed prototype with a staging foundation, an active Supabase staging surface for manager auth/account persistence, and browser-local prototype workflows for the remaining operations data. There is no production backend, production database, payments, email provider, or live SMS provider.
+This project is not ready for client handoff as a production system. It is a Xatori-managed prototype with a verified GitHub Pages staging deployment, an active Supabase staging surface for manager auth/account persistence, and browser-local prototype workflows for the remaining operations data. There is no production backend, production database, payments, email provider, or live SMS provider.
 
 ## Delivery Package
 
 - Repository: `xatori-dev/chos-martial-arts-operations-app`
-- Current local branch: `codex/xatori-infra-standardization`
+- Verified staging URL: `https://xatori-dev.github.io/chos-martial-arts-operations-app/`
+- Latest verified target deployment: GitHub Pages workflow run `27249196766`, commit `32e91f5`, environment `github-pages`
+- Current local branch: `main`, tracking `origin/main`
 - Current remote map: `origin` points to Xatori, `legacy-origin` points to `projektoutside`, and `desktop-source` points to the local desktop source checkout
 - Google Drive package: [Cho's Martial Arts Operations App - Xatori Onboarding and Handoff Package](https://docs.google.com/document/d/1E22ubixiSzLEZPNklvmA8Wiujq63J7olDCSN1YEkkh4/edit?usp=drivesdk)
 - Architecture: `docs/architecture.md`
@@ -21,8 +23,8 @@ This project is not ready for client handoff as a production system. It is a Xat
 ## Handoff Readiness Checklist
 
 - [x] Xatori GitHub repo exists and `origin/main` is reachable.
-- [ ] Xatori deployment is proven from the target repo.
-- [ ] Local branch tracking is cleaned up; local `main` still tracks `desktop-source/main`.
+- [x] Xatori GitHub Pages deployment is proven from the target repo.
+- [x] Local `main` tracks `origin/main`.
 - [ ] GitHub CLI or connector identity is switched to an intended Xatori operator before live repo administration.
 - [ ] Legacy `projektoutside` repo exception is resolved or explicitly retained after Xatori deployment is proven.
 - [x] Google Drive package document exists under the connected `xatori@xatoridev.com` Drive account.

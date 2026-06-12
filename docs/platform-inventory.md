@@ -1,6 +1,6 @@
 # Platform Inventory
 
-Last updated: 2026-06-10
+Last updated: 2026-06-12
 
 ## GitHub
 
@@ -10,11 +10,11 @@ Last updated: 2026-06-10
 | Target owner/repo | `xatori-dev/chos-martial-arts-operations-app` |
 | Local Xatori repo path | `C:\Dev\Business\Clients\active\chos-martial-arts\operations-app\repo` |
 | Default branch | `main` |
-| Working branch for onboarding | `codex/xatori-infra-standardization` |
+| Current release branch | `main` |
 | Branch protection | Not configured on target repo yet |
 | Target repo status | Created and reachable at `https://github.com/xatori-dev/chos-martial-arts-operations-app`; `origin/main` is the Xatori target branch |
-| Local branch tracking | Local `main` still tracks `desktop-source/main`; active onboarding branch is checked out locally |
-| Local GitHub CLI identity | `gh auth status` reports `projektoutside`; switch identity before live Xatori repo administration |
+| Local branch tracking | Local `main` tracks `origin/main`; `legacy-origin` and `desktop-source` remain as references only |
+| Local GitHub CLI identity | `gh auth status` reports `projektoutside`; the account has admin access, but switch to an intended Xatori operator before live repo administration |
 
 ## Hosting
 
@@ -23,7 +23,10 @@ Last updated: 2026-06-10
 | Legacy hosting | GitHub Pages |
 | Legacy Pages URL | `https://projektoutside.github.io/chos-martial-arts-prototype/` |
 | Legacy workflow | `.github/workflows/deploy-pages.yml` |
-| Target staging hosting | GitHub Pages or Cloudflare Pages from the Xatori repo; not yet verified from this checkout |
+| Target staging hosting | GitHub Pages from the Xatori repo, verified |
+| Target Pages URL | `https://xatori-dev.github.io/chos-martial-arts-operations-app/` |
+| Latest verified target deployment | Workflow `Deploy to GitHub Pages`, run `27249196766`, commit `32e91f5`, environment `github-pages`, status `success` |
+| SPA fallback behavior | `dist/404.html` is deployed. Deep links such as `/messages` return GitHub Pages HTTP 404 while serving the app shell, which is expected for the static SPA fallback. |
 | Target Cloudflare Pages name | `chos-martial-arts-operations-app` |
 | DNS/custom domain | Not configured in phase 1 |
 

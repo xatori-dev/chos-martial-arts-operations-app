@@ -16,7 +16,7 @@ App: Cho's Martial Arts Operations App
 | Platform | Current state | Cutover status |
 | --- | --- | --- |
 | GitHub | `projektoutside/chos-martial-arts-prototype` | Temporary legacy source |
-| GitHub Pages | `https://projektoutside.github.io/chos-martial-arts-prototype/` | Keep live until Xatori deployment is proven |
+| GitHub Pages | `https://projektoutside.github.io/chos-martial-arts-prototype/` | Legacy exception; Xatori staging is now proven, so retirement is a business decision |
 | Backend/database/payments/email/auth | Not integrated | No migration required in phase 1 |
 | Twilio/Web Push | Credential-free browser handoff contracts | Private server still required for live sends |
 
@@ -25,6 +25,7 @@ App: Cho's Martial Arts Operations App
 | Platform | Resource |
 | --- | --- |
 | GitHub repo | `xatori-dev/chos-martial-arts-operations-app` |
+| GitHub Pages staging URL | `https://xatori-dev.github.io/chos-martial-arts-operations-app/` |
 | Google Drive folder | `chos-martial-arts - operations-app` |
 | Gmail labels | `Clients/chos-martial-arts/operations-app` |
 | 1Password development vault | `client-chos-martial-arts Development` |
