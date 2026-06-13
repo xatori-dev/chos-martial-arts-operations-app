@@ -4098,16 +4098,19 @@ describe("post-login operations app", () => {
 
   it("places the live chat composer date in the bottom-right footer opposite the guidelines", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-06-12T18:12:00-05:00"));
+    const currentComposerDate = new Date("2026-06-12T18:12:00-05:00");
+    const expectedComposerTimestamp = `${currentComposerDate.toLocaleDateString("en-CA").replace(/-/g, "/")} ${currentComposerDate.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" })}`;
+    const expectedComposerLabel = `Current composer time ${expectedComposerTimestamp}`;
+    vi.setSystemTime(currentComposerDate);
     renderLoggedInApp("/live-chat");
 
     const inputShell = screen.getByPlaceholderText("Enter message.").closest(".live-chat-input-shell");
     expect(inputShell).not.toBeNull();
     const footerLine = screen.getByText("community guidelines").closest(".live-chat-footer-line");
     expect(footerLine).not.toBeNull();
-    const composerDate = within(footerLine as HTMLElement).getByLabelText("Current composer time 2026/06/12 18:12");
+    const composerDate = within(footerLine as HTMLElement).getByLabelText(expectedComposerLabel);
 
-    expect(within(inputShell as HTMLElement).queryByLabelText("Current composer time 2026/06/12 18:12")).not.toBeInTheDocument();
+    expect(within(inputShell as HTMLElement).queryByLabelText(expectedComposerLabel)).not.toBeInTheDocument();
     expect(composerDate).toHaveClass("live-chat-composer-time", "live-chat-composer-time--footer");
     expect(composerDate.querySelector("svg")).not.toBeInTheDocument();
     expect((footerLine as HTMLElement).children[0]).toHaveClass("live-chat-guidelines");
