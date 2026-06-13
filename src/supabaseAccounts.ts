@@ -28,7 +28,7 @@ type SupabaseProfileResponse = {
   created_at: string;
 };
 
-type SupabaseStoredSession = {
+export type SupabaseStoredSession = {
   accessToken: string;
   refreshToken?: string;
   expiresAt: number;
@@ -75,6 +75,13 @@ function supabasePublicKey() {
   return (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY ?? "").trim();
 }
 
+export function getSupabaseBrowserConfig() {
+  return {
+    url: supabaseUrl(),
+    publicKey: supabasePublicKey()
+  };
+}
+
 export function isSupabaseAuthConfigured() {
   if (import.meta.env.MODE === "test" && import.meta.env.VITE_ENABLE_SUPABASE_IN_TESTS !== "true") return false;
   return Boolean(supabaseUrl() && supabasePublicKey());
@@ -111,7 +118,7 @@ export function clearSupabaseAuthSession() {
   window.localStorage.removeItem(supabaseSessionStorageKey);
 }
 
-function readSupabaseAuthSession() {
+export function readSupabaseAuthSession() {
   const rawSession = window.localStorage.getItem(supabaseSessionStorageKey);
   if (!rawSession) return undefined;
   try {

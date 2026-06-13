@@ -3894,6 +3894,10 @@ describe("post-login operations app", () => {
     expect(managerPanelLink).toHaveAttribute("href", "/manager");
     expect(managerPanelLink.querySelector("img.manager-home-panel-icon")).toHaveAttribute("src", expect.stringContaining("ManagerPage.webp"));
     expect(within(managerPanelLink).getByText("Manager's Panel")).toBeInTheDocument();
+    const liveChatLink = within(profileTitleHeader).getByRole("link", { name: "Live Chat" });
+    expect(liveChatLink).toHaveAttribute("href", "/live-chat");
+    expect(liveChatLink.querySelector("img.manager-home-live-chat-icon")).toHaveAttribute("src", expect.stringContaining("Messages.webp"));
+    expect(within(liveChatLink).getByText("Live Chat")).toBeInTheDocument();
     const homeLogoutButton = within(profileTitleHeader).getByRole("button", { name: "Log Out" });
     expect(homeLogoutButton.querySelector("img.manager-home-logout-icon")).toHaveAttribute("src", expect.stringContaining("ManagerLogoutProfessional.png"));
     expect(within(homeLogoutButton).getByText("Log Out")).toBeInTheDocument();
@@ -3977,6 +3981,185 @@ describe("post-login operations app", () => {
     expect(screen.queryByRole("heading", { name: "Message Settings" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Manager app launcher")).not.toBeInTheDocument();
   }, 10000);
+
+  it("opens the staff-only live chat room route", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T18:05:00-05:00"));
+    renderLoggedInApp("/live-chat");
+
+    expect(screen.getByLabelText("Live chat room page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Live Chats" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Live Chat Rooms" })).toBeInTheDocument();
+    const chatFrame = screen.getByLabelText("Live chat room frame");
+    expect(chatFrame).toHaveClass("manager-launcher-body", "live-chat-shell");
+    expect(chatFrame).not.toHaveClass("is-sidebar-collapsed");
+    const roster = screen.getByLabelText("Live chat members");
+    expect(roster).toHaveClass("manager-launcher-grid", "manager-launcher-sidebar", "live-chat-roster");
+    expect(roster.querySelector(".manager-launcher-item.live-chat-roster-member")).toBeInTheDocument();
+    const rosterToggle = screen.getByRole("button", { name: "Collapse live chat member list" });
+    expect(rosterToggle).toHaveClass("manager-launcher-rail-toggle");
+    expect(rosterToggle.querySelector(".manager-launcher-rail-toggle-bar")).toBeInTheDocument();
+    expect(rosterToggle).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById("live-chat-roster-members")).not.toHaveAttribute("hidden");
+    const roomTabs = screen.getByRole("tablist", { name: "Live chat rooms" });
+    expect(within(roomTabs).getByRole("tab", { name: "Cho's Room" })).toHaveAttribute("aria-selected", "true");
+    expect(within(roomTabs).getByRole("button", { name: "Create Room" })).toBeInTheDocument();
+    expect(within(roomTabs).getByRole("tab", { name: /Mentions/i })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "All Messages" })).not.toBeInTheDocument();
+    const chatHeader = screen.getByLabelText("Live chat room header");
+    expect(within(chatHeader).getByLabelText("Live chat online count")).toHaveTextContent("18 Online");
+    expect(screen.queryByLabelText("Live chat preview")).not.toBeInTheDocument();
+    expect(within(chatHeader).queryByText(/^Preview$/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Live chat composer")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Enter message.")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    expect(screen.getByText(/Supabase/i)).toBeInTheDocument();
+
+    fireEvent.click(rosterToggle);
+    const expandRosterToggle = screen.getByRole("button", { name: "Expand live chat member list" });
+    expect(expandRosterToggle).toHaveAttribute("aria-expanded", "false");
+    expect(chatFrame).toHaveClass("is-sidebar-collapsed");
+    expect(document.getElementById("live-chat-roster-members")).toHaveAttribute("hidden");
+    expect(screen.getByLabelText("Live chat room")).toBeInTheDocument();
+
+    fireEvent.click(expandRosterToggle);
+    expect(screen.getByRole("button", { name: "Collapse live chat member list" })).toHaveAttribute("aria-expanded", "true");
+    expect(chatFrame).not.toHaveClass("is-sidebar-collapsed");
+    expect(document.getElementById("live-chat-roster-members")).not.toHaveAttribute("hidden");
+  });
+
+  it("creates custom live chat rooms with invited members and a colored room tab", () => {
+    renderLoggedInApp("/live-chat");
+
+    const roomTabs = screen.getByRole("tablist", { name: "Live chat rooms" });
+    fireEvent.click(within(roomTabs).getByRole("button", { name: "Create Room" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Create chat room" });
+    fireEvent.change(within(dialog).getByLabelText("Room name"), { target: { value: "Leadership Team" } });
+    fireEvent.click(within(dialog).getByLabelText("Room color Ruby"));
+    fireEvent.click(within(dialog).getByLabelText("Invite Talia Brooks"));
+    fireEvent.click(within(dialog).getByLabelText("Invite Evan Ramirez"));
+    expect(within(dialog).getByLabelText("Live chat invite count")).toHaveTextContent("2 invited");
+    expect(within(dialog).getByRole("button", { name: "Create Room" })).toBeDisabled();
+
+    const confirmInvitesButton = within(dialog).getByRole("button", { name: "Confirm 2 Invites" });
+    expect(confirmInvitesButton).toBeEnabled();
+    fireEvent.click(confirmInvitesButton);
+    expect(within(dialog).getByRole("button", { name: "Invites Confirmed" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(dialog).getByText("2 invites confirmed")).toBeInTheDocument();
+
+    const createRoomButton = within(dialog).getByRole("button", { name: "Create Room" });
+    expect(createRoomButton).toBeEnabled();
+    fireEvent.click(createRoomButton);
+
+    expect(screen.queryByRole("dialog", { name: "Create chat room" })).not.toBeInTheDocument();
+    const createdRoomTab = within(roomTabs).getByRole("tab", { name: "Leadership Team" });
+    expect(createdRoomTab).toHaveAttribute("aria-selected", "true");
+    expect(createdRoomTab).toHaveStyle("--live-chat-room-tab-color: #e4567d");
+    expect(screen.getByLabelText("Live chat room invite summary")).toHaveTextContent("Talia Brooks, Evan Ramirez");
+    expect(screen.getByText("Leadership Team is ready for 2 invited members.")).toBeInTheDocument();
+
+    fireEvent.click(within(roomTabs).getByRole("tab", { name: "Cho's Room" }));
+    expect(within(roomTabs).getByRole("tab", { name: "Cho's Room" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("submits a local preview test message when Supabase sign-in is unavailable", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T18:12:00-05:00"));
+    renderLoggedInApp("/live-chat");
+
+    const input = screen.getByPlaceholderText("Enter message.");
+    const sendButton = screen.getByRole("button", { name: "Send" });
+    expect(input).toBeEnabled();
+    expect(sendButton).toBeEnabled();
+
+    fireEvent.change(input, { target: { value: "  Test live chat submission.  " } });
+    fireEvent.click(sendButton);
+
+    expect(screen.getByText("Test live chat submission.")).toBeInTheDocument();
+    expect(screen.getByText("Test message added locally. Supabase sign-in required for live delivery.")).toBeInTheDocument();
+    expect(input).toHaveValue("");
+    expect(sendButton).toBeEnabled();
+  });
+
+  it("keeps live chat timestamps grouped under the sender name to avoid wasted message row space", () => {
+    renderLoggedInApp("/live-chat");
+
+    const firstMessage = screen.getByText("Saturday belt testing schedule is live. Check roster updates before dismissing families.").closest(".live-chat-message");
+    expect(firstMessage).not.toBeNull();
+    const sender = within(firstMessage as HTMLElement).getByText("[Notice]");
+    const timestamp = within(firstMessage as HTMLElement).getByText(/\d{1,2}:\d{2} (AM|PM)/);
+
+    expect(sender.parentElement).toHaveClass("live-chat-message-meta");
+    expect(timestamp.parentElement).toHaveClass("live-chat-message-meta");
+    expect((firstMessage as HTMLElement).children).toHaveLength(2);
+    expect((firstMessage as HTMLElement).children[1]).toHaveClass("live-chat-message-body");
+  });
+
+  it("places the live chat composer date in the bottom-right footer opposite the guidelines", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T18:12:00-05:00"));
+    renderLoggedInApp("/live-chat");
+
+    const inputShell = screen.getByPlaceholderText("Enter message.").closest(".live-chat-input-shell");
+    expect(inputShell).not.toBeNull();
+    const footerLine = screen.getByText("community guidelines").closest(".live-chat-footer-line");
+    expect(footerLine).not.toBeNull();
+    const composerDate = within(footerLine as HTMLElement).getByLabelText("Current composer time 2026/06/12 18:12");
+
+    expect(within(inputShell as HTMLElement).queryByLabelText("Current composer time 2026/06/12 18:12")).not.toBeInTheDocument();
+    expect(composerDate).toHaveClass("live-chat-composer-time", "live-chat-composer-time--footer");
+    expect(composerDate.querySelector("svg")).not.toBeInTheDocument();
+    expect((footerLine as HTMLElement).children[0]).toHaveClass("live-chat-guidelines");
+    expect((footerLine as HTMLElement).children[1]).toBe(composerDate);
+  });
+
+  it("keeps the live chat feed pinned to the newest message when already at the bottom", async () => {
+    renderLoggedInApp("/live-chat");
+
+    const feed = screen.getByLabelText("Live chat messages") as HTMLOListElement;
+    Object.defineProperties(feed, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 900 }
+    });
+    feed.scrollTop = 592;
+    fireEvent.scroll(feed);
+
+    fireEvent.change(screen.getByPlaceholderText("Enter message."), { target: { value: "Bottom pinned test message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(feed.scrollTop).toBe(600));
+    expect(screen.getByText("Bottom pinned test message")).toBeInTheDocument();
+  });
+
+  it("preserves the live chat feed position when the user scrolls away from the newest message", async () => {
+    renderLoggedInApp("/live-chat");
+
+    const feed = screen.getByLabelText("Live chat messages") as HTMLOListElement;
+    Object.defineProperties(feed, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 900 }
+    });
+    feed.scrollTop = 180;
+    fireEvent.scroll(feed);
+
+    fireEvent.change(screen.getByPlaceholderText("Enter message."), { target: { value: "Manual scroll position test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.getByText("Manual scroll position test")).toBeInTheDocument());
+    expect(feed.scrollTop).toBe(180);
+  });
+
+  it("redirects non-staff users away from the live chat room", () => {
+    const guardianView = renderLoggedInApp("/live-chat", "guardian");
+    expect(screen.queryByLabelText("Live chat room page")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Parent profile page")).toBeInTheDocument();
+    guardianView.unmount();
+
+    renderLoggedInApp("/live-chat", "student");
+    expect(screen.queryByLabelText("Live chat room page")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Student profile page")).toBeInTheDocument();
+  });
 
   it("opens the manager panel from the manager home icon button", () => {
     renderLoggedInApp("/");

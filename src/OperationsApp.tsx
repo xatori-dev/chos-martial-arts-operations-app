@@ -25,6 +25,7 @@ import {
   Search,
   Send,
   Server,
+  Smile,
   Sparkles,
   Smartphone,
   Sun,
@@ -36,7 +37,7 @@ import {
   Video,
   X
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent as ReactChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent as ReactChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import classesLauncherIcon from "./assets/manager-icons/Classes.webp";
 import dashboardLauncherIcon from "./assets/manager-icons/Dashboard.webp";
@@ -53,6 +54,16 @@ import { beltReadinessItems } from "./data";
 import { buildOperationsBackupSnapshot, makeOperationsBackupFilename, type ProductionMessagingSetupBackup } from "./operationsBackup";
 import { buildReportsCommandCenter, getMerchandiseReorderPoint, getMerchandiseTargetStock, isMissedClassFollowUpDue, isQueuedMessageDeliverable, type ReportsAttendanceGapCandidate, type ReportsCelebrationCandidate, type ReportsClassReminderCandidate, type ReportsDirectMessageReplyCandidate, type ReportsNewStudentCheckInCandidate, type ReportsPriorityAction, type ReportsProfileUpdateCandidate } from "./operationsReports";
 import { publicAsset } from "./appAssets";
+import {
+  fetchLiveChatMessages,
+  getLiveChatAvailability,
+  liveChatMessageMaxLength,
+  liveChatRoomKey,
+  sendLiveChatMessage,
+  subscribeToLiveChatInserts,
+  validateLiveChatBody,
+  type LiveChatMessage
+} from "./supabaseLiveChat";
 import {
   getBeltJourneyStats,
   resolveBeltRank
@@ -1192,7 +1203,7 @@ function StaffOperationsShell({
   const shellClassName = `manager-shell${accountRole === "student" && path === "/" ? " manager-shell--student-reference" : ""}`;
   const fullPageShellClassName = `manager-full-page-shell${path === "/dashboard" ? " manager-full-page-shell--dashboard" : ""}`;
 
-  if (path === "/" || path === "/manager") {
+  if (path === "/" || path === "/manager" || path === "/live-chat") {
     return <div className={shellClassName}>{children}</div>;
   }
 
@@ -3539,6 +3550,178 @@ const managerComposeStaffRecipients: ManagerComposeRecipient[] = [
   }
 ];
 
+type LiveChatRosterMember = {
+  id: string;
+  name: string;
+  detail: string;
+  avatarSrc: string;
+};
+
+type LiveChatRoom = {
+  id: string;
+  name: string;
+  color: string;
+  invitedMemberIds: string[];
+  isDefault?: boolean;
+};
+
+const liveChatDefaultRoomId = "chos-room";
+const liveChatMentionsRoomId = "mentions";
+
+const liveChatRoomColorOptions = [
+  { name: "Violet", value: "#8a63f2" },
+  { name: "Ruby", value: "#e4567d" },
+  { name: "Teal", value: "#20bfa9" },
+  { name: "Gold", value: "#e5ad45" },
+  { name: "Blue", value: "#4d8cff" },
+  { name: "Green", value: "#38b66d" }
+];
+
+const liveChatDefaultRooms: LiveChatRoom[] = [
+  {
+    id: liveChatDefaultRoomId,
+    name: "Cho's Room",
+    color: liveChatRoomColorOptions[0].value,
+    invitedMemberIds: [],
+    isDefault: true
+  }
+];
+
+const liveChatPreviewMessages: LiveChatMessage[] = [
+  {
+    id: "preview-notice-schedule",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "Notice",
+    senderRole: "system",
+    senderAvatarPath: null,
+    messageKind: "notice",
+    body: "Saturday belt testing schedule is live. Check roster updates before dismissing families.",
+    createdAt: "2026-06-12T16:10:00.000Z"
+  },
+  {
+    id: "preview-staff-floor",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "Floor Team",
+    senderRole: "staff",
+    senderAvatarPath: "assets/CheetahProfilePic/Cheetah.png",
+    messageKind: "user",
+    body: "@Cho's Manager Lily and Caleb are ready for forms review after Youth Intermediate.",
+    createdAt: "2026-06-12T16:14:00.000Z"
+  },
+  {
+    id: "preview-reward",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "System",
+    senderRole: "system",
+    senderAvatarPath: null,
+    messageKind: "reward",
+    body: "Talia Brooks completed her fourth class streak this week.",
+    createdAt: "2026-06-12T16:20:00.000Z"
+  },
+  {
+    id: "preview-staff-desk",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "Front Desk",
+    senderRole: "staff",
+    senderAvatarPath: "assets/student-profiles/iris-morgan.webp",
+    messageKind: "user",
+    body: "Parent check-ins are clear. Two trial families need a welcome follow-up.",
+    createdAt: "2026-06-12T16:28:00.000Z"
+  },
+  {
+    id: "preview-system-closeout",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "System",
+    senderRole: "system",
+    senderAvatarPath: null,
+    messageKind: "system",
+    body: "Closeout reminder: verify attendance notes before 8:00 PM.",
+    createdAt: "2026-06-12T16:36:00.000Z"
+  },
+  {
+    id: "preview-staff-mats",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "Coach Mina",
+    senderRole: "staff",
+    senderAvatarPath: "assets/student-profiles/maya-robinson.webp",
+    messageKind: "user",
+    body: "Mat two is open for private lesson warmups.",
+    createdAt: "2026-06-12T16:42:00.000Z"
+  },
+  {
+    id: "preview-notice-uniforms",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "Notice",
+    senderRole: "system",
+    senderAvatarPath: null,
+    messageKind: "notice",
+    body: "Uniform pickup shelf has been restocked for the evening classes.",
+    createdAt: "2026-06-12T16:46:00.000Z"
+  },
+  {
+    id: "preview-staff-family",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "Front Desk",
+    senderRole: "staff",
+    senderAvatarPath: "assets/student-profiles/sophie-jensen.webp",
+    messageKind: "user",
+    body: "New family tour starts at 6:15. Please keep the entry mat clear.",
+    createdAt: "2026-06-12T16:51:00.000Z"
+  },
+  {
+    id: "preview-reward-card",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "System",
+    senderRole: "system",
+    senderAvatarPath: null,
+    messageKind: "reward",
+    body: "Marcus Reid earned leadership card review with Coach Cho.",
+    createdAt: "2026-06-12T16:57:00.000Z"
+  },
+  {
+    id: "preview-staff-sparring",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "Coach Luis",
+    senderRole: "staff",
+    senderAvatarPath: "assets/student-profiles/andre-coleman.webp",
+    messageKind: "user",
+    body: "Sparring gear checks are done for intermediate class.",
+    createdAt: "2026-06-12T17:04:00.000Z"
+  },
+  {
+    id: "preview-system-cleanup",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "System",
+    senderRole: "system",
+    senderAvatarPath: null,
+    messageKind: "system",
+    body: "Lobby cleanup window starts after the 7:15 adult class.",
+    createdAt: "2026-06-12T17:10:00.000Z"
+  },
+  {
+    id: "preview-staff-ready",
+    roomKey: liveChatRoomKey,
+    senderUserId: null,
+    senderName: "Cho's Manager",
+    senderRole: "staff",
+    senderAvatarPath: "assets/CheetahProfilePic/Cheetah.png",
+    messageKind: "user",
+    body: "Thanks team. Keep trial family notes in the front desk thread.",
+    createdAt: "2026-06-12T17:18:00.000Z"
+  }
+];
+
 const HOME_OVERVIEW_DRAG_THRESHOLD = 6;
 const HOME_OVERVIEW_KEYBOARD_STEP = 0.12;
 const HOME_OVERVIEW_STAGE_VISUAL_BUFFER = 6;
@@ -3650,6 +3833,605 @@ function studentToParentComposeRecipient(student: StudentRecord): ManagerCompose
     subtitle: `Parent of ${studentName}`,
     detail: student.guardianPhone || student.guardianEmail || student.email || "No parent contact on file"
   };
+}
+
+function buildLiveChatRoster(students: StudentRecord[], managerProfile: ManagerProfileSettings, isManagerOwner: boolean): LiveChatRosterMember[] {
+  const activeStudents = students
+    .filter(isCurrentOperationsStudent)
+    .slice(0, 17)
+    .map((student) => ({
+      id: student.id,
+      name: fullName(student),
+      detail: `${student.beltRank} belt`,
+      avatarSrc: student.profileImagePath ? publicAsset(student.profileImagePath) : publicAsset("assets/CheetahProfilePic/Cheetah.png")
+    }));
+
+  return [
+    {
+      id: "current-staff",
+      name: managerProfile.name.trim() || (isManagerOwner ? "Cho's Manager" : "Cho's Staff"),
+      detail: isManagerOwner ? "Manager" : "Staff",
+      avatarSrc: managerProfile.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png")
+    },
+    ...activeStudents
+  ];
+}
+
+function makeLiveChatRoomId(name: string, rooms: LiveChatRoom[]) {
+  const baseId = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "room";
+  let candidateId = `room-${baseId}`;
+  let suffix = 2;
+
+  while (rooms.some((room) => room.id === candidateId)) {
+    candidateId = `room-${baseId}-${suffix}`;
+    suffix += 1;
+  }
+
+  return candidateId;
+}
+
+function getLiveChatRoomInviteNames(room: LiveChatRoom | undefined, rosterMembers: LiveChatRosterMember[]) {
+  if (!room || room.isDefault) return [];
+  return room.invitedMemberIds
+    .map((memberId) => rosterMembers.find((member) => member.id === memberId)?.name)
+    .filter((name): name is string => Boolean(name));
+}
+
+function liveChatMessageMentionsManager(message: LiveChatMessage, managerProfile: ManagerProfileSettings) {
+  const profileName = managerProfile.name.trim().toLowerCase();
+  const body = message.body.toLowerCase();
+  return body.includes("@cho") || (profileName ? body.includes(`@${profileName}`) : false);
+}
+
+function formatLiveChatTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function formatLiveChatComposerTimestamp(date: Date) {
+  const datePart = date.toLocaleDateString("en-CA").replace(/-/g, "/");
+  const timePart = date.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" });
+  return `${datePart} ${timePart}`;
+}
+
+function formatLiveChatHeaderStatus(message: string) {
+  const statusMessage = message.replace(/^Preview\s+/i, "");
+  return statusMessage ? `${statusMessage[0].toUpperCase()}${statusMessage.slice(1)}` : statusMessage;
+}
+
+function appendUniqueLiveChatMessage(messages: LiveChatMessage[], message: LiveChatMessage) {
+  if (messages.some((currentMessage) => currentMessage.id === message.id)) return messages;
+  return [...messages, message].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+}
+
+const liveChatFeedBottomThresholdPx = 36;
+
+function getLiveChatFeedBottomScrollTop(feed: HTMLElement) {
+  return Math.max(feed.scrollHeight - feed.clientHeight, 0);
+}
+
+function isLiveChatFeedNearBottom(feed: HTMLElement) {
+  return getLiveChatFeedBottomScrollTop(feed) - feed.scrollTop <= liveChatFeedBottomThresholdPx;
+}
+
+function scrollLiveChatFeedToBottom(feed: HTMLElement) {
+  feed.scrollTop = getLiveChatFeedBottomScrollTop(feed);
+}
+
+function LiveChatMessageLine({ message }: { message: LiveChatMessage }) {
+  const label = message.messageKind === "notice" ? "[Notice]" : message.messageKind === "system" ? "[System]" : `[${message.senderName}]`;
+  return (
+    <li className={`live-chat-message live-chat-message--${message.messageKind}`}>
+      <span className="live-chat-message-meta">
+        <span className="live-chat-message-sender">{label}</span>
+        <time className="live-chat-message-time" dateTime={message.createdAt}>{formatLiveChatTimestamp(message.createdAt)}</time>
+      </span>
+      <span className="live-chat-message-body">{message.body}</span>
+    </li>
+  );
+}
+
+function LiveChatPage() {
+  const { logout, managerAccountAccess, session, students } = useAppState();
+  const isManagerOwner = managerAccountAccess.isManagerOwner;
+  const readChatProfile = isManagerOwner ? readManagerProfile : readStaffProfile;
+  const [managerProfile, setManagerProfile] = useState(() => readChatProfile(session?.email));
+  const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>([]);
+  const [chatRooms, setChatRooms] = useState<LiveChatRoom[]>(() => liveChatDefaultRooms);
+  const [activeRoomId, setActiveRoomId] = useState(liveChatDefaultRoomId);
+  const [messageText, setMessageText] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [isLiveReady, setIsLiveReady] = useState(() => getLiveChatAvailability().available);
+  const [liveStatusMessage, setLiveStatusMessage] = useState(() => getLiveChatAvailability().message);
+  const [sendError, setSendError] = useState("");
+  const [isRosterCollapsed, setIsRosterCollapsed] = useState(false);
+  const [localPreviewMessages, setLocalPreviewMessages] = useState<LiveChatMessage[]>([]);
+  const [customRoomMessages, setCustomRoomMessages] = useState<Record<string, LiveChatMessage[]>>({});
+  const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
+  const [newRoomName, setNewRoomName] = useState("");
+  const [newRoomColor, setNewRoomColor] = useState(liveChatRoomColorOptions[0].value);
+  const [newRoomInviteIds, setNewRoomInviteIds] = useState<Set<string>>(() => new Set());
+  const [areNewRoomInvitesConfirmed, setAreNewRoomInvitesConfirmed] = useState(false);
+  const [timestampDate] = useState(() => new Date());
+  const messageFeedRef = useRef<HTMLOListElement | null>(null);
+  const roomTabsScrollRef = useRef<HTMLDivElement | null>(null);
+  const isMessageFeedPinnedToBottomRef = useRef(true);
+  const rosterMembers = useMemo(() => buildLiveChatRoster(students, managerProfile, isManagerOwner), [isManagerOwner, managerProfile, students]);
+  const profileActionPhoto = managerProfile.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png");
+  const previewMessages = isLiveReady ? liveChatPreviewMessages : [...liveChatPreviewMessages, ...localPreviewMessages];
+  const defaultRoomMessages = chatMessages.length ? chatMessages : previewMessages;
+  const mentionMessages = defaultRoomMessages.filter((message) => liveChatMessageMentionsManager(message, managerProfile));
+  const isMentionsView = activeRoomId === liveChatMentionsRoomId;
+  const activeRoom = chatRooms.find((room) => room.id === activeRoomId) ?? chatRooms[0];
+  const activeRoomMessages = activeRoom?.isDefault ? defaultRoomMessages : customRoomMessages[activeRoom?.id ?? ""] ?? [];
+  const filteredMessages = isMentionsView ? mentionMessages : activeRoomMessages;
+  const activeRoomInviteNames = getLiveChatRoomInviteNames(activeRoom, rosterMembers);
+  const activeRoomInviteSummary = activeRoomInviteNames.length ? activeRoomInviteNames.join(", ") : "No invited members yet.";
+  const activeRoomEmptyMessage = isMentionsView
+    ? "No manager mentions yet."
+    : activeRoom?.isDefault
+      ? "No live messages yet."
+      : `${activeRoom.name} is ready for ${activeRoom.invitedMemberIds.length} invited member${activeRoom.invitedMemberIds.length === 1 ? "" : "s"}.`;
+  const onlineCount = Math.max(rosterMembers.length, 1);
+  const newRoomInviteCount = newRoomInviteIds.size;
+  const newRoomInviteNoun = newRoomInviteCount === 1 ? "Invite" : "Invites";
+  const confirmInvitesButtonLabel = areNewRoomInvitesConfirmed
+    ? "Invites Confirmed"
+    : newRoomInviteCount
+      ? `Confirm ${newRoomInviteCount} ${newRoomInviteNoun}`
+      : "Confirm Invites";
+  const newRoomInviteStatus = areNewRoomInvitesConfirmed
+    ? `${newRoomInviteCount} invite${newRoomInviteCount === 1 ? "" : "s"} confirmed`
+    : newRoomInviteCount
+      ? `${newRoomInviteCount} invite${newRoomInviteCount === 1 ? "" : "s"} selected`
+      : "Select users, then confirm invites.";
+  const canCreateLiveChatRoom = Boolean(newRoomName.trim()) && (!newRoomInviteCount || areNewRoomInvitesConfirmed);
+
+  useEffect(() => {
+    setManagerProfile(readChatProfile(session?.email));
+  }, [readChatProfile, session?.email]);
+
+  useEffect(() => {
+    const availability = getLiveChatAvailability();
+    setIsLiveReady(availability.available);
+    setLiveStatusMessage(availability.message);
+
+    if (!availability.available) {
+      setChatMessages([]);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoading(true);
+    void fetchLiveChatMessages().then((result) => {
+      if (!isMounted) return;
+      if (result.status === "ok") {
+        setChatMessages(result.data);
+        return;
+      }
+      setLiveStatusMessage(result.message);
+      if (result.status === "unavailable") setIsLiveReady(false);
+    }).finally(() => {
+      if (isMounted) setIsLoading(false);
+    });
+
+    const subscription = subscribeToLiveChatInserts({
+      onMessage: (message) => setChatMessages((currentMessages) => appendUniqueLiveChatMessage(currentMessages, message)),
+      onStatus: (status, message) => {
+        if (status === "SUBSCRIBED") {
+          setIsLiveReady(true);
+          setLiveStatusMessage("Live Supabase room connected.");
+          return;
+        }
+        if (message) setLiveStatusMessage(message);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.cleanup();
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const feed = messageFeedRef.current;
+    if (!feed) return;
+    if (!isMessageFeedPinnedToBottomRef.current) return;
+
+    scrollLiveChatFeedToBottom(feed);
+    isMessageFeedPinnedToBottomRef.current = true;
+  }, [activeRoomId, filteredMessages.length]);
+
+  useLayoutEffect(() => {
+    const roomTabsScroll = roomTabsScrollRef.current;
+    if (!roomTabsScroll) return;
+    const activeRoomTab = Array.from(roomTabsScroll.querySelectorAll<HTMLButtonElement>("[data-live-chat-room-tab]"))
+      .find((tabButton) => tabButton.dataset.roomId === activeRoomId);
+    if (activeRoomTab && typeof activeRoomTab.scrollIntoView === "function") {
+      activeRoomTab.scrollIntoView({ block: "nearest", inline: "center" });
+    }
+  }, [activeRoomId, chatRooms.length]);
+
+  const handleMessageFeedScroll = () => {
+    const feed = messageFeedRef.current;
+    if (!feed) return;
+    isMessageFeedPinnedToBottomRef.current = isLiveChatFeedNearBottom(feed);
+  };
+
+  const openCreateRoomDialog = () => {
+    setNewRoomName("");
+    setNewRoomColor(liveChatRoomColorOptions[0].value);
+    setNewRoomInviteIds(new Set());
+    setAreNewRoomInvitesConfirmed(false);
+    setIsCreateRoomOpen(true);
+  };
+
+  const toggleNewRoomInvite = (memberId: string) => {
+    setAreNewRoomInvitesConfirmed(false);
+    setNewRoomInviteIds((currentInviteIds) => {
+      const nextInviteIds = new Set(currentInviteIds);
+      if (nextInviteIds.has(memberId)) {
+        nextInviteIds.delete(memberId);
+      } else {
+        nextInviteIds.add(memberId);
+      }
+      return nextInviteIds;
+    });
+  };
+
+  const createLiveChatRoom = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedRoomName = newRoomName.trim();
+    if (!trimmedRoomName) return;
+    if (newRoomInviteIds.size && !areNewRoomInvitesConfirmed) return;
+
+    const newRoom: LiveChatRoom = {
+      id: makeLiveChatRoomId(trimmedRoomName, chatRooms),
+      name: trimmedRoomName,
+      color: newRoomColor,
+      invitedMemberIds: Array.from(newRoomInviteIds)
+    };
+
+    setChatRooms((currentRooms) => [...currentRooms, newRoom]);
+    setCustomRoomMessages((currentMessages) => ({ ...currentMessages, [newRoom.id]: currentMessages[newRoom.id] ?? [] }));
+    setActiveRoomId(newRoom.id);
+    setIsCreateRoomOpen(false);
+    setLiveStatusMessage(`${newRoom.name} created with ${newRoom.invitedMemberIds.length} invited member${newRoom.invitedMemberIds.length === 1 ? "" : "s"}.`);
+  };
+
+  const sendMessage = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSendError("");
+
+    const validation = validateLiveChatBody(messageText);
+    if (!validation.ok) {
+      setSendError(validation.message);
+      return;
+    }
+
+    const targetRoom = isMentionsView ? chatRooms[0] : activeRoom;
+
+    if (targetRoom && !targetRoom.isDefault) {
+      const createdAt = new Date().toISOString();
+      const senderName = managerProfile.name.trim() || (isManagerOwner ? "Cho's Manager" : "Cho's Staff");
+      const roomMessage: LiveChatMessage = {
+        id: `custom-room-${targetRoom.id}-${createdAt}-${Math.random().toString(36).slice(2)}`,
+        roomKey: targetRoom.id,
+        senderUserId: null,
+        senderName,
+        senderRole: "staff",
+        senderAvatarPath: managerProfile.photoDataUrl ? null : "assets/CheetahProfilePic/Cheetah.png",
+        messageKind: "user",
+        body: validation.body,
+        createdAt
+      };
+
+      setCustomRoomMessages((currentMessages) => ({
+        ...currentMessages,
+        [targetRoom.id]: appendUniqueLiveChatMessage(currentMessages[targetRoom.id] ?? [], roomMessage)
+      }));
+      setLiveStatusMessage(`${targetRoom.name} message added locally.`);
+      setMessageText("");
+      return;
+    }
+
+    if (!isLiveReady) {
+      const createdAt = new Date().toISOString();
+      const senderName = managerProfile.name.trim() || (isManagerOwner ? "Cho's Manager" : "Cho's Staff");
+      const previewMessage: LiveChatMessage = {
+        id: `preview-local-${createdAt}-${Math.random().toString(36).slice(2)}`,
+        roomKey: liveChatRoomKey,
+        senderUserId: null,
+        senderName,
+        senderRole: "staff",
+        senderAvatarPath: managerProfile.photoDataUrl ? null : "assets/CheetahProfilePic/Cheetah.png",
+        messageKind: "user",
+        body: validation.body,
+        createdAt
+      };
+
+      setLocalPreviewMessages((currentMessages) => appendUniqueLiveChatMessage(currentMessages, previewMessage));
+      setLiveStatusMessage("Test message added locally. Supabase sign-in required for live delivery.");
+      setMessageText("");
+      return;
+    }
+
+    setIsSending(true);
+    const result = await sendLiveChatMessage({
+      body: validation.body,
+      senderAvatarPath: managerProfile.photoDataUrl ? undefined : "assets/CheetahProfilePic/Cheetah.png"
+    });
+    setIsSending(false);
+
+    if (result.status !== "ok") {
+      setSendError(result.message);
+      if (result.status === "unavailable") setIsLiveReady(false);
+      return;
+    }
+
+    setChatMessages((currentMessages) => appendUniqueLiveChatMessage(currentMessages, result.data));
+    setMessageText("");
+  };
+
+  return (
+    <section className="manager-launcher-page live-chat-page" aria-label="Live chat room page">
+      <main className="manager-launcher-main live-chat-main">
+        <header className="manager-launcher-topbar manager-page-title-bar" aria-label="Live chat page header">
+          <ManagerPageTitleFrame title="Live Chats" className="manager-page-title-frame--manager-panel" />
+          <nav className="manager-home-top-actions" aria-label="Live chat quick actions">
+            <Link className="manager-home-top-action manager-launcher-profile-link" to="/" aria-label="Profile">
+              <img className="manager-home-profile-action-photo" src={profileActionPhoto} alt="" draggable="false" />
+              <span className="manager-home-top-action-label">Profile</span>
+            </Link>
+            <button className="manager-home-top-action manager-home-logout-button" type="button" aria-label="Log Out" onClick={logout}>
+              <img className="manager-home-logout-icon" src={managerLogoutIcon} alt="" draggable="false" />
+              <span className="manager-home-top-action-label">Log Out</span>
+            </button>
+          </nav>
+        </header>
+
+        <div className={`manager-launcher-body live-chat-shell${isRosterCollapsed ? " is-sidebar-collapsed" : ""}`} role="group" aria-label="Live chat room frame">
+          <aside
+            className="manager-launcher-grid manager-launcher-sidebar live-chat-roster"
+            id="live-chat-roster-members"
+            aria-label="Live chat members"
+            data-orientation="vertical"
+            hidden={isRosterCollapsed}
+          >
+            {rosterMembers.map((member) => (
+              <article className="manager-launcher-item live-chat-roster-member" key={member.id} aria-label={`${member.name}, ${member.detail}`}>
+                <span className="manager-launcher-graphic live-chat-roster-avatar">
+                  <img className="manager-launcher-image live-chat-roster-image" src={member.avatarSrc} alt="" draggable="false" />
+                </span>
+                <span className="manager-launcher-label live-chat-roster-label">{member.name}</span>
+              </article>
+            ))}
+          </aside>
+        <button
+          aria-controls="live-chat-roster-members"
+          aria-expanded={!isRosterCollapsed}
+          aria-label={isRosterCollapsed ? "Expand live chat member list" : "Collapse live chat member list"}
+          className="manager-launcher-rail-toggle live-chat-roster-toggle"
+          onClick={() => setIsRosterCollapsed((current) => !current)}
+          type="button"
+        >
+          <span className="manager-launcher-rail-toggle-bar" aria-hidden="true" />
+        </button>
+
+        <section className="manager-launcher-workspace live-chat-room-panel" aria-label="Live chat room">
+          <div className="live-chat-room-head" aria-label="Live chat room header">
+            <div className="live-chat-heading-block">
+              <div className="live-chat-heading-row">
+                <h2>Live Chat Rooms</h2>
+                <div className={`live-chat-online-count${isLiveReady ? " is-live" : ""}`} aria-label="Live chat online count">
+                  <span aria-hidden="true" />
+                  <strong>{onlineCount.toLocaleString()} Online</strong>
+                </div>
+              </div>
+              <p className="live-chat-status-copy" aria-live="polite">{isLoading ? "Loading live messages..." : formatLiveChatHeaderStatus(liveStatusMessage)}</p>
+            </div>
+            <div className="live-chat-controls">
+              <div className="live-chat-tabs live-chat-room-tabs" role="tablist" aria-label="Live chat rooms">
+                <div className="live-chat-room-tab-scroll" ref={roomTabsScrollRef}>
+                  {chatRooms.map((room) => (
+                    <button
+                      className="live-chat-room-tab"
+                      key={room.id}
+                      data-live-chat-room-tab
+                      data-room-id={room.id}
+                      role="tab"
+                      type="button"
+                      aria-selected={activeRoomId === room.id}
+                      style={{ "--live-chat-room-tab-color": room.color } as CSSProperties}
+                      onClick={() => setActiveRoomId(room.id)}
+                    >
+                      {room.name}
+                    </button>
+                  ))}
+                  <button className="live-chat-create-room-button" type="button" onClick={openCreateRoomDialog}>
+                    <Plus size={15} />
+                    <span>Create Room</span>
+                  </button>
+                  <button
+                    className="live-chat-room-tab live-chat-room-tab--mentions"
+                    data-live-chat-room-tab
+                    data-room-id={liveChatMentionsRoomId}
+                    role="tab"
+                    type="button"
+                    aria-selected={isMentionsView}
+                    style={{ "--live-chat-room-tab-color": "#8a63f2" } as CSSProperties}
+                    onClick={() => setActiveRoomId(liveChatMentionsRoomId)}
+                  >
+                    Mentions <strong>{mentionMessages.length}</strong>
+                  </button>
+                </div>
+              </div>
+            </div>
+            {!isMentionsView && activeRoom && !activeRoom.isDefault && (
+              <p className="live-chat-room-invite-summary" aria-label="Live chat room invite summary">
+                <Users size={14} aria-hidden="true" />
+                <span>{activeRoomInviteSummary}</span>
+              </p>
+            )}
+          </div>
+
+          <ol className="live-chat-feed" aria-label="Live chat messages" ref={messageFeedRef} onScroll={handleMessageFeedScroll}>
+            {filteredMessages.length ? filteredMessages.map((message) => <LiveChatMessageLine key={message.id} message={message} />) : (
+              <li className="live-chat-empty">
+                <MessagesSquare size={24} />
+                <span>{activeRoomEmptyMessage}</span>
+              </li>
+            )}
+          </ol>
+
+          <form className="live-chat-composer" aria-label="Live chat composer" onSubmit={sendMessage}>
+            <button className="live-chat-emoji-button" type="button" aria-label="Emoji menu" disabled>
+              <Smile size={24} />
+            </button>
+            <label className="sr-only" htmlFor="live-chat-message-input">Enter message.</label>
+            <div className="live-chat-input-shell">
+              <input
+                id="live-chat-message-input"
+                value={messageText}
+                onChange={(event) => setMessageText(event.target.value)}
+                maxLength={liveChatMessageMaxLength}
+                placeholder="Enter message."
+                disabled={isSending}
+              />
+            </div>
+            <button className="live-chat-send-button" type="submit" disabled={isSending}>
+              <Send size={22} />
+              <span>{isSending ? "Sending" : "Send"}</span>
+            </button>
+          </form>
+          {sendError && <p className="live-chat-error" role="alert">{sendError}</p>}
+          <div className="live-chat-footer-line">
+            <p className="live-chat-guidelines">Be respectful and follow <span>community guidelines</span>.</p>
+            <span className="live-chat-composer-time live-chat-composer-time--footer" aria-label={`Current composer time ${formatLiveChatComposerTimestamp(timestampDate)}`}>
+              {formatLiveChatComposerTimestamp(timestampDate)}
+            </span>
+          </div>
+        </section>
+        {isCreateRoomOpen && (
+          <div
+            className="manager-compose-backdrop live-chat-create-room-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setIsCreateRoomOpen(false);
+            }}
+          >
+            <form
+              className="manager-compose-modal live-chat-create-room-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Create chat room"
+              onSubmit={createLiveChatRoom}
+            >
+              <header className="manager-compose-head">
+                <div>
+                  <p>Live chat rooms</p>
+                  <h2 id="live-chat-create-room-title">Create Room</h2>
+                </div>
+                <button className="manager-compose-close" type="button" aria-label="Close create room" onClick={() => setIsCreateRoomOpen(false)}>
+                  <X size={20} />
+                </button>
+              </header>
+
+              <div className="live-chat-create-room-layout">
+                <section className="live-chat-create-room-settings" aria-label="Room settings">
+                  <label className="manager-compose-field live-chat-create-room-name">
+                    <span>Room name</span>
+                    <input
+                      aria-label="Room name"
+                      value={newRoomName}
+                      onChange={(event) => setNewRoomName(event.target.value)}
+                      placeholder="Leadership Team"
+                      maxLength={42}
+                    />
+                  </label>
+
+                  <section className="live-chat-room-color-panel" aria-label="Room color">
+                    <div className="live-chat-room-modal-section-head">
+                      <Palette size={16} aria-hidden="true" />
+                      <span>Room Tab Color</span>
+                    </div>
+                    <div className="live-chat-room-color-options">
+                      {liveChatRoomColorOptions.map((option) => (
+                        <label className={`live-chat-room-color-option${newRoomColor === option.value ? " is-selected" : ""}`} key={option.name}>
+                          <input
+                            aria-label={`Room color ${option.name}`}
+                            type="radio"
+                            name="live-chat-room-color"
+                            checked={newRoomColor === option.value}
+                            onChange={() => setNewRoomColor(option.value)}
+                          />
+                          <span style={{ "--live-chat-room-tab-color": option.value } as CSSProperties} aria-hidden="true" />
+                          <strong>{option.name}</strong>
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+                </section>
+
+                <section className="live-chat-room-invite-panel" aria-label="Invite users">
+                  <header className="live-chat-room-modal-section-head">
+                    <UserPlus size={16} aria-hidden="true" />
+                    <span>Invite Users</span>
+                    <strong aria-label="Live chat invite count">{newRoomInviteCount} invited</strong>
+                  </header>
+                  <div className="live-chat-room-invite-list">
+                    {rosterMembers.map((member) => (
+                      <label className={`live-chat-room-invite-option${newRoomInviteIds.has(member.id) ? " is-selected" : ""}`} key={member.id}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Invite ${member.name}`}
+                          checked={newRoomInviteIds.has(member.id)}
+                          onChange={() => toggleNewRoomInvite(member.id)}
+                        />
+                        <img src={member.avatarSrc} alt="" draggable="false" />
+                        <span>
+                          <strong>{member.name}</strong>
+                          <small>{member.detail}</small>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <footer className={`live-chat-room-invite-confirm${areNewRoomInvitesConfirmed ? " is-confirmed" : ""}`}>
+                    <p aria-live="polite">{newRoomInviteStatus}</p>
+                    <button
+                      className="live-chat-confirm-invites-button"
+                      type="button"
+                      aria-pressed={areNewRoomInvitesConfirmed}
+                      disabled={!newRoomInviteCount}
+                      onClick={() => setAreNewRoomInvitesConfirmed(true)}
+                    >
+                      <CheckCircle2 size={17} aria-hidden="true" />
+                      <span>{confirmInvitesButtonLabel}</span>
+                    </button>
+                  </footer>
+                </section>
+              </div>
+
+              <footer className="manager-compose-actions">
+                <button type="button" className="manager-compose-secondary" onClick={() => setIsCreateRoomOpen(false)}>Cancel</button>
+                <button type="submit" className="manager-compose-submit" disabled={!canCreateLiveChatRoom}>
+                  <FolderPlus size={18} />
+                  <span>Create Room</span>
+                </button>
+              </footer>
+            </form>
+          </div>
+        )}
+        </div>
+      </main>
+    </section>
+  );
 }
 
 function composeRecipientRoleLabel(role: ManagerComposeRecipientRole) {
@@ -6521,12 +7303,16 @@ function ManagerHomePage() {
 
   return (
     <section className="manager-home-page" aria-label={isManagerOwner ? "Manager home page" : "Staff home page"}>
-      <header className="manager-home-profile-title manager-page-title-bar" aria-label="Profile page header">
+      <header className="manager-home-profile-title manager-home-profile-title--with-live-chat manager-page-title-bar" aria-label="Profile page header">
         <ManagerPageTitleFrame title={profileTitle} className="manager-home-profile-title-frame" />
         <nav className="manager-home-top-actions" aria-label="Profile quick actions">
           <Link className="manager-home-top-action manager-home-panel-link" to="/manager" aria-label={panelLabel}>
             <img className="manager-home-panel-icon" src={managerPageIcon} alt="" draggable="false" />
             <span className="manager-home-top-action-label">{panelLabel}</span>
+          </Link>
+          <Link className="manager-home-top-action manager-home-live-chat-link" to="/live-chat" aria-label="Live Chat">
+            <img className="manager-home-live-chat-icon" src={messagesLauncherIcon} alt="" draggable="false" />
+            <span className="manager-home-top-action-label">Live Chat</span>
           </Link>
           <button className="manager-home-top-action manager-home-logout-button" type="button" aria-label="Log Out" onClick={logout}>
             <img className="manager-home-logout-icon" src={managerLogoutIcon} alt="" draggable="false" />
@@ -11719,6 +12505,7 @@ export function OperationsApp() {
         <Route path="/classes" element={<StaffOnlyRoute><ClassesPage /></StaffOnlyRoute>} />
         <Route path="/study-guide" element={<StaffOnlyRoute><ManagerStudyGuidePage /></StaffOnlyRoute>} />
         <Route path="/schedule" element={<StaffOnlyRoute><SchedulePage /></StaffOnlyRoute>} />
+        <Route path="/live-chat" element={<StaffOnlyRoute><LiveChatPage /></StaffOnlyRoute>} />
         <Route path="/messages" element={<StaffOnlyRoute><MessagesPage /></StaffOnlyRoute>} />
         <Route path="/check-ins" element={<StaffOrStudentRoute><CheckInsPage /></StaffOrStudentRoute>} />
         <Route path="/events" element={<StaffOnlyRoute><EventsPage /></StaffOnlyRoute>} />
