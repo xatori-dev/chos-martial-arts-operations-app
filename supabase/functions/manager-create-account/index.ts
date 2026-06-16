@@ -37,6 +37,7 @@ const managerAccessKeys = new Set([
   "reports"
 ]);
 const accountAuthDomain = "accounts.chosmartialarts.app";
+const passwordPolicyMessage = "Password must be at least 12 characters and include uppercase, lowercase, a number, and a symbol.";
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -67,6 +68,16 @@ function isValidEmail(email: string) {
 function cleanAccess(role: AccountRole, access: unknown) {
   if (role !== "staff" || !Array.isArray(access)) return [];
   return access.filter((key): key is string => typeof key === "string" && managerAccessKeys.has(key));
+}
+
+function isStrongPassword(password: string) {
+  return (
+    password.length >= 12 &&
+    /[a-z]/.test(password) &&
+    /[A-Z]/.test(password) &&
+    /\d/.test(password) &&
+    /[^A-Za-z0-9]/.test(password)
+  );
 }
 
 Deno.serve(async (req: Request) => {
@@ -132,7 +143,7 @@ Deno.serve(async (req: Request) => {
   if (!displayName) return jsonResponse({ error: "Display name is required." }, 400);
   if (!username) return jsonResponse({ error: "Username is required." }, 400);
   if (username === "manager123") return jsonResponse({ error: "Manager123 is reserved for the owner account." }, 409);
-  if (!password || password.length < 8) return jsonResponse({ error: "Password must be at least 8 characters." }, 400);
+  if (!isStrongPassword(password)) return jsonResponse({ error: passwordPolicyMessage }, 400);
   if (role !== "staff" && role !== "student" && role !== "guardian") return jsonResponse({ error: "Invalid account role." }, 400);
   if (status !== "active" && status !== "inactive") return jsonResponse({ error: "Invalid account status." }, 400);
   if (!contactEmail || !isValidEmail(contactEmail)) return jsonResponse({ error: "Valid contact email is required." }, 400);

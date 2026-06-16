@@ -4211,6 +4211,22 @@ describe("buildOperationsBackupSnapshot", () => {
         ]
       })
     ))).toThrow(/custom login usernames cannot collide with built-in prototype logins/i);
+
+    expect(() => parseOperationsBackupSnapshot(JSON.stringify(
+      makeBackupPayload({
+        managedAccounts: [
+          {
+            id: "managed-dev-collision",
+            displayName: "Developer Collision",
+            username: "Dev123",
+            role: "staff",
+            status: "active",
+            access: ["dashboard"],
+            createdAt: "2026-06-01T10:00:00.000Z"
+          }
+        ]
+      })
+    ))).toThrow(/custom login usernames cannot collide with built-in prototype logins/i);
   });
 
   it("exports custom login accounts without duplicate or prototype usernames", () => {
@@ -4676,6 +4692,7 @@ describe("buildOperationsBackupSnapshot", () => {
           { email: "jordan.staff", role: "guardian" },
           { email: "kai.child", role: "guardian" },
           { email: "manager123@chos.prototype", role: "guardian" },
+          { email: "dev123@chos.prototype", role: "guardian" },
           { email: "missing.login@example.com", role: "staff" }
         ]
       }),
@@ -4686,13 +4703,14 @@ describe("buildOperationsBackupSnapshot", () => {
       { email: "family@example.com", role: "guardian" },
       { email: "jordan.staff", role: "staff" },
       { email: "kai.child", role: "student" },
-      { email: "manager123@chos.prototype", role: "staff" }
+      { email: "manager123@chos.prototype", role: "staff" },
+      { email: "dev123@chos.prototype", role: "staff" }
     ]);
-    expect(snapshot.sections.find((section) => section.id === "accountRoles")).toEqual(expect.objectContaining({ count: 4 }));
+    expect(snapshot.sections.find((section) => section.id === "accountRoles")).toEqual(expect.objectContaining({ count: 5 }));
     expect(JSON.stringify(snapshot.data)).not.toContain("FamilyPass123");
     expect(JSON.stringify(snapshot.data)).not.toContain("StaffSecret123");
     expect(JSON.stringify(snapshot.data)).not.toContain("ChildSecret123");
-    expect(parseOperationsBackupSnapshot(JSON.stringify(snapshot)).data.accountRoles).toHaveLength(4);
+    expect(parseOperationsBackupSnapshot(JSON.stringify(snapshot)).data.accountRoles).toHaveLength(5);
   });
 
   it("rejects malformed account role records", () => {
@@ -4725,6 +4743,14 @@ describe("buildOperationsBackupSnapshot", () => {
       makeBackupPayload({
         accountRoles: [
           { email: "student123@chos.prototype", role: "staff" }
+        ]
+      })
+    ))).toThrow(/built-in prototype accountRoles must match their reserved roles/i);
+
+    expect(() => parseOperationsBackupSnapshot(JSON.stringify(
+      makeBackupPayload({
+        accountRoles: [
+          { email: "dev123@chos.prototype", role: "guardian" }
         ]
       })
     ))).toThrow(/built-in prototype accountRoles must match their reserved roles/i);

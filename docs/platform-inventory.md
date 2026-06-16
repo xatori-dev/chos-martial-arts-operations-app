@@ -1,6 +1,6 @@
 # Platform Inventory
 
-Last updated: 2026-06-12
+Last updated: 2026-06-15
 
 ## GitHub
 
@@ -57,7 +57,11 @@ No raw secret values belong in this repository or in chat. Record item names and
 | Staging | `chos-martial-arts-operations-app-staging` / `zfuwbbepsnmmlpgfkmhz` | Active in Xatori Dev, us-east-2 |
 | Production | `chos-martial-arts-operations-app-production` | Reserved name only |
 
-Staging has Supabase Auth profiles, RLS, `account_creation_audit`, and the `manager-create-account` Edge Function. The seeded owner login is `Manager123` with password `123456`; the internal Auth email is `manager123@accounts.chosmartialarts.app`. Production remains uncreated until staging is accepted.
+Staging has Supabase Auth profiles, RLS, `account_creation_audit`, and the `manager-create-account` Edge Function. The seeded owner login is `Manager123`; the internal Auth email is `manager123@accounts.chosmartialarts.app`. The owner password must be generated, meet the Supabase setup policy, and live only in the approved secret store. Rotate any legacy seed password before real user access.
+
+The Xatori Dev Supabase organization is currently on the Free plan. The staging Security Advisor still reports `auth_leaked_password_protection` because Supabase leaked-password protection requires Pro or higher. Until the plan is upgraded and the Auth setting is enabled, the repo and Edge Function enforce the local 12-character mixed password policy for seeded and manager-created accounts.
+
+Production remains uncreated until staging is accepted.
 
 ## Twilio
 

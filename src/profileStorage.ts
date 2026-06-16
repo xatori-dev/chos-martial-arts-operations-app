@@ -1,5 +1,32 @@
 import { readStoredAppTheme, type AppThemeMode } from "./theme";
 import type { ChildAccount, StudentRecord } from "./types";
+import { isPrototypeDeveloperEmail, prototypeDeveloperLogin } from "./utils";
+
+export const landingPagePreferences = [
+  "profile",
+  "live-chat",
+  "manager-panel",
+  "dashboard",
+  "messages",
+  "students",
+  "classes",
+  "schedule",
+  "check-ins",
+  "events",
+  "merchandise",
+  "reports",
+  "videos",
+  "study-guide",
+  "student-panel",
+  "parent-dashboard",
+  "parent-classes",
+  "parent-study",
+  "parent-test",
+  "parent-messages",
+  "parent-notifications"
+] as const;
+
+export type LandingPagePreference = typeof landingPagePreferences[number];
 
 export type ProfileSettings = {
   name: string;
@@ -8,19 +35,28 @@ export type ProfileSettings = {
   phone: string;
   updates: boolean;
   theme: AppThemeMode;
+  landingPage: LandingPagePreference;
   photoDataUrl?: string;
   passwordUpdatedAt?: string;
 };
 
 export const legacyProfileStorageKey = "chos.profile.v1";
 
-export function profileStorageKey(scope: "manager" | "staff" | "student", sessionEmail?: string) {
+export type ProfileStorageScope = "manager" | "staff" | "student" | "guardian";
+
+export function profileStorageKey(scope: ProfileStorageScope, sessionEmail?: string) {
   const keyEmail = (sessionEmail ?? `${scope}@chos.prototype`)
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-|-$/g, "");
   return `chos.profile.${scope}.${keyEmail || "account"}.v1`;
+}
+
+function normalizeLandingPage(value: unknown, fallback: LandingPagePreference) {
+  return typeof value === "string" && landingPagePreferences.includes(value as LandingPagePreference)
+    ? value as LandingPagePreference
+    : fallback;
 }
 
 export function normalizeStoredProfile(saved: string | null, fallback: ProfileSettings) {
@@ -34,6 +70,7 @@ export function normalizeStoredProfile(saved: string | null, fallback: ProfileSe
     phone: parsed.phone?.trim() || fallback.phone,
     updates: parsed.updates ?? fallback.updates,
     theme: parsed.theme === "light" || parsed.theme === "dark" ? parsed.theme : fallback.theme,
+    landingPage: normalizeLandingPage(parsed.landingPage, fallback.landingPage),
     photoDataUrl,
     passwordUpdatedAt: parsed.passwordUpdatedAt
   };
@@ -63,6 +100,18 @@ export function writeProfileStorage(key: string, profile: ProfileSettings) {
 
 export function fallbackManagerProfile(sessionEmail?: string): ProfileSettings {
   const email = sessionEmail ?? "team@chos.prototype";
+  if (isPrototypeDeveloperEmail(email)) {
+    return {
+      name: "Developer",
+      username: prototypeDeveloperLogin.username,
+      email,
+      phone: "(262) 555-0100",
+      updates: true,
+      theme: readStoredAppTheme(),
+      landingPage: "live-chat"
+    };
+  }
+
   const username = email.split("@")[0]?.replace(/[^a-z0-9._-]/gi, "") || "chos-manager";
   return {
     name: "Cho's Manager",
@@ -70,7 +119,8 @@ export function fallbackManagerProfile(sessionEmail?: string): ProfileSettings {
     email,
     phone: "(262) 555-0100",
     updates: true,
-    theme: readStoredAppTheme()
+    theme: readStoredAppTheme(),
+    landingPage: "live-chat"
   };
 }
 
@@ -83,7 +133,8 @@ export function fallbackStaffProfile(sessionEmail?: string): ProfileSettings {
     email,
     phone: "(262) 555-0100",
     updates: true,
-    theme: readStoredAppTheme()
+    theme: readStoredAppTheme(),
+    landingPage: "live-chat"
   };
 }
 
@@ -104,13 +155,31 @@ export function fallbackStudentProfile(sessionEmail?: string, student?: StudentR
     email,
     phone: student?.phone ?? "(262) 555-0100",
     updates: true,
-    theme: readStoredAppTheme()
+    theme: readStoredAppTheme(),
+    landingPage: "profile"
+  };
+}
+
+export function fallbackGuardianProfile(sessionEmail?: string): ProfileSettings {
+  const email = sessionEmail ?? "parent@chos.prototype";
+  const username = email.split("@")[0]?.replace(/[^a-z0-9._-]/gi, "") || "chos-parent";
+  return {
+    name: "Family Profile",
+    username,
+    email,
+    phone: "(262) 555-0100",
+    updates: true,
+    theme: readStoredAppTheme(),
+    landingPage: "profile"
   };
 }
 
 export function readManagerProfile(sessionEmail?: string): ProfileSettings {
   const fallback = fallbackManagerProfile(sessionEmail);
-  return readProfileStorage(profileStorageKey("manager", sessionEmail), fallback) ?? readProfileStorage(legacyProfileStorageKey, fallback) ?? fallback;
+  const scopedProfile = readProfileStorage(profileStorageKey("manager", sessionEmail), fallback);
+  if (scopedProfile) return scopedProfile;
+  if (isPrototypeDeveloperEmail(sessionEmail)) return fallback;
+  return readProfileStorage(legacyProfileStorageKey, fallback) ?? fallback;
 }
 
 export function writeManagerProfile(profile: ProfileSettings, sessionEmail?: string) {
@@ -139,4 +208,13 @@ export function readStudentProfile(sessionEmail?: string, student?: StudentRecor
 
 export function writeStudentProfile(profile: ProfileSettings, sessionEmail?: string) {
   writeProfileStorage(profileStorageKey("student", sessionEmail ?? profile.email), profile);
+}
+
+export function readGuardianProfile(sessionEmail?: string): ProfileSettings {
+  const fallback = fallbackGuardianProfile(sessionEmail);
+  return readProfileStorage(profileStorageKey("guardian", sessionEmail), fallback) ?? fallback;
+}
+
+export function writeGuardianProfile(profile: ProfileSettings, sessionEmail?: string) {
+  writeProfileStorage(profileStorageKey("guardian", sessionEmail ?? profile.email), profile);
 }

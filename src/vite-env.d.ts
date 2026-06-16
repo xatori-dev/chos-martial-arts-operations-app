@@ -5,4 +5,5 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_PUBLISHABLE_KEY?: string;
   readonly VITE_SUPABASE_ANON_KEY?: string;
   readonly VITE_ENABLE_SUPABASE_IN_TESTS?: string;
+  readonly VITE_ENABLE_DEVELOPER_ACCOUNT?: string;
 }

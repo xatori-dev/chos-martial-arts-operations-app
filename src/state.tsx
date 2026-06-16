@@ -41,7 +41,7 @@ import type {
   TrainingVideo,
   TrainingVideoFolder
 } from "./types";
-import { applyCoupon, calculateTotals, createOrder, estimateSmsSegments, hasSmsOptOutLanguage, prototypeManagerLogin, prototypeParentLogin, prototypeStudentLogin } from "./utils";
+import { applyCoupon, calculateTotals, createOrder, estimateSmsSegments, hasSmsOptOutLanguage, isPrototypeDeveloperEmail, isPrototypeManagerOwnerEmail, prototypeDeveloperLogin, prototypeManagerLogin, prototypeParentLogin, prototypeStudentLogin } from "./utils";
 
 const keys = {
   cart: "chos.cart.v1",
@@ -793,6 +793,7 @@ type RegisteredAccountInput = {
 
 type ManagerAccountAccess = {
   isManagerOwner: boolean;
+  isDeveloper: boolean;
   canCreateAccounts: boolean;
   canGrantCreateAccess: boolean;
   allowedTools: ManagerAccessKey[];
@@ -1124,7 +1125,7 @@ function scopedMessageNotificationSettingsKey(email?: string) {
 }
 
 function isPrototypeManagerNotificationSession(email?: string) {
-  return email?.trim().toLowerCase() === prototypeManagerLogin.email.toLowerCase();
+  return isPrototypeManagerOwnerEmail(email);
 }
 
 function cleanNotificationString(value: unknown) {
@@ -1201,6 +1202,7 @@ function validatePrototypeSession(session: AccountSession | undefined) {
   if (!session?.email) return undefined;
   const normalizedEmail = session.email.toLowerCase();
   if (normalizedEmail === prototypeManagerLogin.email.toLowerCase()) return session;
+  if (isPrototypeDeveloperEmail(normalizedEmail)) return session;
   if (normalizedEmail === prototypeStudentLogin.email.toLowerCase()) return session;
   if (normalizedEmail === prototypeParentLogin.email.toLowerCase()) return session;
   const accounts = readStorage<AccountRecord[]>(keys.accounts, []);
@@ -1231,6 +1233,7 @@ function readPrototypeSession() {
 function inferBuiltInPrototypeAccountRole(email: string): AccountRole | undefined {
   const normalizedEmail = email.toLowerCase();
   if (normalizedEmail === prototypeManagerLogin.email.toLowerCase()) return "staff";
+  if (isPrototypeDeveloperEmail(normalizedEmail)) return "staff";
   if (normalizedEmail === prototypeStudentLogin.email.toLowerCase()) return "student";
   if (normalizedEmail === prototypeParentLogin.email.toLowerCase()) return "guardian";
   return undefined;
@@ -1309,7 +1312,7 @@ function normalizeRegisteredAccountRole(role?: AccountRole): AccountRole {
 
 function isPrototypeLoginUsername(username: string) {
   const normalizedUsername = username.trim().toLowerCase();
-  return [prototypeManagerLogin.username, prototypeStudentLogin.username, prototypeParentLogin.username].some((prototypeUsername) => prototypeUsername.toLowerCase() === normalizedUsername);
+  return [prototypeManagerLogin.username, prototypeDeveloperLogin.username, prototypeStudentLogin.username, prototypeParentLogin.username].some((prototypeUsername) => prototypeUsername.toLowerCase() === normalizedUsername);
 }
 
 function isChildUsernameUnavailable(username: string, childAccounts: readonly ChildAccount[], managedAccounts: readonly ManagedAccount[], excludeChildId?: string) {
@@ -2637,7 +2640,8 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     return inferBuiltInPrototypeAccountRole(session.email) ?? currentManagedAccount?.role ?? registeredRole ?? childRole ?? accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role ?? inferPrototypeAccountRole(session.email);
   }, [accountRoles, currentChildAccount, currentManagedAccount, currentRegisteredAccount, session]);
   const managerAccountAccess = useMemo<ManagerAccountAccess>(() => {
-    const isManagerOwner = session?.email.toLowerCase() === prototypeManagerLogin.email.toLowerCase();
+    const isDeveloper = isPrototypeDeveloperEmail(session?.email);
+    const isManagerOwner = isPrototypeManagerOwnerEmail(session?.email);
     const normalizedEmail = session?.email.toLowerCase();
     const storedRole = normalizedEmail ? accountRoles.find((record) => record.email.toLowerCase() === normalizedEmail)?.role : undefined;
     const builtInRole = normalizedEmail ? inferBuiltInPrototypeAccountRole(normalizedEmail) : undefined;
@@ -2659,6 +2663,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
     return {
       isManagerOwner,
+      isDeveloper,
       canCreateAccounts: isManagerOwner || allowedTools.includes("create"),
       canGrantCreateAccess: isManagerOwner,
       allowedTools

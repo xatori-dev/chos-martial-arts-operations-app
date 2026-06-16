@@ -99,6 +99,21 @@ function renderLoggedInApp(path = "/", role: "staff" | "student" | "guardian" = 
   );
 }
 
+function renderLoggedInDeveloperApp(path = "/") {
+  const email = "dev123@chos.prototype";
+  vi.stubEnv("VITE_ENABLE_DEVELOPER_ACCOUNT", "true");
+  seedActiveSession({ email, remembered: true, createdAt: "2026-05-10T00:00:00.000Z" });
+  window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email, role: "guardian" }]));
+
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <AppStateProvider>
+        <App />
+      </AppStateProvider>
+    </MemoryRouter>
+  );
+}
+
 type ChoServiceWorkerTestEvent = {
   data?: {
     json?: () => unknown;
@@ -176,7 +191,7 @@ function renderManagedStudentApp(path: string, account: Record<string, unknown>,
   );
 }
 
-function scopedProfileKey(scope: "manager" | "staff" | "student", email: string) {
+function scopedProfileKey(scope: "manager" | "staff" | "student" | "guardian", email: string) {
   const keyEmail = email
     .trim()
     .toLowerCase()
@@ -2305,6 +2320,10 @@ describe("login landing", () => {
     stubMatchMedia();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("renders the centered portrait blend image on the login screen", () => {
     const { container } = renderLoggedOutApp("/");
 
@@ -2372,7 +2391,7 @@ describe("login landing", () => {
     expect(screen.queryByRole("dialog", { name: "Login failed" })).not.toBeInTheDocument();
   });
 
-  it("signs the prototype manager credential directly into staff mode without post-login popups", async () => {
+  it("signs the prototype manager credential directly into staff mode on Live Chat without post-login popups", async () => {
     const { container } = renderLoggedOutApp("/");
 
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "Manager123" } });
@@ -2380,7 +2399,8 @@ describe("login landing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     expect(container.querySelector(".authenticated-app-shell")).toHaveClass("is-login-transitioning");
-    expect(await screen.findByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Live chat room page")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Profile page header")).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Account type" })).not.toBeInTheDocument();
     expect(screen.queryByText("Signed in to Cho's manager prototype.")).not.toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "manager123@chos.prototype", remembered: true });
@@ -2491,7 +2511,7 @@ describe("login landing", () => {
     expect(within(createAccountDialog).getByRole("button", { name: "Back to account types" })).toBeInTheDocument();
   });
 
-  it("creates self-service staff accounts with Staff Profile access and no Create tab", async () => {
+  it("creates self-service staff accounts with Live Chat first and no Create tab", async () => {
     const staffView = renderLoggedOutApp("/");
 
     fireEvent.click(screen.getByRole("button", { name: "Create New Account" }));
@@ -2501,6 +2521,9 @@ describe("login landing", () => {
     fireEvent.change(within(createAccountDialog).getByLabelText("Password"), { target: { value: "StaffPass123" } });
     fireEvent.click(within(createAccountDialog).getByRole("button", { name: "Create Staff Account" }));
 
+    expect(await screen.findByLabelText("Live chat room page")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Staff Profile" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "Profile" }));
     expect(await screen.findByRole("heading", { name: "Staff Profile" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Staff Panel" })).toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toContainEqual(expect.objectContaining({ email: "new.staff@example.com", role: "staff" }));
@@ -2521,7 +2544,49 @@ describe("login landing", () => {
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
-    expect(await screen.findByRole("heading", { name: "Staff Profile" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Live chat room page")).toBeInTheDocument();
+  });
+
+  it("signs the gated developer credential into owner mode on Live Chat", async () => {
+    vi.stubEnv("VITE_ENABLE_DEVELOPER_ACCOUNT", "true");
+    const { container } = renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "Dev123" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "xatori" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(container.querySelector(".authenticated-app-shell")).toHaveClass("is-login-transitioning");
+    expect(await screen.findByLabelText("Live chat room page")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "dev123@chos.prototype", remembered: true });
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "dev123@chos.prototype", role: "staff" });
+  });
+
+  it("keeps the developer credential disabled unless the dev account flag is enabled", () => {
+    vi.stubEnv("VITE_ENABLE_DEVELOPER_ACCOUNT", "");
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "Dev123" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "xatori" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(screen.getByRole("dialog", { name: "Login failed" })).toBeInTheDocument();
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(window.localStorage.getItem("chos.accountRoles.v1")).toBeNull();
+  });
+
+  it("keeps the developer username on the login screen when the password is wrong", () => {
+    vi.stubEnv("VITE_ENABLE_DEVELOPER_ACCOUNT", "true");
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "Dev123" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "wrong-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(screen.getByRole("dialog", { name: "Login failed" })).toBeInTheDocument();
+    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(window.localStorage.getItem("chos.accountRoles.v1")).toBeNull();
   });
 
   it("creates self-service parent accounts as guardian accounts", async () => {
@@ -2928,14 +2993,15 @@ describe("login landing", () => {
     expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
   });
 
-  it("keeps a refreshed Manager123 session on the Profile page", () => {
+  it("keeps a refreshed Manager123 session on Live Chat", () => {
     seedActiveSession({ email: "manager123@chos.prototype", remembered: true, createdAt: "2026-05-16T00:00:00.000Z" });
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([{ email: "manager123@chos.prototype", role: "staff" }]));
 
     renderLoggedOutApp("/");
 
     expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Live chat room page")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Profile page header")).not.toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "manager123@chos.prototype", remembered: true });
   });
 
@@ -3127,7 +3193,8 @@ describe("app fullscreen behavior", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enter as Guest" }));
 
     expect(container.querySelector(".authenticated-app-shell")).toHaveClass("is-login-transitioning");
-    expect(await screen.findByRole("heading", { name: "Staff Profile" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Live chat room page")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Staff Profile" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Account type" })).not.toBeInTheDocument();
     expect(screen.queryByText("Signed in as guest.")).not.toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "guest@chos.prototype", role: "staff" });
@@ -3159,6 +3226,7 @@ describe("post-login operations app", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   it("does not create an order when checkout is submitted with an empty cart", async () => {
@@ -3876,13 +3944,21 @@ describe("post-login operations app", () => {
     expect(shell).toHaveAttribute("data-orientation-lock", "portrait");
     expect(shell).toHaveAttribute("aria-label", "Cho's Martial Arts portrait app frame");
     expect(container.querySelector(".portrait-app-frame .authenticated-app-shell")).toBeInTheDocument();
-    expect(screen.getByLabelText("Manager home page")).toBeInTheDocument();
+    expect(screen.getByLabelText("Live chat room page")).toBeInTheDocument();
   });
 
-  it("opens the manager home page first after login", () => {
+  it("opens Live Chat first for manager sessions by default", () => {
+    renderLoggedInApp("/");
+
+    expect(screen.getByLabelText("Live chat room page")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Live Chats" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Profile page header")).not.toBeInTheDocument();
+  });
+
+  it("opens the manager Profile page at the explicit profile route", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-17T12:00:00-05:00"));
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     expect(screen.getByRole("heading", { name: "Profile" })).toBeInTheDocument();
     const profileTitleHeader = screen.getByLabelText("Profile page header");
@@ -4165,7 +4241,7 @@ describe("post-login operations app", () => {
   });
 
   it("opens the manager panel from the manager home icon button", () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     fireEvent.click(screen.getByRole("link", { name: "Manager's Panel" }));
 
@@ -4182,8 +4258,8 @@ describe("post-login operations app", () => {
     expect(screen.getByRole("button", { name: "Staff" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.change(screen.getByLabelText("Staff full name"), { target: { value: "Jordan Lee" } });
     fireEvent.change(screen.getByLabelText("Staff username"), { target: { value: "jordan.staff" } });
-    fireEvent.change(screen.getByLabelText("Staff password"), { target: { value: "StaffPass123" } });
-    fireEvent.change(screen.getByLabelText("Confirm staff password"), { target: { value: "StaffPass123" } });
+    fireEvent.change(screen.getByLabelText("Staff password"), { target: { value: "StaffPass123!" } });
+    fireEvent.change(screen.getByLabelText("Confirm staff password"), { target: { value: "StaffPass123!" } });
     fireEvent.change(screen.getByLabelText("Staff email"), { target: { value: "jordan@chos.prototype" } });
     fireEvent.change(screen.getByLabelText("Staff phone"), { target: { value: "(262) 555-0111" } });
     expect(screen.queryByRole("checkbox", { name: "Create account access" })).not.toBeInTheDocument();
@@ -4194,7 +4270,7 @@ describe("post-login operations app", () => {
       expect.objectContaining({
         displayName: "Jordan Lee",
         username: "jordan.staff",
-        password: "StaffPass123",
+        password: "StaffPass123!",
         role: "staff",
         access: expect.not.arrayContaining(["create"])
       })
@@ -4205,13 +4281,30 @@ describe("post-login operations app", () => {
     renderLoggedOutApp("/");
 
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "jordan.staff" } });
-    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123!" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
+    expect(await screen.findByLabelText("Live chat room page")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "Profile" }));
     expect(await screen.findByRole("heading", { name: "Staff Profile" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "Staff Panel" }));
     expect(screen.getByLabelText("Staff app launcher")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Create" })).not.toBeInTheDocument();
+  });
+
+  it("rejects manager-created Supabase account passwords that do not meet the staging policy", async () => {
+    renderLoggedInApp("/manager?tool=create");
+
+    fireEvent.change(screen.getByLabelText("Staff full name"), { target: { value: "Taylor Reed" } });
+    fireEvent.change(screen.getByLabelText("Staff username"), { target: { value: "taylor.staff" } });
+    fireEvent.change(screen.getByLabelText("Staff password"), { target: { value: "StaffPass123" } });
+    fireEvent.change(screen.getByLabelText("Confirm staff password"), { target: { value: "StaffPass123" } });
+    fireEvent.change(screen.getByLabelText("Staff email"), { target: { value: "taylor@chos.prototype" } });
+    fireEvent.change(screen.getByLabelText("Staff phone"), { target: { value: "(262) 555-0113" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Staff Account" }));
+
+    expect(await screen.findByText("Use at least 12 characters with uppercase, lowercase, a number, and a symbol.")).toBeInTheDocument();
+    expect(window.localStorage.getItem("chos.managedAccounts.v1")).toBeNull();
   });
 
   it("lets managers deactivate and reactivate custom logins", async () => {
@@ -4271,7 +4364,7 @@ describe("post-login operations app", () => {
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
-    expect(await screen.findByRole("heading", { name: "Staff Profile" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Live chat room page")).toBeInTheDocument();
   });
 
   it("lets the manager create a student account that can log in", async () => {
@@ -4280,8 +4373,8 @@ describe("post-login operations app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Student" }));
     fireEvent.change(screen.getByLabelText("Student full name"), { target: { value: "Avery Kim" } });
     fireEvent.change(screen.getByLabelText("Student username"), { target: { value: "avery.student" } });
-    fireEvent.change(screen.getByLabelText("Student password"), { target: { value: "StudentPass123" } });
-    fireEvent.change(screen.getByLabelText("Confirm student password"), { target: { value: "StudentPass123" } });
+    fireEvent.change(screen.getByLabelText("Student password"), { target: { value: "StudentPass123!" } });
+    fireEvent.change(screen.getByLabelText("Confirm student password"), { target: { value: "StudentPass123!" } });
     fireEvent.change(screen.getByLabelText("Student email"), { target: { value: "avery@chos.prototype" } });
     fireEvent.change(screen.getByLabelText("Parent/guardian phone"), { target: { value: "(262) 555-0122" } });
     fireEvent.change(screen.getByLabelText("Program"), { target: { value: "Youth Taekwondo" } });
@@ -4293,7 +4386,7 @@ describe("post-login operations app", () => {
       expect.objectContaining({
         displayName: "Avery Kim",
         username: "avery.student",
-        password: "StudentPass123",
+        password: "StudentPass123!",
         role: "student"
       })
     ]));
@@ -4306,7 +4399,7 @@ describe("post-login operations app", () => {
     renderLoggedOutApp("/");
 
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "avery.student" } });
-    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StudentPass123" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StudentPass123!" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
     expect(await screen.findByLabelText("Student profile page")).toBeInTheDocument();
@@ -5343,7 +5436,7 @@ describe("post-login operations app", () => {
   });
 
   it("filters the Home feed by message and event notification count controls", () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const messageFilter = screen.getByRole("button", { name: "5 Messages" });
     const eventFilter = screen.getByRole("button", { name: "2 Event Notifications" });
@@ -5382,7 +5475,7 @@ describe("post-login operations app", () => {
   });
 
   it("lets managers compose messages and event notifications from the Home feed header", () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const feedPanel = screen.getByLabelText("Messages and event notifications");
     const composeButton = within(feedPanel).getByRole("button", { name: "Compose" });
@@ -5521,7 +5614,7 @@ describe("post-login operations app", () => {
         joinedAt: "2026-01-01"
       }
     ]));
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const feedPanel = screen.getByLabelText("Messages and event notifications");
     fireEvent.click(within(feedPanel).getByRole("button", { name: "Compose" }));
@@ -5568,7 +5661,7 @@ describe("post-login operations app", () => {
   }, 15000);
 
   it("logs out from the manager home icon button", () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     fireEvent.click(screen.getByRole("button", { name: "Log Out" }));
 
@@ -5577,7 +5670,7 @@ describe("post-login operations app", () => {
 
   it("collapses, expands, and drag-adjusts the manager overview from the Home handle", () => {
     stubResizeObserver(360);
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const homeOverview = screen.getByLabelText("Manager home overview");
     const overviewStage = homeOverview.closest(".manager-home-overview-stage");
@@ -5607,7 +5700,7 @@ describe("post-login operations app", () => {
   });
 
   it("lets managers update the Home profile picture in real time", async () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const profileOverview = within(screen.getByLabelText("Manager home overview")).getByLabelText("Manager profile overview");
     const profileImage = within(profileOverview).getByRole("img", { name: "Cho's Manager profile portrait" });
@@ -5632,7 +5725,7 @@ describe("post-login operations app", () => {
   });
 
   it("opens profile settings from the Home profile card icon", async () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const profileOverview = within(screen.getByLabelText("Manager home overview")).getByLabelText("Manager profile overview");
     const profileSettingsLink = within(profileOverview).getByRole("link", { name: "Profile Settings" });
@@ -5646,7 +5739,7 @@ describe("post-login operations app", () => {
   });
 
   it("toggles light and dark mode from the Home profile card without a toast", () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const profileOverview = within(screen.getByLabelText("Manager home overview")).getByLabelText("Manager profile overview");
     const themeSwitch = within(profileOverview).getByRole("switch", { name: "Switch to light mode" });
@@ -5691,6 +5784,25 @@ describe("post-login operations app", () => {
     expect(screen.getByText("Personal color theme saved. Changes are live now.")).toBeInTheDocument();
   });
 
+  it("lets managers save Profile as their first page from Profile Settings", () => {
+    const managerView = renderLoggedInApp("/manager?profile=settings");
+
+    const dialog = screen.getByRole("dialog", { name: "Manager profile settings" });
+    const firstPageSelect = within(dialog).getByLabelText("First page after login");
+    expect(firstPageSelect).toHaveValue("live-chat");
+
+    fireEvent.change(firstPageSelect, { target: { value: "profile" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Profile Settings" }));
+
+    expect(JSON.parse(window.localStorage.getItem(scopedProfileKey("manager", "manager123@chos.prototype")) ?? "{}")).toMatchObject({ landingPage: "profile" });
+
+    managerView.unmount();
+    renderLoggedInApp("/");
+
+    expect(screen.getByLabelText("Manager home page")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Live chat room page")).not.toBeInTheDocument();
+  });
+
   it("exposes the Editing Tool inside student Profile Settings", () => {
     renderLoggedInApp("/", "student");
 
@@ -5704,6 +5816,26 @@ describe("post-login operations app", () => {
     const miniScreen = within(editor).getByLabelText("Live profile mini screen");
     expect(within(miniScreen).getByText("Student Profile")).toBeInTheDocument();
     expect(within(miniScreen).getByText(/Student$/)).toBeInTheDocument();
+  });
+
+  it("lets students save Student Panel as their first page from Profile Settings", () => {
+    const studentView = renderLoggedInApp("/", "student");
+
+    const profileOverview = screen.getByLabelText("Student reference profile card");
+    fireEvent.click(within(profileOverview).getByRole("button", { name: "Profile Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Student profile settings" });
+    const firstPageSelect = within(dialog).getByLabelText("First page after login");
+
+    fireEvent.change(firstPageSelect, { target: { value: "student-panel" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Profile Settings" }));
+
+    expect(JSON.parse(window.localStorage.getItem(scopedProfileKey("student", "student123@chos.prototype")) ?? "{}")).toMatchObject({ landingPage: "student-panel" });
+
+    studentView.unmount();
+    renderLoggedInApp("/", "student");
+
+    expect(screen.getByLabelText("Student dashboard")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Student's Panel" })).toBeInTheDocument();
   });
 
   it("exposes parent Profile Settings with the Editing Tool", () => {
@@ -5730,10 +5862,29 @@ describe("post-login operations app", () => {
     expect(JSON.parse(window.localStorage.getItem(visualThemeKey("parent123@chos.prototype")) ?? "{}")).toEqual(expect.objectContaining({ background: "#102030" }));
   });
 
+  it("lets parents save Messages as their first page from Profile Settings", () => {
+    const parentView = renderLoggedInApp("/", "guardian");
+
+    fireEvent.click(screen.getByRole("button", { name: "Profile Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Parent profile settings" });
+    const firstPageSelect = within(dialog).getByLabelText("First page after login");
+
+    fireEvent.change(firstPageSelect, { target: { value: "parent-messages" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Profile Settings" }));
+
+    expect(JSON.parse(window.localStorage.getItem(scopedProfileKey("guardian", "parent123@chos.prototype")) ?? "{}")).toMatchObject({ landingPage: "parent-messages" });
+
+    parentView.unmount();
+    renderLoggedInApp("/", "guardian");
+
+    expect(screen.getByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Messages" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("keeps the Home weekly agenda rows compact on busy recurring class days", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-17T12:00:00-05:00"));
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const weeklySchedule = within(screen.getByLabelText("Manager home overview")).getByLabelText("Weekly manager schedule");
     fireEvent.click(within(weeklySchedule).getByRole("button", { name: "Select Tuesday, May 19, 2026" }));
@@ -5750,7 +5901,7 @@ describe("post-login operations app", () => {
   });
 
   it("lets managers select multiple home feed items and delete them together", () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
 
@@ -5793,7 +5944,7 @@ describe("post-login operations app", () => {
     expect(managerHeader.querySelectorAll(".manager-home-title-rule")).toHaveLength(2);
     expect(managerHeader.querySelector(".manager-launcher-title-icon")).not.toBeInTheDocument();
     const managerProfileLink = within(managerHeader).getByRole("link", { name: "Profile" });
-    expect(managerProfileLink).toHaveAttribute("href", "/");
+    expect(managerProfileLink).toHaveAttribute("href", "/profile");
     expect(managerProfileLink.querySelector("img.manager-home-profile-action-photo")).toHaveAttribute("src", expect.stringContaining("assets/CheetahProfilePic/Cheetah.png"));
     expect(within(managerProfileLink).getByText("Profile")).toBeInTheDocument();
     expect(managerHeader.querySelector(".manager-home-top-actions")).toBeInTheDocument();
@@ -5868,6 +6019,97 @@ describe("post-login operations app", () => {
     expect(screen.queryByLabelText("Manager quick actions")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Student Management & Communication" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Quick Stats" })).not.toBeInTheDocument();
+  });
+
+  it("opens the developer owner launcher with Create and Developer tools", () => {
+    renderLoggedInDeveloperApp("/manager");
+
+    const developerHeader = screen.getByLabelText("Developer panel page header");
+    expect(within(developerHeader).getByRole("heading", { name: "DEVELOPER PANEL" })).toBeInTheDocument();
+    const launcher = screen.getByLabelText("Developer app launcher");
+    expect(within(launcher).getByRole("link", { name: "Create" })).toHaveAttribute("href", "/manager?tool=create");
+    expect(within(launcher).getByRole("link", { name: "Developer" })).toHaveAttribute("href", "/manager?tool=developer");
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "dev123@chos.prototype", role: "guardian" });
+  });
+
+  it("uses the tiger developer profile image and Developer labels for Dev123", async () => {
+    window.localStorage.setItem("chos.profile.v1", JSON.stringify({
+      name: "Legacy Manager",
+      username: "legacy-manager",
+      email: "manager123@chos.prototype",
+      phone: "(262) 555-0111",
+      updates: true,
+      theme: "dark",
+      landingPage: "profile",
+      photoDataUrl: "data:image/png;base64,legacy-manager-photo"
+    }));
+
+    renderLoggedInDeveloperApp("/profile");
+
+    expect(screen.getByLabelText("Developer home page")).toBeInTheDocument();
+    const profileTitleHeader = screen.getByLabelText("Profile page header");
+    const developerPanelLink = within(profileTitleHeader).getByRole("link", { name: "Developer Panel" });
+    expect(developerPanelLink).toHaveAttribute("href", "/manager");
+    expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+
+    const homeOverview = screen.getByLabelText("Developer home overview");
+    const profileOverview = within(homeOverview).getByLabelText("Developer profile overview");
+    expect(within(profileOverview).getByRole("img", { name: "Developer profile portrait" })).toHaveAttribute("src", expect.stringContaining("assets/DeveloperProfilePic/TigerDeveloper.png"));
+    expect(within(profileOverview).getByRole("heading", { name: "Developer" })).toBeInTheDocument();
+    expect(within(profileOverview).getAllByText("Developer").length).toBeGreaterThanOrEqual(2);
+    expect(within(profileOverview).getByLabelText("Upload developer profile picture")).toBeInTheDocument();
+
+    fireEvent.click(within(profileOverview).getByRole("link", { name: "Profile Settings" }));
+    expect(await screen.findByRole("dialog", { name: "Developer profile settings" })).toBeInTheDocument();
+  });
+
+  it("hides the developer launcher item for the manager owner and staff accounts", () => {
+    const managerView = renderLoggedInApp("/manager");
+    expect(within(screen.getByLabelText("Manager app launcher")).queryByRole("link", { name: "Developer" })).not.toBeInTheDocument();
+    managerView.unmount();
+
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    renderManagedStaffApp("/manager", {
+      id: "managed-staff-no-dev",
+      displayName: "Jordan Lee",
+      username: "jordan.staff",
+      password: "StaffPass123",
+      role: "staff",
+      status: "active",
+      access: ["dashboard", "reports", "messages"],
+      createdAt: "2026-06-01T10:00:00.000Z"
+    });
+
+    expect(screen.getByLabelText("Staff app launcher")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Developer" })).not.toBeInTheDocument();
+  });
+
+  it("renders safe developer diagnostics without exposing destructive tools", () => {
+    renderLoggedInDeveloperApp("/manager?tool=developer");
+
+    expect(screen.getByRole("heading", { name: "Developer Tools" })).toBeInTheDocument();
+    const sessionPanel = screen.getByLabelText("Developer session diagnostics");
+    expect(within(sessionPanel).getByText("dev123@chos.prototype")).toBeInTheDocument();
+    expect(within(sessionPanel).getByText("staff")).toBeInTheDocument();
+    expect(within(sessionPanel).getByText("Developer account")).toBeInTheDocument();
+    expect(within(sessionPanel).getByText("Owner access")).toBeInTheDocument();
+
+    const environmentPanel = screen.getByLabelText("Developer environment diagnostics");
+    expect(within(environmentPanel).getByText("VITE_ENABLE_DEVELOPER_ACCOUNT=true")).toBeInTheDocument();
+    expect(within(environmentPanel).getByText(/Supabase auth:/)).toBeInTheDocument();
+
+    const countsPanel = screen.getByLabelText("Developer local data counts");
+    expect(within(countsPanel).getByText("Students")).toBeInTheDocument();
+    expect(within(countsPanel).getByText("Managed accounts")).toBeInTheDocument();
+    expect(within(countsPanel).getByText("Messages")).toBeInTheDocument();
+
+    const routesPanel = screen.getByLabelText("Developer route quick links");
+    expect(within(routesPanel).getByRole("link", { name: "Live Chat" })).toHaveAttribute("href", "/live-chat");
+    expect(within(routesPanel).getByRole("link", { name: "Create Accounts" })).toHaveAttribute("href", "/manager?tool=create");
+    expect(screen.getByRole("button", { name: "Copy Diagnostics JSON" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /reset/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /seed/i })).not.toBeInTheDocument();
   });
 
   it("lets managers publish study guide folders while student study routes show student materials", async () => {
@@ -6119,7 +6361,7 @@ describe("post-login operations app", () => {
     expect(screen.getByRole("heading", { name: "Marketing Tool" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Text Log" })).toBeInTheDocument();
     const homeMessengerLink = screen.getByRole("link", { name: "Open Home Page Messages" });
-    expect(homeMessengerLink).toHaveAttribute("href", "/");
+    expect(homeMessengerLink).toHaveAttribute("href", "/profile");
     expect(screen.queryByLabelText("Direct message center")).not.toBeInTheDocument();
 
     fireEvent.click(homeMessengerLink);
@@ -6870,7 +7112,7 @@ describe("post-login operations app", () => {
     renderLoggedInApp("/reports");
 
     expect(within(screen.getByLabelText("App replies report metric")).getByText("2")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Reply to app messages" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: "Reply to app messages" })).toHaveAttribute("href", "/profile");
     const repliesPanel = screen.getByLabelText("Unanswered app message reply candidates");
     expect(within(repliesPanel).getByRole("heading", { name: "App Message Replies" })).toBeInTheDocument();
     expect(within(repliesPanel).getByText("2 inbound student or parent app messages need staff replies.")).toBeInTheDocument();
@@ -14718,7 +14960,7 @@ describe("post-login operations app", () => {
   });
 
   it("expands selected messages inside the single Home feed panel", () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const attendanceRow = screen.getByRole("button", { name: /John Doe.*Attendance Confirmation/i });
     expect(attendanceRow.closest(".manager-home-feed-item")).toHaveClass("manager-home-feed-item--message");
@@ -14744,7 +14986,7 @@ describe("post-login operations app", () => {
   });
 
   it("lets managers reply to inbound app messages from the Home feed", async () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const feedPanel = screen.getByLabelText("Messages and event notifications");
     const directRow = within(feedPanel).getByRole("button", { name: /Talia Brooks.*Thank you, I will be there for training/i });
@@ -14768,7 +15010,7 @@ describe("post-login operations app", () => {
   });
 
   it("marks Home feed messages and event notifications as read when opened", () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     const summerEventRow = screen.getByRole("button", { name: /System Admin.*Event Update: Summer Championship/i });
     const summerEventItem = summerEventRow.closest(".manager-home-feed-item") as HTMLElement;
@@ -14785,7 +15027,7 @@ describe("post-login operations app", () => {
   });
 
   it("filters messages and event notifications in the single Home feed panel", () => {
-    renderLoggedInApp("/");
+    renderLoggedInApp("/profile");
 
     fireEvent.click(screen.getByRole("button", { name: "Open search messages and event notifications" }));
     const feedSearch = screen.getByRole("searchbox", { name: "Search messages and event notifications" });

@@ -262,6 +262,16 @@ export const prototypeManagerLogin = {
   role: "staff"
 } as const;
 
+export const prototypeDeveloperLogin = {
+  username: "Dev123",
+  password: "xatori",
+  email: "dev123@chos.prototype",
+  role: "staff"
+} as const;
+
+export const defaultProfileAvatarPath = "assets/CheetahProfilePic/Cheetah.png";
+export const developerProfileAvatarPath = "assets/DeveloperProfilePic/TigerDeveloper.png";
+
 export const prototypeStudentLogin = {
   username: "Student123",
   password: "123456",
@@ -278,6 +288,27 @@ export const prototypeParentLogin = {
 
 export function isPrototypeManagerLogin(input: { username: string; password: string }) {
   return input.username.trim().toLowerCase() === prototypeManagerLogin.username.toLowerCase() && input.password.trim() === prototypeManagerLogin.password;
+}
+
+export function isDeveloperAccountEnabled() {
+  return import.meta.env.VITE_ENABLE_DEVELOPER_ACCOUNT === "true";
+}
+
+export function isPrototypeDeveloperLogin(input: { username: string; password: string }) {
+  return isDeveloperAccountEnabled() && input.username.trim().toLowerCase() === prototypeDeveloperLogin.username.toLowerCase() && input.password.trim() === prototypeDeveloperLogin.password;
+}
+
+export function isPrototypeDeveloperEmail(email?: string) {
+  return isDeveloperAccountEnabled() && email?.trim().toLowerCase() === prototypeDeveloperLogin.email.toLowerCase();
+}
+
+export function isPrototypeManagerOwnerEmail(email?: string) {
+  const normalizedEmail = email?.trim().toLowerCase();
+  return normalizedEmail === prototypeManagerLogin.email.toLowerCase() || isPrototypeDeveloperEmail(normalizedEmail);
+}
+
+export function profileAvatarPathForSession(email?: string) {
+  return isPrototypeDeveloperEmail(email) ? developerProfileAvatarPath : defaultProfileAvatarPath;
 }
 
 export function isPrototypeStudentLogin(input: { username: string; password: string }) {

@@ -37,6 +37,19 @@ describe("profile storage helpers", () => {
     expect(JSON.parse(window.localStorage.getItem(legacyProfileStorageKey) ?? "{}")).toMatchObject({ name: "Scoped Manager" });
   });
 
+  it("defaults manager startup to live chat and keeps saved startup pages normalized", () => {
+    expect(fallbackManagerProfile("manager123@chos.prototype").landingPage).toBe("live-chat");
+
+    writeManagerProfile({ ...fallbackManagerProfile("manager123@chos.prototype"), landingPage: "profile" }, "manager123@chos.prototype");
+    expect(readManagerProfile("manager123@chos.prototype").landingPage).toBe("profile");
+
+    window.localStorage.setItem(
+      profileStorageKey("manager", "manager123@chos.prototype"),
+      JSON.stringify({ ...fallbackManagerProfile("manager123@chos.prototype"), landingPage: "unknown-page" })
+    );
+    expect(readManagerProfile("manager123@chos.prototype").landingPage).toBe("live-chat");
+  });
+
   it("keeps staff profiles scoped while falling back from existing manager-scoped staff profiles", () => {
     window.localStorage.setItem(
       profileStorageKey("manager", "taylor.staff"),

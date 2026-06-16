@@ -1,14 +1,20 @@
 const supabaseUrl = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const managerUsername = (process.env.MANAGER_USERNAME ?? "Manager123").trim();
-const managerPassword = process.env.MANAGER_PASSWORD ?? "123456";
+const managerPassword = process.env.MANAGER_PASSWORD?.trim() ?? "";
 const managerAuthEmail = (process.env.MANAGER_AUTH_EMAIL ?? "manager123@accounts.chosmartialarts.app").trim().toLowerCase();
 const managerDisplayName = process.env.MANAGER_DISPLAY_NAME ?? "Cho's Manager";
 const deleteExtraAuthUsers = process.argv.includes("--delete-extra-auth-users");
 const confirmedDeleteExtraAuthUsers = process.argv.includes("--yes-delete-extra-auth-users");
+const strongPasswordMessage = "MANAGER_PASSWORD must be at least 12 characters and include uppercase, lowercase, a number, and a symbol.";
 
 if (!supabaseUrl || !serviceRoleKey) {
   console.error("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before running this script.");
+  process.exit(1);
+}
+
+if (!isStrongPassword(managerPassword)) {
+  console.error(strongPasswordMessage);
   process.exit(1);
 }
 
@@ -22,6 +28,16 @@ const adminHeaders = {
   Authorization: `Bearer ${serviceRoleKey}`,
   "Content-Type": "application/json"
 };
+
+function isStrongPassword(password) {
+  return (
+    password.length >= 12 &&
+    /[a-z]/.test(password) &&
+    /[A-Z]/.test(password) &&
+    /\d/.test(password) &&
+    /[^A-Za-z0-9]/.test(password)
+  );
+}
 
 async function adminFetch(path, init = {}) {
   const response = await fetch(`${supabaseUrl}${path}`, {
@@ -118,4 +134,4 @@ if (deleteExtraAuthUsers) {
   }
 }
 
-console.log(`Supabase manager ready: ${managerUsername} / ${managerPassword} (${managerAuthEmail})`);
+console.log(`Supabase manager ready: ${managerUsername} (${managerAuthEmail})`);

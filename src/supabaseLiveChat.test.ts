@@ -154,13 +154,17 @@ describe("supabase live chat adapter", () => {
     const client = {
       from: vi.fn(),
       channel: vi.fn(() => channel),
-      removeChannel: vi.fn()
+      removeChannel: vi.fn(),
+      realtime: {
+        setAuth: vi.fn()
+      }
     } as unknown as LiveChatClient;
     const receivedMessages: LiveChatMessage[] = [];
     const receivedStatuses: string[] = [];
 
     const subscription = subscribeToLiveChatInserts({
       client,
+      session: testSession(),
       onMessage: (message) => receivedMessages.push(message),
       onStatus: (status) => receivedStatuses.push(status)
     });
@@ -170,6 +174,7 @@ describe("supabase live chat adapter", () => {
     subscription.cleanup();
 
     expect(subscription.status).toBe("subscribed");
+    expect(client.realtime?.setAuth).toHaveBeenCalledWith("staff-access-token");
     expect(client.channel).toHaveBeenCalledWith(`live-chat:${liveChatRoomKey}`);
     expect(channel.on).toHaveBeenCalledWith(
       "postgres_changes",

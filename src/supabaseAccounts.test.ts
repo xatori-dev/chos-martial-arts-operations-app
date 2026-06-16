@@ -81,7 +81,7 @@ describe("supabase account adapter", () => {
     });
     globalThis.fetch = fetchMock as typeof fetch;
 
-    const result = await signInSupabaseAccount({ username: "Manager123", password: "123456" });
+    const result = await signInSupabaseAccount({ username: "Manager123", password: "ManagerPass123!" });
 
     expect(result).toMatchObject({
       status: "authenticated",
@@ -92,7 +92,7 @@ describe("supabase account adapter", () => {
       "https://project.supabase.co/auth/v1/token?grant_type=password",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ email: "manager123@accounts.chosmartialarts.app", password: "123456" })
+        body: JSON.stringify({ email: "manager123@accounts.chosmartialarts.app", password: "ManagerPass123!" })
       })
     );
     expect(window.localStorage.getItem("chos.supabase.auth.v1")).toContain("manager-access-token");
@@ -144,11 +144,11 @@ describe("supabase account adapter", () => {
       return jsonResponse({ error: "Unexpected URL" }, { status: 404 });
     }) as typeof fetch;
 
-    await signInSupabaseAccount({ username: "Manager123", password: "123456" });
+    await signInSupabaseAccount({ username: "Manager123", password: "ManagerPass123!" });
     const result = await createSupabaseManagedAccount({
       displayName: "Jordan Lee",
       username: "jordan.staff",
-      password: "StaffPass123",
+      password: "StaffPass123!",
       role: "staff",
       email: "jordan@example.com",
       access: ["dashboard"]
@@ -176,7 +176,7 @@ describe("supabase account adapter", () => {
     expect(await createSupabaseManagedAccount({
       displayName: "No Session",
       username: "no.session",
-      password: "StaffPass123",
+      password: "StaffPass123!",
       role: "staff",
       email: "no-session@example.com"
     })).toEqual({ status: "missing-session" });

@@ -833,7 +833,7 @@ export function buildReportsCommandCenter(input: ReportsCommandCenterInput): Rep
       title: "Reply to app messages",
       detail: namesSummary(directMessageReplyCandidates.map((candidate) => candidate.senderName), "No app messages need staff replies."),
       count: directMessageReplyCandidates.length,
-      path: "/",
+      path: "/profile",
       tone: "info"
     });
   }

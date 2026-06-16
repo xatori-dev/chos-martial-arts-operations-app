@@ -265,9 +265,9 @@ const supportedTwilioManagerAuthModes = new Set<NonNullable<ProductionMessagingS
 const supportedTwilioComplianceSenderTypes = new Set<TwilioComplianceSenderType>(["not-set", "10dlc", "toll-free", "short-code"]);
 const supportedTwilioComplianceStatuses = new Set<TwilioComplianceStatus>(["not-started", "pending", "approved", "rejected", "not-used"]);
 const supportedClassWeekdays = new Set<ClassWeekday>([0, 1, 2, 3, 4, 5, 6]);
-const builtInLoginIdentities = new Set(["manager123@chos.prototype", "student123@chos.prototype", "parent123@chos.prototype", "guest@chos.prototype"]);
+const builtInLoginIdentities = new Set(["manager123@chos.prototype", "dev123@chos.prototype", "student123@chos.prototype", "parent123@chos.prototype", "guest@chos.prototype"]);
 const builtInGuardianLoginIdentities = new Set(["parent123@chos.prototype"]);
-const builtInLoginUsernames = new Set(["manager123", "student123", "parent123"]);
+const builtInLoginUsernames = new Set(["manager123", "dev123", "student123", "parent123"]);
 const allowedMerchandiseImageMimeTypes = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"]);
 const productionMessagingSetupId = "production-messaging";
 const messagingSetupCredentialFieldPattern = /(?:TWILIO_|AUTH_TOKEN|ACCOUNT_SID|API_KEY|API_SECRET|SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|VAPID_PRIVATE_KEY)/i;
@@ -287,6 +287,7 @@ const supportedManagerAccessKeys = new Set<ManagerAccessKey>([
 ]);
 const builtInLoginRoles = new Map<string, AccountRole>([
   ["manager123@chos.prototype", "staff"],
+  ["dev123@chos.prototype", "staff"],
   ["student123@chos.prototype", "student"],
   ["parent123@chos.prototype", "guardian"],
   ["guest@chos.prototype", "staff"]

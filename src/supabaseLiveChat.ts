@@ -71,6 +71,9 @@ export type LiveChatClient = {
   from: (table: string) => LiveChatQuery;
   channel: (name: string) => LiveChatChannel;
   removeChannel: (channel: LiveChatChannel) => unknown;
+  realtime?: {
+    setAuth: (token?: string | null) => unknown;
+  };
 };
 
 export type LiveChatResult<T> =
@@ -225,11 +228,13 @@ export function subscribeToLiveChatInserts({
   onMessage,
   onStatus,
   client = getSupabaseLiveChatClient(),
+  session = readSupabaseAuthSession(),
   roomKey = liveChatRoomKey
 }: {
   onMessage: (message: LiveChatMessage) => void;
   onStatus?: (status: string, message?: string) => void;
   client?: LiveChatClient;
+  session?: SupabaseStoredSession;
   roomKey?: string;
 }): LiveChatSubscription {
   if (!client) {
@@ -239,6 +244,8 @@ export function subscribeToLiveChatInserts({
       cleanup: () => undefined
     };
   }
+
+  client.realtime?.setAuth(session?.accessToken ?? null);
 
   const channel = client
     .channel(`live-chat:${roomKey}`)

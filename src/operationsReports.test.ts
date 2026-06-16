@@ -269,7 +269,7 @@ describe("buildReportsCommandCenter", () => {
       title: "Reply to app messages",
       detail: "Mina Nguyen, Ari Nguyen",
       count: 2,
-      path: "/"
+      path: "/profile"
     }));
     expect(report.directMessageReplyCandidates).toEqual([
       expect.objectContaining({

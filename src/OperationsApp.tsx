@@ -73,11 +73,14 @@ import { beltRanks } from "./data";
 import { createSupabaseManagedAccount, isSupabaseAuthConfigured } from "./supabaseAccounts";
 import {
   readManagerProfile,
+  readGuardianProfile,
   readStaffProfile,
   readStudentProfile,
+  writeGuardianProfile,
   writeManagerProfile,
   writeStaffProfile,
   writeStudentProfile,
+  type LandingPagePreference,
   type ProfileSettings as ManagerProfileSettings
 } from "./profileStorage";
 import { useAppState } from "./state";
@@ -100,7 +103,7 @@ import {
 } from "./theme";
 import { validateTwilioRelayHealthResponseForBrowser, validateTwilioRelayPayloadForServer, type TwilioRelayHealthReadinessChecks } from "./twilioRelayContract";
 import type { AccountRole, BeltRank, ChildAccount, ClassWeekday, DirectMessage, ManagedAccount, ManagerAccessKey, MerchandiseItem, MessageCampaign, MessageLog, MessageNotificationSettings, ScheduledClass, ScheduledTextCampaign, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TextAutomationRun, TrainingVideo, TrainingVideoFolder } from "./types";
-import { downloadTextFile, formatMoney, smsOptOutPreflightText, smsSegmentPreflightText, validateEmail } from "./utils";
+import { downloadTextFile, formatMoney, isDeveloperAccountEnabled, profileAvatarPathForSession, smsOptOutPreflightText, smsSegmentPreflightText, validateEmail } from "./utils";
 
 const beltOptions = beltRanks.map((beltRank) => beltRank.name);
 const weekdayOptions: { value: ClassWeekday; label: string; short: string }[] = [
@@ -121,7 +124,7 @@ const defaultScheduleTypeOptions = [
 
 const starterProgramAppointmentTimes = ["9:00 AM", "10:30 AM", "12:00 PM", "2:00 PM", "4:30 PM", "5:30 PM", "6:30 PM"];
 
-type ManagerLauncherIconKind = "dashboard" | "messages" | "students" | "classes" | "studyGuide" | "events" | "scheduling" | "merchandise" | "videos" | "reports" | "create" | "study" | "test";
+type ManagerLauncherIconKind = "dashboard" | "messages" | "students" | "classes" | "studyGuide" | "events" | "scheduling" | "merchandise" | "videos" | "reports" | "create" | "developer" | "study" | "test";
 
 type ManagerLauncherItem = {
   label: string;
@@ -143,12 +146,55 @@ const managerLauncherItems: ManagerLauncherItem[] = [
   { label: "Reports", icon: "reports" }
 ];
 
+const developerLauncherItem: ManagerLauncherItem = { label: "Developer", icon: "developer" };
+
 const studentLauncherItems: ManagerLauncherItem[] = [
   { label: "Dashboard", icon: "dashboard" },
   { label: "Classes", icon: "classes" },
   { label: "Study", icon: "study" },
   { label: "Test", icon: "test" },
   { label: "Videos", icon: "videos" }
+];
+
+type LandingPageOption = {
+  value: LandingPagePreference;
+  label: string;
+};
+
+const staffLandingPageBaseOptions: LandingPageOption[] = [
+  { value: "live-chat", label: "Live Chat" },
+  { value: "profile", label: "Profile" },
+  { value: "manager-panel", label: "Panel" },
+  { value: "check-ins", label: "Check-Ins" }
+];
+
+const managerAccessLandingPageOptions: Partial<Record<ManagerAccessKey, LandingPageOption>> = {
+  dashboard: { value: "dashboard", label: "Dashboard" },
+  messages: { value: "messages", label: "Messages" },
+  students: { value: "students", label: "Students" },
+  classes: { value: "classes", label: "Classes" },
+  scheduling: { value: "schedule", label: "Schedule" },
+  events: { value: "events", label: "Events" },
+  merchandise: { value: "merchandise", label: "Merchandise" },
+  videos: { value: "videos", label: "Videos" },
+  studyGuide: { value: "study-guide", label: "Study Guide" },
+  reports: { value: "reports", label: "Reports" }
+};
+
+const studentLandingPageOptions: LandingPageOption[] = [
+  { value: "profile", label: "Profile" },
+  { value: "student-panel", label: "Student Panel" },
+  { value: "check-ins", label: "Check-Ins" }
+];
+
+const parentLandingPageOptions: LandingPageOption[] = [
+  { value: "profile", label: "Parent Profile" },
+  { value: "parent-dashboard", label: "Dashboard" },
+  { value: "parent-classes", label: "Classes" },
+  { value: "parent-study", label: "Study" },
+  { value: "parent-test", label: "Test" },
+  { value: "parent-messages", label: "Messages" },
+  { value: "parent-notifications", label: "Notifications" }
 ];
 
 const managerLauncherIconImages: Partial<Record<ManagerLauncherIconKind, string>> = {
@@ -1200,10 +1246,10 @@ function StaffOperationsShell({
   logout: () => void;
   path: string;
 }) {
-  const shellClassName = `manager-shell${accountRole === "student" && path === "/" ? " manager-shell--student-reference" : ""}`;
+  const shellClassName = `manager-shell${accountRole === "student" && path === "/profile" ? " manager-shell--student-reference" : ""}`;
   const fullPageShellClassName = `manager-full-page-shell${path === "/dashboard" ? " manager-full-page-shell--dashboard" : ""}`;
 
-  if (path === "/" || path === "/manager" || path === "/live-chat") {
+  if (path === "/" || path === "/profile" || path === "/manager" || path === "/live-chat") {
     return <div className={shellClassName}>{children}</div>;
   }
 
@@ -2234,7 +2280,7 @@ function ManagerLauncherIcon({ icon }: { icon: ManagerLauncherIconKind }) {
   const launcherIconImage = managerLauncherIconImages[icon];
 
   if (!launcherIconImage) {
-    const LauncherSymbol = icon === "create" ? UserPlus : icon === "studyGuide" ? BookOpen : Video;
+    const LauncherSymbol = icon === "create" ? UserPlus : icon === "studyGuide" ? BookOpen : icon === "developer" ? Server : Video;
 
     return (
       <span className={frameClassName} aria-hidden="true">
@@ -2257,6 +2303,313 @@ function ManagerLauncherIcon({ icon }: { icon: ManagerLauncherIconKind }) {
 
 function managerLauncherPath(item: ManagerLauncherItem) {
   return `/manager?tool=${item.icon}`;
+}
+
+function DeveloperMetricCard({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <article className="operation-stat-card reports-metric-card">
+      <span><FileText size={20} /></span>
+      <div>
+        <strong>{value}</strong>
+        <small>{label}</small>
+      </div>
+    </article>
+  );
+}
+
+function DeveloperToolsPage() {
+  const location = useLocation();
+  const {
+    accountRole,
+    accountRoles,
+    accounts,
+    childAccounts,
+    checkIns,
+    directMessages,
+    managedAccounts,
+    managerAccountAccess,
+    merchandiseItems,
+    messageCampaigns,
+    messageLogs,
+    scheduledClasses,
+    scheduledTextCampaigns,
+    session,
+    showToast,
+    students,
+    studioClasses,
+    studioEvents,
+    studyGuideFolders,
+    studyGuideMaterials,
+    textAutomationRuns,
+    trainingVideoFolders,
+    trainingVideos
+  } = useAppState();
+  const route = `${location.pathname}${location.search}`;
+  const developerFlagLabel = `VITE_ENABLE_DEVELOPER_ACCOUNT=${isDeveloperAccountEnabled() ? "true" : "false"}`;
+  const diagnostics = useMemo(() => ({
+    generatedAt: new Date().toISOString(),
+    session: {
+      email: session?.email ?? null,
+      accountRole: accountRole ?? null,
+      isDeveloper: managerAccountAccess.isDeveloper,
+      isManagerOwner: managerAccountAccess.isManagerOwner,
+      canCreateAccounts: managerAccountAccess.canCreateAccounts,
+      canGrantCreateAccess: managerAccountAccess.canGrantCreateAccess,
+      allowedTools: managerAccountAccess.allowedTools,
+      route
+    },
+    environment: {
+      mode: import.meta.env.MODE,
+      baseUrl: import.meta.env.BASE_URL,
+      developerAccountEnabled: isDeveloperAccountEnabled(),
+      supabaseAuthConfigured: isSupabaseAuthConfigured()
+    },
+    counts: {
+      accounts: accounts.length,
+      accountRoles: accountRoles.length,
+      students: students.length,
+      managedAccounts: managedAccounts.length,
+      childAccounts: childAccounts.length,
+      messageLogs: messageLogs.length,
+      directMessages: directMessages.length,
+      messageCampaigns: messageCampaigns.length,
+      scheduledTextCampaigns: scheduledTextCampaigns.length,
+      studioEvents: studioEvents.length,
+      studioClasses: studioClasses.length,
+      scheduledClasses: scheduledClasses.length,
+      merchandiseItems: merchandiseItems.length,
+      checkIns: checkIns.length,
+      trainingVideoFolders: trainingVideoFolders.length,
+      trainingVideos: trainingVideos.length,
+      studyGuideFolders: studyGuideFolders.length,
+      studyGuideMaterials: studyGuideMaterials.length,
+      textAutomationRuns: textAutomationRuns.length
+    }
+  }), [
+    accountRole,
+    accountRoles.length,
+    accounts.length,
+    childAccounts.length,
+    checkIns.length,
+    directMessages.length,
+    managedAccounts.length,
+    managerAccountAccess.allowedTools,
+    managerAccountAccess.canCreateAccounts,
+    managerAccountAccess.canGrantCreateAccess,
+    managerAccountAccess.isDeveloper,
+    managerAccountAccess.isManagerOwner,
+    merchandiseItems.length,
+    messageCampaigns.length,
+    messageLogs.length,
+    route,
+    scheduledClasses.length,
+    scheduledTextCampaigns.length,
+    session?.email,
+    students.length,
+    studioClasses.length,
+    studioEvents.length,
+    studyGuideFolders.length,
+    studyGuideMaterials.length,
+    textAutomationRuns.length,
+    trainingVideoFolders.length,
+    trainingVideos.length
+  ]);
+  const diagnosticJson = useMemo(() => JSON.stringify(diagnostics, null, 2), [diagnostics]);
+  const dataCountCards = [
+    { label: "Students", value: students.length },
+    { label: "Managed accounts", value: managedAccounts.length },
+    { label: "Child accounts", value: childAccounts.length },
+    { label: "Messages", value: messageLogs.length },
+    { label: "Direct messages", value: directMessages.length },
+    { label: "Events", value: studioEvents.length },
+    { label: "Classes", value: studioClasses.length },
+    { label: "Scheduled classes", value: scheduledClasses.length },
+    { label: "Merchandise", value: merchandiseItems.length },
+    { label: "Reports inputs", value: students.length + messageLogs.length + managedAccounts.length + checkIns.length }
+  ];
+  const routeLinks = [
+    { label: "Profile", path: "/profile" },
+    { label: "Live Chat", path: "/live-chat" },
+    { label: "Create Accounts", path: "/manager?tool=create" },
+    { label: "Messages", path: "/messages" },
+    { label: "Reports", path: "/reports" },
+    { label: "Dashboard", path: "/dashboard" }
+  ];
+
+  const copyDiagnostics = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(diagnosticJson);
+      showToast("Developer diagnostics copied.");
+    } catch {
+      downloadTextFile(`chos-developer-diagnostics-${new Date().toISOString().slice(0, 10)}.json`, diagnosticJson, "application/json");
+      showToast("Developer diagnostics exported.");
+    }
+  };
+
+  const exportDiagnostics = () => {
+    downloadTextFile(`chos-developer-diagnostics-${new Date().toISOString().slice(0, 10)}.json`, diagnosticJson, "application/json");
+    showToast("Developer diagnostics exported.");
+  };
+
+  return (
+    <OperationsPage className="operations-page--workflow developer-tools-page" title="Developer Tools" text="Read-only diagnostics for developer testing and app verification.">
+      <section className="operations-panel workflow-directory-panel" aria-label="Developer session diagnostics">
+        <div className="student-roster-head">
+          <div>
+            <h2>Session</h2>
+            <p>Current developer identity and authorization state.</p>
+          </div>
+        </div>
+        <div className="operations-stats reports-stats">
+          <DeveloperMetricCard label="Session email" value={session?.email ?? "No session"} />
+          <DeveloperMetricCard label="Account role" value={accountRole ?? "Unknown"} />
+          <DeveloperMetricCard label="Developer identity" value={managerAccountAccess.isDeveloper ? "Developer account" : "Standard account"} />
+          <DeveloperMetricCard label="Authorization" value={managerAccountAccess.isManagerOwner ? "Owner access" : "Limited access"} />
+          <DeveloperMetricCard label="Current route" value={route} />
+        </div>
+      </section>
+
+      <section className="operations-panel workflow-directory-panel" aria-label="Developer environment diagnostics">
+        <div className="student-roster-head">
+          <div>
+            <h2>Environment</h2>
+            <p>Browser-safe build diagnostics without secrets.</p>
+          </div>
+        </div>
+        <div className="operations-stats reports-stats">
+          <DeveloperMetricCard label="Vite mode" value={import.meta.env.MODE} />
+          <DeveloperMetricCard label="Base URL" value={import.meta.env.BASE_URL} />
+          <DeveloperMetricCard label="Developer flag" value={developerFlagLabel} />
+          <DeveloperMetricCard label="Supabase" value={`Supabase auth: ${isSupabaseAuthConfigured() ? "configured" : "not configured"}`} />
+        </div>
+      </section>
+
+      <section className="operations-panel workflow-directory-panel" aria-label="Developer local data counts">
+        <div className="student-roster-head">
+          <div>
+            <h2>Local Data Counts</h2>
+            <p>Quick counts for local prototype records used by app screens and reports.</p>
+          </div>
+        </div>
+        <div className="operations-stats reports-stats">
+          {dataCountCards.map((item) => <DeveloperMetricCard key={item.label} label={item.label} value={item.value} />)}
+        </div>
+      </section>
+
+      <section className="operations-panel workflow-directory-panel" aria-label="Developer route quick links">
+        <div className="student-roster-head">
+          <div>
+            <h2>Route Quick Links</h2>
+            <p>Jump to the core pages used during manual verification.</p>
+          </div>
+        </div>
+        <div className="student-quick-actions">
+          {routeLinks.map((item) => (
+            <Link key={item.path} className="operations-action secondary" to={item.path}>
+              <ChevronRight size={18} /> {item.label}
+            </Link>
+          ))}
+        </div>
+        <div className="form-actions">
+          <button type="button" className="operations-action" onClick={copyDiagnostics}>
+            <FileText size={18} /> Copy Diagnostics JSON
+          </button>
+          <button type="button" className="operations-action secondary" onClick={exportDiagnostics}>
+            <FileText size={18} /> Export Diagnostics JSON
+          </button>
+        </div>
+      </section>
+    </OperationsPage>
+  );
+}
+
+function uniqueLandingPageOptions(options: LandingPageOption[]) {
+  const seen = new Set<LandingPagePreference>();
+  return options.filter((option) => {
+    if (seen.has(option.value)) return false;
+    seen.add(option.value);
+    return true;
+  });
+}
+
+function staffLandingPageOptions(allowedTools: readonly ManagerAccessKey[], panelLabel: string) {
+  return uniqueLandingPageOptions([
+    ...staffLandingPageBaseOptions.map((option) => option.value === "manager-panel" ? { ...option, label: panelLabel } : option),
+    ...allowedTools.flatMap((tool) => managerAccessLandingPageOptions[tool] ? [managerAccessLandingPageOptions[tool]] : [])
+  ]);
+}
+
+function landingPageValueOrDefault(value: LandingPagePreference, options: readonly LandingPageOption[], fallback: LandingPagePreference) {
+  return options.some((option) => option.value === value) ? value : fallback;
+}
+
+function FirstPagePreferenceField({
+  value,
+  options,
+  onChange
+}: {
+  value: LandingPagePreference;
+  options: LandingPageOption[];
+  onChange: (value: LandingPagePreference) => void;
+}) {
+  const selectedValue = landingPageValueOrDefault(value, options, options[0]?.value ?? "profile");
+  return (
+    <label className="field-label">
+      First page after login
+      <select className="input" value={selectedValue} onChange={(event) => onChange(event.target.value as LandingPagePreference)}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function staffLandingPath(preference: LandingPagePreference) {
+  switch (preference) {
+    case "profile":
+      return "/profile";
+    case "manager-panel":
+      return "/manager";
+    case "dashboard":
+      return "/dashboard";
+    case "messages":
+      return "/messages";
+    case "students":
+      return "/students";
+    case "classes":
+      return "/classes";
+    case "schedule":
+      return "/schedule";
+    case "check-ins":
+      return "/check-ins";
+    case "events":
+      return "/events";
+    case "merchandise":
+      return "/merchandise";
+    case "reports":
+      return "/reports";
+    case "videos":
+      return "/videos";
+    case "study-guide":
+      return "/study-guide";
+    case "live-chat":
+    default:
+      return "/live-chat";
+  }
+}
+
+function studentLandingPath(preference: LandingPagePreference) {
+  switch (preference) {
+    case "student-panel":
+      return "/manager";
+    case "check-ins":
+      return "/check-ins";
+    case "profile":
+    default:
+      return "/profile";
+  }
 }
 
 function getSelectedStudentLauncherItem(search: string) {
@@ -2333,7 +2686,7 @@ function StudentPanelToolPage({
             <small>{journeyStats.progressLabel}</small>
           </div>
           <div className="student-panel-action-row student-panel-action-row--compact">
-            <Link to="/">
+            <Link to="/profile">
               <Award size={16} aria-hidden="true" />
               <span>Open Belt Case</span>
             </Link>
@@ -2357,6 +2710,8 @@ function ManagerLauncherWorkspace({ tool }: { tool: ManagerLauncherIconKind }) {
       return <DashboardPage />;
     case "create":
       return <CreateAccountsPage />;
+    case "developer":
+      return <DeveloperToolsPage />;
     case "messages":
       return <MessagesPage />;
     case "students":
@@ -2457,7 +2812,7 @@ function StudentPanelDashboardPage() {
             </div>
           </article>
           <div className="student-panel-action-row">
-            <Link to="/">
+            <Link to="/profile">
               <Award size={16} aria-hidden="true" />
               <span>Open Belt Case</span>
             </Link>
@@ -3433,6 +3788,34 @@ const parentProfileTabs: { id: ParentProfileTab; label: string }[] = [
   { id: "notifications", label: "Notifications" }
 ];
 
+function parentTabFromLandingPage(preference: LandingPagePreference): ParentProfileTab {
+  switch (preference) {
+    case "parent-classes":
+      return "classes";
+    case "parent-study":
+      return "study";
+    case "parent-test":
+      return "test";
+    case "parent-messages":
+      return "messages";
+    case "parent-notifications":
+      return "notifications";
+    case "parent-dashboard":
+    default:
+      return "dashboard";
+  }
+}
+
+function parentLandingPath(preference: LandingPagePreference) {
+  if (preference === "profile") return "/profile";
+  return `/profile?tab=${parentTabFromLandingPage(preference)}`;
+}
+
+function parentTabFromSearch(search: string): ParentProfileTab {
+  const requestedTab = new URLSearchParams(search).get("tab");
+  return parentProfileTabs.some((tab) => tab.id === requestedTab) ? requestedTab as ParentProfileTab : "dashboard";
+}
+
 const parentStudyItems = [
   { title: "Forms at home", detail: "Review the current form slowly, then let the child perform it once without coaching." },
   { title: "Class focus", detail: "Ask what the instructor corrected last class and write one practice goal before the next visit." },
@@ -3835,7 +4218,11 @@ function studentToParentComposeRecipient(student: StudentRecord): ManagerCompose
   };
 }
 
-function buildLiveChatRoster(students: StudentRecord[], managerProfile: ManagerProfileSettings, isManagerOwner: boolean): LiveChatRosterMember[] {
+function managerProfileNameFallback(isDeveloper: boolean, isManagerOwner: boolean) {
+  return isDeveloper ? "Developer" : isManagerOwner ? "Cho's Manager" : "Cho's Staff";
+}
+
+function buildLiveChatRoster(students: StudentRecord[], managerProfile: ManagerProfileSettings, isManagerOwner: boolean, isDeveloper: boolean, staffAvatarPath: string): LiveChatRosterMember[] {
   const activeStudents = students
     .filter(isCurrentOperationsStudent)
     .slice(0, 17)
@@ -3849,9 +4236,9 @@ function buildLiveChatRoster(students: StudentRecord[], managerProfile: ManagerP
   return [
     {
       id: "current-staff",
-      name: managerProfile.name.trim() || (isManagerOwner ? "Cho's Manager" : "Cho's Staff"),
-      detail: isManagerOwner ? "Manager" : "Staff",
-      avatarSrc: managerProfile.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png")
+      name: managerProfile.name.trim() || (isDeveloper ? "Developer" : isManagerOwner ? "Cho's Manager" : "Cho's Staff"),
+      detail: isDeveloper ? "Developer" : isManagerOwner ? "Manager" : "Staff",
+      avatarSrc: managerProfile.photoDataUrl ?? publicAsset(staffAvatarPath)
     },
     ...activeStudents
   ];
@@ -3939,6 +4326,9 @@ function LiveChatMessageLine({ message }: { message: LiveChatMessage }) {
 function LiveChatPage() {
   const { logout, managerAccountAccess, session, students } = useAppState();
   const isManagerOwner = managerAccountAccess.isManagerOwner;
+  const isDeveloper = managerAccountAccess.isDeveloper;
+  const profileAvatarPath = profileAvatarPathForSession(session?.email);
+  const staffSenderName = managerProfileNameFallback(isDeveloper, isManagerOwner);
   const readChatProfile = isManagerOwner ? readManagerProfile : readStaffProfile;
   const [managerProfile, setManagerProfile] = useState(() => readChatProfile(session?.email));
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>([]);
@@ -3962,9 +4352,18 @@ function LiveChatPage() {
   const messageFeedRef = useRef<HTMLOListElement | null>(null);
   const roomTabsScrollRef = useRef<HTMLDivElement | null>(null);
   const isMessageFeedPinnedToBottomRef = useRef(true);
-  const rosterMembers = useMemo(() => buildLiveChatRoster(students, managerProfile, isManagerOwner), [isManagerOwner, managerProfile, students]);
-  const profileActionPhoto = managerProfile.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png");
-  const previewMessages = isLiveReady ? liveChatPreviewMessages : [...liveChatPreviewMessages, ...localPreviewMessages];
+  const rosterMembers = useMemo(() => buildLiveChatRoster(students, managerProfile, isManagerOwner, isDeveloper, profileAvatarPath), [isDeveloper, isManagerOwner, managerProfile, profileAvatarPath, students]);
+  const profileActionPhoto = managerProfile.photoDataUrl ?? publicAsset(profileAvatarPath);
+  const sessionPreviewMessages = useMemo(() => {
+    if (!isDeveloper) return liveChatPreviewMessages;
+    return liveChatPreviewMessages.map((message) => ({
+      ...message,
+      senderName: message.senderName === "Cho's Manager" ? "Developer" : message.senderName,
+      senderAvatarPath: message.senderName === "Cho's Manager" ? profileAvatarPath : message.senderAvatarPath,
+      body: message.body.replace(/@Cho's Manager/g, "@Developer")
+    }));
+  }, [isDeveloper, profileAvatarPath]);
+  const previewMessages = isLiveReady ? sessionPreviewMessages : [...sessionPreviewMessages, ...localPreviewMessages];
   const defaultRoomMessages = chatMessages.length ? chatMessages : previewMessages;
   const mentionMessages = defaultRoomMessages.filter((message) => liveChatMessageMentionsManager(message, managerProfile));
   const isMentionsView = activeRoomId === liveChatMentionsRoomId;
@@ -4119,14 +4518,14 @@ function LiveChatPage() {
 
     if (targetRoom && !targetRoom.isDefault) {
       const createdAt = new Date().toISOString();
-      const senderName = managerProfile.name.trim() || (isManagerOwner ? "Cho's Manager" : "Cho's Staff");
+      const senderName = managerProfile.name.trim() || staffSenderName;
       const roomMessage: LiveChatMessage = {
         id: `custom-room-${targetRoom.id}-${createdAt}-${Math.random().toString(36).slice(2)}`,
         roomKey: targetRoom.id,
         senderUserId: null,
         senderName,
         senderRole: "staff",
-        senderAvatarPath: managerProfile.photoDataUrl ? null : "assets/CheetahProfilePic/Cheetah.png",
+        senderAvatarPath: managerProfile.photoDataUrl ? null : profileAvatarPath,
         messageKind: "user",
         body: validation.body,
         createdAt
@@ -4143,14 +4542,14 @@ function LiveChatPage() {
 
     if (!isLiveReady) {
       const createdAt = new Date().toISOString();
-      const senderName = managerProfile.name.trim() || (isManagerOwner ? "Cho's Manager" : "Cho's Staff");
+      const senderName = managerProfile.name.trim() || staffSenderName;
       const previewMessage: LiveChatMessage = {
         id: `preview-local-${createdAt}-${Math.random().toString(36).slice(2)}`,
         roomKey: liveChatRoomKey,
         senderUserId: null,
         senderName,
         senderRole: "staff",
-        senderAvatarPath: managerProfile.photoDataUrl ? null : "assets/CheetahProfilePic/Cheetah.png",
+        senderAvatarPath: managerProfile.photoDataUrl ? null : profileAvatarPath,
         messageKind: "user",
         body: validation.body,
         createdAt
@@ -4165,7 +4564,7 @@ function LiveChatPage() {
     setIsSending(true);
     const result = await sendLiveChatMessage({
       body: validation.body,
-      senderAvatarPath: managerProfile.photoDataUrl ? undefined : "assets/CheetahProfilePic/Cheetah.png"
+      senderAvatarPath: managerProfile.photoDataUrl ? undefined : profileAvatarPath
     });
     setIsSending(false);
 
@@ -4185,7 +4584,7 @@ function LiveChatPage() {
         <header className="manager-launcher-topbar manager-page-title-bar" aria-label="Live chat page header">
           <ManagerPageTitleFrame title="Live Chats" className="manager-page-title-frame--manager-panel" />
           <nav className="manager-home-top-actions" aria-label="Live chat quick actions">
-            <Link className="manager-home-top-action manager-launcher-profile-link" to="/" aria-label="Profile">
+            <Link className="manager-home-top-action manager-launcher-profile-link" to="/profile" aria-label="Profile">
               <img className="manager-home-profile-action-photo" src={profileActionPhoto} alt="" draggable="false" />
               <span className="manager-home-top-action-label">Profile</span>
             </Link>
@@ -5610,6 +6009,11 @@ function StudentProfilePage() {
                     </button>
                   </div>
                 </div>
+                <FirstPagePreferenceField
+                  value={studentProfile.landingPage}
+                  options={studentLandingPageOptions}
+                  onChange={(landingPage) => setStudentProfile({ ...studentProfile, landingPage })}
+                />
                 <label className="manager-profile-check">
                   <input
                     type="checkbox"
@@ -6040,7 +6444,8 @@ function ParentChildHandoffPrompt({
 
 function ParentProfilePage() {
   const { addChildAccount, childUsernameExists, directMessages, guardianChildren, loginChildAccount, logout, scheduledClasses, session, showToast, studioClasses, studioEvents, updateChildAccount } = useAppState();
-  const [activeTab, setActiveTab] = useState<ParentProfileTab>("dashboard");
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState<ParentProfileTab>(() => parentTabFromSearch(location.search));
   const [selectedChildId, setSelectedChildId] = useState(() => guardianChildren[0]?.id ?? "");
   const [childModalMode, setChildModalMode] = useState<"add" | "edit" | null>(null);
   const [editingChildId, setEditingChildId] = useState("");
@@ -6053,7 +6458,7 @@ function ParentProfilePage() {
   const [isParentPushSubscribing, setIsParentPushSubscribing] = useState(false);
   const [isParentPushSubscriptionSyncing, setIsParentPushSubscriptionSyncing] = useState(false);
   const [parentProfileOpen, setParentProfileOpen] = useState(false);
-  const [parentTheme, setParentTheme] = useState<AppThemeMode>(() => readStoredAppTheme());
+  const [parentProfile, setParentProfile] = useState(() => readGuardianProfile(session?.email));
   const [tutorialStepId, setTutorialStepId] = useState<ParentTutorialStepId | null>(null);
   const [tutorialFinishedChildId, setTutorialFinishedChildId] = useState("");
   const [tutorialTargetPosition, setTutorialTargetPosition] = useState<ParentTutorialTargetPosition | null>(null);
@@ -6127,9 +6532,14 @@ function ParentProfilePage() {
   );
 
   useEffect(() => {
+    setParentProfile(readGuardianProfile(session?.email));
     setParentMessageNotificationSettings(readHomeMessageNotificationSettings(session?.email));
     setParentNotificationPermission(getBrowserNotificationPermission());
   }, [session?.email]);
+
+  useEffect(() => {
+    setActiveTab(parentTabFromSearch(location.search));
+  }, [location.search]);
 
   useEffect(() => {
     setParentWebPushPublicKey(parentMessageNotificationSettings.pushPublicKey ?? "");
@@ -6284,7 +6694,7 @@ function ParentProfilePage() {
   };
 
   const openParentProfileSettings = () => {
-    setParentTheme(readStoredAppTheme());
+    setParentProfile(readGuardianProfile(session?.email));
     setParentProfileOpen(true);
   };
 
@@ -6404,8 +6814,9 @@ function ParentProfilePage() {
 
   const saveParentProfileSettings = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    applyAppTheme(parentTheme);
-    writeStoredAppTheme(parentTheme);
+    writeGuardianProfile(parentProfile, session?.email);
+    applyAppTheme(parentProfile.theme);
+    writeStoredAppTheme(parentProfile.theme);
     setParentProfileOpen(false);
     showToast("Parent profile settings saved.");
   };
@@ -6656,22 +7067,27 @@ function ParentProfilePage() {
                   <div className="manager-theme-options">
                     <button
                       type="button"
-                      className={`manager-theme-option${parentTheme === "light" ? " is-active" : ""}`}
-                      aria-pressed={parentTheme === "light"}
-                      onClick={() => setParentTheme("light")}
+                      className={`manager-theme-option${parentProfile.theme === "light" ? " is-active" : ""}`}
+                      aria-pressed={parentProfile.theme === "light"}
+                      onClick={() => setParentProfile({ ...parentProfile, theme: "light" })}
                     >
                       <Sun size={16} /> Light
                     </button>
                     <button
                       type="button"
-                      className={`manager-theme-option${parentTheme === "dark" ? " is-active" : ""}`}
-                      aria-pressed={parentTheme === "dark"}
-                      onClick={() => setParentTheme("dark")}
+                      className={`manager-theme-option${parentProfile.theme === "dark" ? " is-active" : ""}`}
+                      aria-pressed={parentProfile.theme === "dark"}
+                      onClick={() => setParentProfile({ ...parentProfile, theme: "dark" })}
                     >
                       <Moon size={16} /> Dark
                     </button>
                   </div>
                 </div>
+                <FirstPagePreferenceField
+                  value={parentProfile.landingPage}
+                  options={parentLandingPageOptions}
+                  onChange={(landingPage) => setParentProfile({ ...parentProfile, landingPage })}
+                />
                 <div className="manager-profile-check parent-profile-settings-note">
                   <Palette size={18} aria-hidden="true" />
                   <span>Saved colors apply only to this parent login.</span>
@@ -6717,13 +7133,17 @@ function ManagerHomePage() {
   const { addStudioEvent, currentManagedAccount, directMessages, logout, managerAccountAccess, scheduledClasses, sendDirectMessage, session, showToast, studioClasses, studioEvents, students } = useAppState();
   const today = useLiveCalendarDate();
   const isManagerOwner = managerAccountAccess.isManagerOwner;
+  const isDeveloper = managerAccountAccess.isDeveloper;
   const readHomeProfile = isManagerOwner ? readManagerProfile : readStaffProfile;
   const writeHomeProfile = isManagerOwner ? writeManagerProfile : writeStaffProfile;
   const [managerProfile, setManagerProfile] = useState(() => readHomeProfile(session?.email));
   const profileTitle = isManagerOwner ? "Profile" : "Staff Profile";
-  const panelLabel = isManagerOwner ? "Manager's Panel" : "Staff Panel";
-  const roleLabel = isManagerOwner ? "Head Coach & Manager" : currentManagedAccount?.title?.trim() || "Staff Member";
-  const profileKindLabel = isManagerOwner ? "manager" : "staff";
+  const panelLabel = isDeveloper ? "Developer Panel" : isManagerOwner ? "Manager's Panel" : "Staff Panel";
+  const roleLabel = isDeveloper ? "Developer" : isManagerOwner ? "Head Coach & Manager" : currentManagedAccount?.title?.trim() || "Staff Member";
+  const profileKindLabel = isDeveloper ? "developer" : isManagerOwner ? "manager" : "staff";
+  const profileAvatarPath = profileAvatarPathForSession(session?.email);
+  const profileAvatarSrc = managerProfile.photoDataUrl ?? publicAsset(profileAvatarPath);
+  const staffSenderName = managerProfile.name.trim() || managerProfileNameFallback(isDeveloper, isManagerOwner);
   const activeStudentCount = students.filter((student) => (student.status ?? "Active").toLowerCase() === "active").length;
   const memberSinceLabel = formatMonthYear(session?.createdAt);
   const defaultHomeScheduleDateKey = useMemo(
@@ -7234,7 +7654,7 @@ function ManagerHomePage() {
     const createdThread: ManagerHomeThread = {
       id: `compose-${composeKind}-${timestamp.getTime()}`,
       kind: composeKind,
-      sender: "Cho's Manager",
+      sender: staffSenderName,
       title: subject,
       preview: composeMessagePreview(body),
       sentDate: sent.sentDate,
@@ -7248,7 +7668,7 @@ function ManagerHomePage() {
       recipients.forEach((recipient) => {
         sendDirectMessage({
           senderId: "direct-staff-seed",
-          senderName: "Cho's Manager",
+          senderName: staffSenderName,
           recipientId: recipient.id,
           recipientName: recipient.name,
           body: `${subject}\n\n${body}`
@@ -7284,7 +7704,7 @@ function ManagerHomePage() {
     if (selectedThread?.source === "direct" && selectedThread.replyRecipientId) {
       const sentMessage = sendDirectMessage({
         senderId: "direct-staff-seed",
-        senderName: "Cho's Manager",
+        senderName: staffSenderName,
         recipientId: selectedThread.replyRecipientId,
         recipientName: selectedThread.replyRecipientName ?? selectedThread.sender,
         body: replyText
@@ -7302,7 +7722,7 @@ function ManagerHomePage() {
   };
 
   return (
-    <section className="manager-home-page" aria-label={isManagerOwner ? "Manager home page" : "Staff home page"}>
+    <section className="manager-home-page" aria-label={isDeveloper ? "Developer home page" : isManagerOwner ? "Manager home page" : "Staff home page"}>
       <header className="manager-home-profile-title manager-home-profile-title--with-live-chat manager-page-title-bar" aria-label="Profile page header">
         <ManagerPageTitleFrame title={profileTitle} className="manager-home-profile-title-frame" />
         <nav className="manager-home-top-actions" aria-label="Profile quick actions">
@@ -7328,8 +7748,8 @@ function ManagerHomePage() {
           data-overview-state={overviewStageState}
           style={overviewStageStyle}
         >
-          <section className="manager-home-overview" aria-label={isManagerOwner ? "Manager home overview" : "Staff home overview"} ref={overviewContentRef}>
-            <article className="manager-home-profile-card" aria-label={isManagerOwner ? "Manager profile overview" : "Staff profile overview"}>
+          <section className="manager-home-overview" aria-label={isDeveloper ? "Developer home overview" : isManagerOwner ? "Manager home overview" : "Staff home overview"} ref={overviewContentRef}>
+            <article className="manager-home-profile-card" aria-label={isDeveloper ? "Developer profile overview" : isManagerOwner ? "Manager profile overview" : "Staff profile overview"}>
             <Link className="manager-home-profile-settings-link" to="/manager?profile=settings" aria-label="Profile Settings">
               <img className="manager-home-profile-settings-icon" src={managerProfileSettingsIcon} alt="" draggable="false" />
             </Link>
@@ -7352,7 +7772,7 @@ function ManagerHomePage() {
             <label className="manager-home-profile-frame manager-home-profile-upload">
                 <span className="sr-only">Upload {profileKindLabel} profile picture</span>
                 <input type="file" accept="image/*" aria-label={`Upload ${profileKindLabel} profile picture`} onChange={changeManagerProfilePhoto} />
-                <img src={managerProfile.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png")} alt={`${managerProfile.name} profile portrait`} draggable="false" />
+                <img src={profileAvatarSrc} alt={`${managerProfile.name} profile portrait`} draggable="false" />
                 <span className="manager-home-profile-change-badge" aria-hidden="true">
                   <Camera size={15} />
                 </span>
@@ -7431,7 +7851,7 @@ function ManagerHomePage() {
         </div>
         <button
           aria-expanded={!isOverviewCollapsed}
-          aria-label={isOverviewCollapsed ? "Expand manager overview" : "Collapse manager overview"}
+          aria-label={isOverviewCollapsed ? `Expand ${profileKindLabel} overview` : `Collapse ${profileKindLabel} overview`}
           className={`manager-home-overview-handle${isOverviewCollapsed ? " is-collapsed" : ""}${isOverviewDragging ? " is-dragging" : ""}`}
           onClick={handleOverviewHandleClick}
           onKeyDown={handleOverviewHandleKeyDown}
@@ -7941,42 +8361,49 @@ function ManagerLauncherPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const isManagerOwner = managerAccountAccess.isManagerOwner;
+  const isDeveloper = managerAccountAccess.isDeveloper;
   const isStudentPanel = accountRole === "student";
   const isStaffPanel = accountRole === "staff" && !isManagerOwner;
   const readPanelProfile = isManagerOwner ? readManagerProfile : readStaffProfile;
   const writePanelProfile = isManagerOwner ? writeManagerProfile : writeStaffProfile;
-  const profileOwnerLabel = isManagerOwner ? "Manager" : "Staff";
+  const profileOwnerLabel = isDeveloper ? "Developer" : isManagerOwner ? "Manager" : "Staff";
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSettings, setProfileSettings] = useState(() => readPanelProfile(session?.email));
   const [profilePassword, setProfilePassword] = useState({ newPassword: "", confirmPassword: "" });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const managerVisibleLauncherItems = managerAccountAccess.isDeveloper
+    ? [...managerLauncherItems, developerLauncherItem]
+    : managerLauncherItems;
   const launcherItems = isStudentPanel
     ? studentLauncherItems
-    : managerLauncherItems.filter((item) => managerAccountAccess.allowedTools.includes(item.icon as ManagerAccessKey));
+    : managerVisibleLauncherItems.filter((item) => item.icon === "developer" ? managerAccountAccess.isDeveloper : managerAccountAccess.allowedTools.includes(item.icon as ManagerAccessKey));
   const selectedLauncherItem = isStudentPanel
     ? getSelectedStudentLauncherItem(location.search)
-    : launcherItems.find((item) => item.icon === new URLSearchParams(location.search).get("tool")) ?? launcherItems[0] ?? managerLauncherItems[0];
-  const launcherName = isStudentPanel ? "student" : isStaffPanel ? "staff" : "manager";
-  const panelTitle = isStudentPanel ? "Student's Panel" : isStaffPanel ? "STAFF PANEL" : "MANAGER PANEL";
-  const panelAriaLabel = isStudentPanel ? "Student dashboard" : isStaffPanel ? "Staff dashboard" : "Manager dashboard";
-  const panelHeaderAriaLabel = isStudentPanel ? "Student panel page header" : isStaffPanel ? "Staff panel page header" : "Manager panel page header";
-  const panelQuickActionsLabel = isStudentPanel ? "Student panel quick actions" : isStaffPanel ? "Staff panel quick actions" : "Manager panel quick actions";
-  const launcherAriaLabel = isStudentPanel ? "Student app launcher" : isStaffPanel ? "Staff app launcher" : "Manager app launcher";
-  const workspaceFrameLabel = isStudentPanel ? "Student launcher workspace frame" : isStaffPanel ? "Staff launcher workspace frame" : "Manager launcher workspace frame";
+    : launcherItems.find((item) => item.icon === new URLSearchParams(location.search).get("tool")) ?? launcherItems[0] ?? managerVisibleLauncherItems[0] ?? managerLauncherItems[0];
+  const launcherName = isStudentPanel ? "student" : isStaffPanel ? "staff" : isDeveloper ? "developer" : "manager";
+  const panelTitle = isStudentPanel ? "Student's Panel" : isStaffPanel ? "STAFF PANEL" : isDeveloper ? "DEVELOPER PANEL" : "MANAGER PANEL";
+  const profilePanelLabel = isDeveloper ? "Developer Panel" : isManagerOwner ? "Manager's Panel" : "Staff Panel";
+  const profileLandingPageOptions = staffLandingPageOptions(managerAccountAccess.allowedTools, profilePanelLabel);
+  const panelAriaLabel = isStudentPanel ? "Student dashboard" : isStaffPanel ? "Staff dashboard" : isDeveloper ? "Developer dashboard" : "Manager dashboard";
+  const panelHeaderAriaLabel = isStudentPanel ? "Student panel page header" : isStaffPanel ? "Staff panel page header" : isDeveloper ? "Developer panel page header" : "Manager panel page header";
+  const panelQuickActionsLabel = isStudentPanel ? "Student panel quick actions" : isStaffPanel ? "Staff panel quick actions" : isDeveloper ? "Developer panel quick actions" : "Manager panel quick actions";
+  const launcherAriaLabel = isStudentPanel ? "Student app launcher" : isStaffPanel ? "Staff app launcher" : isDeveloper ? "Developer app launcher" : "Manager app launcher";
+  const workspaceFrameLabel = isStudentPanel ? "Student launcher workspace frame" : isStaffPanel ? "Staff launcher workspace frame" : isDeveloper ? "Developer launcher workspace frame" : "Manager launcher workspace frame";
   const sidebarToggleLabel = isSidebarCollapsed ? `Expand ${launcherName} app launcher` : `Collapse ${launcherName} app launcher`;
   const studentRecord = selectSessionStudent(students, session?.email, currentManagedAccount?.studentId);
   const studentPanelProfile = isStudentPanel ? readStudentProfile(session?.email, studentRecord) : undefined;
+  const profileAvatarPath = profileAvatarPathForSession(session?.email);
   const profileActionPhoto = isStudentPanel
     ? studentPanelProfile?.photoDataUrl ?? (studentRecord?.profileImagePath ? publicAsset(studentRecord.profileImagePath) : publicAsset("assets/CheetahProfilePic/Cheetah.png"))
-    : profileSettings.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png");
+    : profileSettings.photoDataUrl ?? publicAsset(profileAvatarPath);
   const activeStudentCount = students.filter((student) => (student.status ?? "Active").toLowerCase() === "active").length;
   const managerColorPreview: ProfileColorPreviewData = {
     kind: isManagerOwner ? "manager" : "staff",
     title: `${profileOwnerLabel} Profile`,
-    displayName: profileSettings.name.trim() || (isManagerOwner ? "Cho's Manager" : "Cho's Staff"),
-    roleLabel: isManagerOwner ? "Head Coach & Manager" : currentManagedAccount?.title?.trim() || "Staff Member",
-    portraitSrc: profileSettings.photoDataUrl ?? publicAsset("assets/CheetahProfilePic/Cheetah.png"),
-    avatarText: "CM",
+    displayName: profileSettings.name.trim() || managerProfileNameFallback(isDeveloper, isManagerOwner),
+    roleLabel: isDeveloper ? "Developer" : isManagerOwner ? "Head Coach & Manager" : currentManagedAccount?.title?.trim() || "Staff Member",
+    portraitSrc: profileSettings.photoDataUrl ?? publicAsset(profileAvatarPath),
+    avatarText: isDeveloper ? "DV" : "CM",
     facts: [
       { icon: <Award size={18} />, label: "Team: Summer Champions" },
       { icon: <Target size={18} />, label: `Member Since: ${formatMonthYear(session?.createdAt)}` },
@@ -8008,7 +8435,7 @@ function ManagerLauncherPage() {
 
   const closeProfileSettings = () => {
     setProfileOpen(false);
-    navigate("/", { replace: true });
+    navigate("/profile", { replace: true });
   };
 
   const saveProfileSettings = (event: FormEvent) => {
@@ -8022,6 +8449,7 @@ function ManagerLauncherPage() {
       phone: profileSettings.phone.trim(),
       updates: profileSettings.updates,
       theme: profileSettings.theme,
+      landingPage: landingPageValueOrDefault(profileSettings.landingPage, profileLandingPageOptions, "live-chat"),
       photoDataUrl: profileSettings.photoDataUrl,
       passwordUpdatedAt: profileSettings.passwordUpdatedAt
     };
@@ -8061,7 +8489,7 @@ function ManagerLauncherPage() {
     setProfileSettings(nextProfile);
     setProfilePassword({ newPassword: "", confirmPassword: "" });
     setProfileOpen(false);
-    navigate("/", { replace: true });
+    navigate("/profile", { replace: true });
     showToast(`${profileOwnerLabel} profile settings saved.`);
   };
 
@@ -8071,7 +8499,7 @@ function ManagerLauncherPage() {
         <header className="manager-launcher-topbar manager-page-title-bar" aria-label={panelHeaderAriaLabel}>
           <ManagerPageTitleFrame title={panelTitle} className="manager-page-title-frame--manager-panel" />
           <nav className="manager-home-top-actions" aria-label={panelQuickActionsLabel}>
-            <Link className="manager-home-top-action manager-launcher-profile-link" to="/" aria-label="Profile">
+            <Link className="manager-home-top-action manager-launcher-profile-link" to="/profile" aria-label="Profile">
               <img
                 className="manager-home-profile-action-photo"
                 src={profileActionPhoto}
@@ -8146,7 +8574,7 @@ function ManagerLauncherPage() {
                   className="input"
                   value={profileSettings.name}
                   onChange={(event) => setProfileSettings({ ...profileSettings, name: event.target.value })}
-                  placeholder={isManagerOwner ? "Cho's Manager" : "Cho's Staff"}
+                  placeholder={managerProfileNameFallback(isDeveloper, isManagerOwner)}
                 />
               </label>
               <label className="field-label">
@@ -8221,6 +8649,11 @@ function ManagerLauncherPage() {
                     </button>
                   </div>
                 </div>
+                <FirstPagePreferenceField
+                  value={profileSettings.landingPage}
+                  options={profileLandingPageOptions}
+                  onChange={(landingPage) => setProfileSettings({ ...profileSettings, landingPage })}
+                />
                 <label className="manager-profile-check">
                   <input
                     type="checkbox"
@@ -8293,6 +8726,7 @@ const managerAccessLabelMap: Record<ManagerAccessKey, string> = staffAccessOptio
 
 const staffPanelAccessOptions = staffAccessOptions.filter((option) => option.key !== "create");
 const staffPanelAccessKeys: ManagerAccessKey[] = staffPanelAccessOptions.map((option) => option.key);
+const managedAccountPasswordPolicyMessage = "Use at least 12 characters with uppercase, lowercase, a number, and a symbol.";
 
 function renderStaffAccessList(displayName: string) {
   return (
@@ -8361,12 +8795,19 @@ function CreateAccountsPage() {
   const staffToolCount = staffPanelAccessOptions.length;
 
   const validatePasswordPair = (password: string, confirmPassword: string) => {
-    if (password.trim().length < 8) {
-      showToast("Enter a password with at least 8 characters.");
+    const trimmedPassword = password.trim();
+    if (
+      trimmedPassword.length < 12 ||
+      !/[a-z]/.test(trimmedPassword) ||
+      !/[A-Z]/.test(trimmedPassword) ||
+      !/\d/.test(trimmedPassword) ||
+      !/[^A-Za-z0-9]/.test(trimmedPassword)
+    ) {
+      showToast(managedAccountPasswordPolicyMessage);
       return false;
     }
 
-    if (password.trim() !== confirmPassword.trim()) {
+    if (trimmedPassword !== confirmPassword.trim()) {
       showToast("The passwords do not match.");
       return false;
     }
@@ -8600,7 +9041,7 @@ function CreateAccountsPage() {
               </label>
               <label>
                 Staff password
-                <input type="password" autoComplete="new-password" value={staffForm.password} onChange={(event) => setStaffForm({ ...staffForm, password: event.target.value })} placeholder="Minimum 8 characters" />
+                <input type="password" autoComplete="new-password" value={staffForm.password} onChange={(event) => setStaffForm({ ...staffForm, password: event.target.value })} placeholder="12+ chars, mixed" />
               </label>
               <label>
                 Confirm staff password
@@ -8657,7 +9098,7 @@ function CreateAccountsPage() {
               </label>
               <label>
                 Student password
-                <input type="password" autoComplete="new-password" value={studentForm.password} onChange={(event) => setStudentForm({ ...studentForm, password: event.target.value })} placeholder="Minimum 8 characters" />
+                <input type="password" autoComplete="new-password" value={studentForm.password} onChange={(event) => setStudentForm({ ...studentForm, password: event.target.value })} placeholder="12+ chars, mixed" />
               </label>
               <label>
                 Confirm student password
@@ -11479,7 +11920,7 @@ function MessagesPage() {
       <section className="operations-panel message-settings-panel">
         <h2>Messenger Settings</h2>
         <p>All one-to-one app messenger conversations now stay inside the Home Page messenger container. Use this Manager&apos;s Page tool for message settings, mass texts, text logs, and other messaging operations.</p>
-        <Link className="operations-action secondary" to="/">
+        <Link className="operations-action secondary" to="/profile">
           <MessageCircle size={18} /> Open Home Page Messages
         </Link>
       </section>
@@ -12478,19 +12919,41 @@ function OperationsHomePage() {
   return <ManagerHomePage />;
 }
 
+function OperationsLandingRedirect() {
+  const { accountRole, managerAccountAccess, session } = useAppState();
+
+  if (accountRole === "student") {
+    const studentProfile = readStudentProfile(session?.email);
+    const landingPage = landingPageValueOrDefault(studentProfile.landingPage, studentLandingPageOptions, "profile");
+    return <Navigate to={studentLandingPath(landingPage)} replace />;
+  }
+
+  if (accountRole === "guardian") {
+    const parentProfile = readGuardianProfile(session?.email);
+    const landingPage = landingPageValueOrDefault(parentProfile.landingPage, parentLandingPageOptions, "profile");
+    return <Navigate to={parentLandingPath(landingPage)} replace />;
+  }
+
+  const panelLabel = managerAccountAccess.isDeveloper ? "Developer Panel" : managerAccountAccess.isManagerOwner ? "Manager's Panel" : "Staff Panel";
+  const landingOptions = staffLandingPageOptions(managerAccountAccess.allowedTools, panelLabel);
+  const staffProfile = managerAccountAccess.isManagerOwner ? readManagerProfile(session?.email) : readStaffProfile(session?.email);
+  const landingPage = landingPageValueOrDefault(staffProfile.landingPage, landingOptions, "live-chat");
+  return <Navigate to={staffLandingPath(landingPage)} replace />;
+}
+
 function StaffOnlyRoute({ children }: { children: ReactNode }) {
   const { accountRole } = useAppState();
-  return accountRole === "staff" ? <>{children}</> : <Navigate to="/" replace />;
+  return accountRole === "staff" ? <>{children}</> : <Navigate to="/profile" replace />;
 }
 
 function StaffOrStudentRoute({ children }: { children: ReactNode }) {
   const { accountRole } = useAppState();
-  return accountRole === "staff" || accountRole === "student" ? <>{children}</> : <Navigate to="/" replace />;
+  return accountRole === "staff" || accountRole === "student" ? <>{children}</> : <Navigate to="/profile" replace />;
 }
 
 function ManagerPanelRoute() {
   const { accountRole } = useAppState();
-  if (accountRole === "guardian") return <Navigate to="/" replace />;
+  if (accountRole === "guardian") return <Navigate to="/profile" replace />;
   return <ManagerLauncherPage />;
 }
 
@@ -12498,7 +12961,8 @@ export function OperationsApp() {
   return (
     <OperationsShell>
       <Routes>
-        <Route path="/" element={<OperationsHomePage />} />
+        <Route path="/" element={<OperationsLandingRedirect />} />
+        <Route path="/profile" element={<OperationsHomePage />} />
         <Route path="/manager" element={<ManagerPanelRoute />} />
         <Route path="/dashboard" element={<StaffOnlyRoute><DashboardPage /></StaffOnlyRoute>} />
         <Route path="/students" element={<StaffOnlyRoute><StudentsPage /></StaffOnlyRoute>} />

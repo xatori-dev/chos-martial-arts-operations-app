@@ -10,9 +10,11 @@ import {
   createGuestSession,
   getInitialLaunchPhase,
   getLoginGateState,
+  isPrototypeDeveloperLogin,
   isPrototypeManagerLogin,
   isPrototypeParentLogin,
   isPrototypeStudentLogin,
+  prototypeDeveloperLogin,
   prototypeManagerLogin,
   prototypeParentLogin,
   prototypeStudentLogin,
@@ -416,6 +418,12 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) {
       failLogin("Enter a username and password.");
+      return;
+    }
+
+    if (isPrototypeDeveloperLogin(loginForm)) {
+      login(prototypeDeveloperLogin.email, true, prototypeDeveloperLogin.role);
+      navigate("/");
       return;
     }
 
