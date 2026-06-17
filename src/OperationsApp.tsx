@@ -5733,7 +5733,7 @@ function StudentProfilePage() {
                   </button>
                 )}
               </div>
-              <div className="manager-home-unified-feed student-reference-feed" id="student-profile-unified-feed" aria-label="Student message and notification feed">
+              <div className={`manager-home-unified-feed student-reference-feed${selectedThreadId ? " is-note-focused" : ""}`} id="student-profile-unified-feed" aria-label="Student message and notification feed">
                 {visibleFeedSections.length ? (
                   visibleFeedSections.map((section) => (
                     <section className="manager-home-date-section" key={section.date} aria-label={`Messages and event notifications from ${section.date}`}>
@@ -5742,12 +5742,13 @@ function StudentProfilePage() {
                       </div>
                       {section.threads.map((thread) => {
                         const isSelected = thread.id === selectedThreadId;
+                        const isNoteDimmed = Boolean(selectedThreadId) && !isSelected;
                         const isUnread = Boolean(thread.unread);
                         const kindLabel = thread.kind === "event" ? "Event Notification" : "Message";
                         const readStatusLabel = isUnread ? "Unread" : "Read";
 
                         return (
-                          <article className={`manager-home-feed-item manager-home-feed-item--${thread.kind}${isUnread ? " is-unread" : " is-read"}${isSelected ? " is-selected" : ""}`} key={thread.id}>
+                          <article className={`manager-home-feed-item manager-home-feed-item--${thread.kind}${isUnread ? " is-unread" : " is-read"}${isSelected ? " is-selected" : ""}${isNoteDimmed ? " is-note-dimmed" : ""}`} key={thread.id}>
                             <div className="manager-home-feed-row student-profile-feed-row">
                               <button
                                 className="manager-home-feed-button"
@@ -5977,8 +5978,19 @@ function ParentProfileTabContent({
 }) {
   const childName = selectedChild?.name ?? "your child";
   const today = toDateKey(useLiveCalendarDate());
+  const [selectedParentNoteId, setSelectedParentNoteId] = useState<string | null>(null);
   const nextClass = findNextStudentScheduledClass(scheduledClasses, selectedChild?.id, today);
   const nextEvent = findNextStudioEvent(studioEvents, today);
+  const toggleParentNoteFocus = (noteId: string) => {
+    setSelectedParentNoteId((currentNoteId) => currentNoteId === noteId ? null : noteId);
+  };
+  const parentMessageListClassName = `parent-message-list${selectedParentNoteId ? " is-note-focused" : ""}`;
+  const parentMessageRowClassName = (noteId: string) =>
+    `parent-message-row${selectedParentNoteId === noteId ? " is-selected" : ""}${selectedParentNoteId && selectedParentNoteId !== noteId ? " is-note-dimmed" : ""}`;
+
+  useEffect(() => {
+    setSelectedParentNoteId(null);
+  }, [activeTab, selectedChild?.id]);
 
   if (activeTab === "classes") {
     return (
@@ -6077,16 +6089,22 @@ function ParentProfileTabContent({
           pushSubscriptionReady={parentPushSubscriptionReady}
           webPushPublicKey={parentWebPushPublicKey}
         />
-        <div className="parent-message-list">
+        <div className={parentMessageListClassName}>
           {visibleMessages.map((thread) => (
-            <article className="parent-message-row" key={thread.id}>
+            <button
+              aria-pressed={selectedParentNoteId === thread.id}
+              className={parentMessageRowClassName(thread.id)}
+              key={thread.id}
+              onClick={() => toggleParentNoteFocus(thread.id)}
+              type="button"
+            >
               <img src={thread.avatar} alt="" draggable="false" />
               <div>
                 <strong>{thread.title}</strong>
                 <span>{thread.sender} - {thread.sentDate} at {thread.sentTime}</span>
                 <p>{thread.preview}</p>
               </div>
-            </article>
+            </button>
           ))}
         </div>
       </section>
@@ -6101,26 +6119,38 @@ function ParentProfileTabContent({
           <h2>Notifications</h2>
           <p>Event notices, parent reminders, and testing updates for the family.</p>
         </header>
-        <div className="parent-message-list">
+        <div className={parentMessageListClassName}>
           {eventThreads.map((thread) => (
-            <article className="parent-message-row" key={thread.id}>
+            <button
+              aria-pressed={selectedParentNoteId === thread.id}
+              className={parentMessageRowClassName(thread.id)}
+              key={thread.id}
+              onClick={() => toggleParentNoteFocus(thread.id)}
+              type="button"
+            >
               <img src={thread.avatar} alt="" draggable="false" />
               <div>
                 <strong>{thread.title}</strong>
                 <span>{thread.sender} - {thread.sentDate} at {thread.sentTime}</span>
                 <p>{thread.preview}</p>
               </div>
-            </article>
+            </button>
           ))}
           {studioEvents.slice(0, 3).map((event) => (
-            <article className="parent-message-row" key={event.id}>
+            <button
+              aria-pressed={selectedParentNoteId === event.id}
+              className={parentMessageRowClassName(event.id)}
+              key={event.id}
+              onClick={() => toggleParentNoteFocus(event.id)}
+              type="button"
+            >
               <span className="parent-card-icon" aria-hidden="true"><CalendarDays size={20} /></span>
               <div>
                 <strong>{event.title}</strong>
                 <span>{event.date} at {event.time}</span>
                 <p>{event.details}</p>
               </div>
-            </article>
+            </button>
           ))}
         </div>
       </section>
@@ -7869,7 +7899,7 @@ function ManagerHomePage() {
               </>
             )}
           </div>
-          <div className="manager-home-unified-feed" id="manager-home-unified-feed" aria-label="Home message and notification feed">
+          <div className={`manager-home-unified-feed${selectedThreadId ? " is-note-focused" : ""}`} id="manager-home-unified-feed" aria-label="Home message and notification feed">
             {visibleFeedSections.length ? (
               visibleFeedSections.map((section) => (
                 <section className="manager-home-date-section" key={section.date} aria-label={`Messages and event notifications from ${section.date}`}>
@@ -7878,13 +7908,14 @@ function ManagerHomePage() {
                   </div>
                   {section.threads.map((thread) => {
                     const isSelected = thread.id === selectedThreadId;
+                    const isNoteDimmed = Boolean(selectedThreadId) && !isSelected;
                     const isBulkSelected = selectedFeedThreadIds.has(thread.id);
                     const isUnread = Boolean(thread.unread);
                     const kindLabel = thread.kind === "event" ? "Event Notification" : "Message";
                     const readStatusLabel = isUnread ? "Unread" : "Read";
 
                     return (
-                      <article className={`manager-home-feed-item manager-home-feed-item--${thread.kind}${isUnread ? " is-unread" : " is-read"}${isSelected ? " is-selected" : ""}${isBulkSelected ? " is-bulk-selected" : ""}`} key={thread.id}>
+                      <article className={`manager-home-feed-item manager-home-feed-item--${thread.kind}${isUnread ? " is-unread" : " is-read"}${isSelected ? " is-selected" : ""}${isNoteDimmed ? " is-note-dimmed" : ""}${isBulkSelected ? " is-bulk-selected" : ""}`} key={thread.id}>
                         <div className="manager-home-feed-row">
                           <button
                             className="manager-home-feed-button"

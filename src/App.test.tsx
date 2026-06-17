@@ -5616,6 +5616,20 @@ describe("post-login operations app", () => {
     expect(await screen.findByRole("dialog", { name: "Developer profile settings" })).toBeInTheDocument();
   });
 
+  it("dims surrounding developer Home notes when one message is selected", () => {
+    renderLoggedInDeveloperApp("/profile");
+
+    const feed = screen.getByLabelText("Home message and notification feed");
+    const attendanceRow = screen.getByRole("button", { name: /John Doe.*Attendance Confirmation/i });
+    const reminderItem = screen.getByRole("button", { name: /Head Coach.*Practice Session Reminder/i }).closest(".manager-home-feed-item") as HTMLElement;
+
+    fireEvent.click(attendanceRow);
+
+    expect(feed).toHaveClass("is-note-focused");
+    expect(attendanceRow.closest(".manager-home-feed-item")).toHaveClass("is-selected");
+    expect(reminderItem).toHaveClass("is-note-dimmed");
+  });
+
   it.skip("hides the developer launcher item for the manager owner and staff accounts", () => {
     const managerView = renderLoggedInApp("/manager");
     expect(within(screen.getByLabelText("Manager app launcher")).queryByRole("link", { name: "Developer" })).not.toBeInTheDocument();
@@ -14575,13 +14589,19 @@ describe("post-login operations app", () => {
   it("expands selected messages inside the single Home feed panel", () => {
     renderLoggedInApp("/profile");
 
+    const feed = screen.getByLabelText("Home message and notification feed");
     const attendanceRow = screen.getByRole("button", { name: /John Doe.*Attendance Confirmation/i });
-    expect(attendanceRow.closest(".manager-home-feed-item")).toHaveClass("manager-home-feed-item--message");
+    const attendanceItem = attendanceRow.closest(".manager-home-feed-item") as HTMLElement;
+    const reminderItem = screen.getByRole("button", { name: /Head Coach.*Practice Session Reminder/i }).closest(".manager-home-feed-item") as HTMLElement;
+    expect(attendanceItem).toHaveClass("manager-home-feed-item--message");
 
     fireEvent.click(attendanceRow);
 
+    expect(feed).toHaveClass("is-note-focused");
     expect(attendanceRow).toHaveAttribute("aria-expanded", "true");
-    expect(attendanceRow.closest(".manager-home-feed-item")).toHaveClass("is-selected");
+    expect(attendanceItem).toHaveClass("is-selected");
+    expect(attendanceItem).not.toHaveClass("is-note-dimmed");
+    expect(reminderItem).toHaveClass("is-note-dimmed");
     expect(screen.getByLabelText("Attendance Confirmation details")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Attendance Confirmation" })).toBeInTheDocument();
     expect(screen.getAllByText("Message").length).toBeGreaterThan(0);
@@ -14594,7 +14614,9 @@ describe("post-login operations app", () => {
 
     fireEvent.click(attendanceRow);
 
+    expect(feed).not.toHaveClass("is-note-focused");
     expect(attendanceRow).toHaveAttribute("aria-expanded", "false");
+    expect(reminderItem).not.toHaveClass("is-note-dimmed");
     expect(screen.queryByLabelText("Attendance Confirmation details")).not.toBeInTheDocument();
   });
 
