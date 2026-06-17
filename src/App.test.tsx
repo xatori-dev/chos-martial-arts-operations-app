@@ -11005,12 +11005,96 @@ describe("post-login operations app", () => {
     expect(screen.getByText("1 unread app message")).toBeInTheDocument();
     expect(screen.getByText("Can I get the testing schedule?")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Mark app messages seen" }));
+    const notificationMessage = screen.getByRole("button", { name: "Select notification from Ari Nguyen" });
+    expect(notificationMessage).toHaveAttribute("aria-pressed", "false");
 
-    expect(await screen.findByText("App message notifications marked seen.")).toBeInTheDocument();
+    fireEvent.click(notificationMessage);
+
+    expect(notificationMessage).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Selected Seen" }));
+
+    expect(await screen.findByText("1 app message notification marked seen.")).toBeInTheDocument();
     expect(screen.getByText("0 unread app messages")).toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.v1") ?? "{}")).toEqual(expect.objectContaining({
       lastSeenDirectMessageAt: "2026-06-02T15:00:00.000Z"
+    }));
+  });
+
+  it("selects all unread app-message notifications from message settings", async () => {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      },
+      {
+        id: "student-mina",
+        firstName: "Mina",
+        lastName: "Park",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0102",
+        email: "mina@example.com",
+        status: "Active",
+        beltRank: "Green",
+        classesAttended: 18,
+        missedClassCount: 0,
+        joinedAt: "2026-01-02"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.directMessages.v1", JSON.stringify([
+      {
+        id: "direct-ari-inbound",
+        threadId: "direct-staff-seed__student-ari",
+        senderId: "student-ari",
+        senderName: "Ari Nguyen",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Can I get the testing schedule?",
+        createdAt: "2026-06-02T15:00:00.000Z",
+        status: "sent"
+      },
+      {
+        id: "direct-mina-inbound",
+        threadId: "direct-staff-seed__student-mina",
+        senderId: "student-mina",
+        senderName: "Mina Park",
+        recipientId: "direct-staff-seed",
+        recipientName: "Cho's Manager",
+        body: "Is leadership class still open?",
+        createdAt: "2026-06-02T16:00:00.000Z",
+        status: "sent"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({ lastSeenDirectMessageAt: "2026-06-01T10:00:00.000Z" }));
+
+    renderLoggedInApp("/messages");
+
+    expect(screen.getByText("2 unread app messages")).toBeInTheDocument();
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Select All" }));
+
+    expect(screen.getByRole("button", { name: "Deselect notification from Ari Nguyen" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Deselect notification from Mina Park" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Clear Selection" })).toBeInTheDocument();
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Selected Seen" }));
+
+    expect(await screen.findByText("2 app message notifications marked seen.")).toBeInTheDocument();
+    expect(screen.getByText("0 unread app messages")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.v1") ?? "{}")).toEqual(expect.objectContaining({
+      lastSeenDirectMessageAt: "2026-06-02T16:00:00.000Z"
     }));
   });
 

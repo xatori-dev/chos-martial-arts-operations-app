@@ -5030,6 +5030,84 @@ select option { color: #111; }
   line-height: 1.45;
 }
 
+.message-notification-select-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.message-notification-select-row span {
+  color: var(--ops-muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.message-notification-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.message-notification-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(211, 221, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ops-text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.message-notification-item:hover,
+.message-notification-item:focus-visible,
+.message-notification-item.is-selected {
+  border-color: rgba(184, 245, 226, 0.56);
+  background: rgba(184, 245, 226, 0.12);
+}
+
+.message-notification-item:focus-visible {
+  outline: 2px solid rgba(184, 245, 226, 0.7);
+  outline-offset: 2px;
+}
+
+.message-notification-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.message-notification-item strong,
+.message-notification-item span,
+.message-notification-item time {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.message-notification-item strong {
+  font-size: 0.84rem;
+}
+
+.message-notification-item time {
+  flex: 0 0 auto;
+  color: var(--ops-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.message-notification-item > span:last-child {
+  color: var(--ops-muted);
+  line-height: 1.4;
+}
+
 .message-notification-actions {
   display: flex;
   flex-wrap: wrap;

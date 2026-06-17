@@ -421,6 +421,7 @@ export interface MessageNotificationSettings {
   browserNotificationsEnabled: boolean;
   browserPermission?: "default" | "granted" | "denied" | "unsupported";
   lastSeenDirectMessageAt?: string;
+  seenDirectMessageIds?: string[];
   lastBrowserNotifiedAt?: string;
   lastBrowserNotifiedDirectMessageAt?: string;
   pushPublicKey?: string;

@@ -363,6 +363,7 @@ interface AppState {
   messageLogs: MessageLog[];
   textAutomationRuns: TextAutomationRun[];
   messageNotificationSettings: MessageNotificationSettings;
+  unreadDirectMessages: DirectMessage[];
   unreadDirectMessageCount: number;
   latestUnreadDirectMessage?: DirectMessage;
   directMessages: DirectMessage[];
@@ -447,7 +448,7 @@ interface AppState {
   sendQueuedText: (messageId: string) => MessageLog | undefined;
   clearStaleQueuedTexts: () => number;
   updateMessageNotificationSettings: (settings: Partial<MessageNotificationSettings>) => void;
-  markMessageNotificationsSeen: () => void;
+  markMessageNotificationsSeen: (messageIds?: readonly string[]) => void;
   sendDirectMessage: (message: { senderId: string; senderName: string; recipientId: string; recipientName: string; body: string }) => DirectMessage | undefined;
 }
 
@@ -652,6 +653,12 @@ function cleanNotificationString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function cleanNotificationStringList(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const cleanValues = [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))];
+  return cleanValues.length ? cleanValues : undefined;
+}
+
 function cleanNotificationPermission(value: unknown): MessageNotificationSettings["browserPermission"] {
   return value === "default" || value === "granted" || value === "denied" || value === "unsupported" ? value : undefined;
 }
@@ -663,6 +670,7 @@ function normalizeMessageNotificationSettings(value: unknown): MessageNotificati
     browserNotificationsEnabled: Boolean(settings.browserNotificationsEnabled),
     ...(cleanNotificationPermission(settings.browserPermission) ? { browserPermission: cleanNotificationPermission(settings.browserPermission) } : {}),
     ...(cleanNotificationString(settings.lastSeenDirectMessageAt) ? { lastSeenDirectMessageAt: cleanNotificationString(settings.lastSeenDirectMessageAt) } : {}),
+    ...(cleanNotificationStringList(settings.seenDirectMessageIds) ? { seenDirectMessageIds: cleanNotificationStringList(settings.seenDirectMessageIds) } : {}),
     ...(cleanNotificationString(settings.lastBrowserNotifiedAt) ? { lastBrowserNotifiedAt: cleanNotificationString(settings.lastBrowserNotifiedAt) } : {}),
     ...(cleanNotificationString(settings.lastBrowserNotifiedDirectMessageAt) ? { lastBrowserNotifiedDirectMessageAt: cleanNotificationString(settings.lastBrowserNotifiedDirectMessageAt) } : {}),
     ...(cleanNotificationString(settings.pushPublicKey) ? { pushPublicKey: cleanNotificationString(settings.pushPublicKey) } : {}),
@@ -1148,11 +1156,13 @@ function directMessageStudentIdForParticipant(participantId: string) {
 
 function getUnreadDirectMessageNotifications(directMessages: readonly DirectMessage[], settings: MessageNotificationSettings, students: readonly StudentRecord[]) {
   const lastSeen = settings.lastSeenDirectMessageAt?.trim() ?? "";
+  const seenDirectMessageIds = new Set(settings.seenDirectMessageIds ?? []);
   const currentStudentIds = new Set(students.filter(isCurrentOperationsStudent).map((student) => student.id));
   return directMessages
     .filter((message) => {
       const createdAt = message.createdAt.trim();
       if (message.status !== "sent" || !createdAt || createdAt <= lastSeen) return false;
+      if (seenDirectMessageIds.has(message.id)) return false;
       if (!isStaffDirectMessageParticipant(message.recipientId) || isStaffDirectMessageParticipant(message.senderId)) return false;
       return currentStudentIds.has(directMessageStudentIdForParticipant(message.senderId));
     })
@@ -2104,15 +2114,44 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [setMessageNotificationSettings]
   );
 
-  const markMessageNotificationsSeen = useCallback(() => {
-    const latestMessage = getUnreadDirectMessageNotifications(directMessagesRef.current, messageNotificationSettings, studentsRef.current)[0];
-    const lastSeenDirectMessageAt = latestMessage?.createdAt ?? new Date().toISOString();
-    setMessageNotificationSettings((current) => ({
-      ...current,
-      lastSeenDirectMessageAt,
-      updatedAt: new Date().toISOString()
-    }));
-  }, [messageNotificationSettings, setMessageNotificationSettings]);
+  const markMessageNotificationsSeen = useCallback((messageIds?: readonly string[]) => {
+    setMessageNotificationSettings((current) => {
+      const unreadMessages = getUnreadDirectMessageNotifications(directMessagesRef.current, current, studentsRef.current);
+      const requestedIds = new Set((messageIds ?? []).map((id) => id.trim()).filter(Boolean));
+      const messagesToMark = requestedIds.size
+        ? unreadMessages.filter((message) => requestedIds.has(message.id))
+        : unreadMessages;
+      const now = new Date().toISOString();
+
+      if (!messagesToMark.length) {
+        return {
+          ...current,
+          updatedAt: now
+        };
+      }
+
+      const latestMarkedMessage = [...messagesToMark].sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))[0];
+      const allUnreadMarked = messagesToMark.length === unreadMessages.length;
+
+      if (allUnreadMarked) {
+        return {
+          ...current,
+          lastSeenDirectMessageAt: latestMarkedMessage?.createdAt ?? now,
+          seenDirectMessageIds: undefined,
+          updatedAt: now
+        };
+      }
+
+      const seenDirectMessageIds = new Set(current.seenDirectMessageIds ?? []);
+      messagesToMark.forEach((message) => seenDirectMessageIds.add(message.id));
+
+      return {
+        ...current,
+        seenDirectMessageIds: Array.from(seenDirectMessageIds).slice(-200),
+        updatedAt: now
+      };
+    });
+  }, [setMessageNotificationSettings]);
 
   const showToast = useCallback((message: string, actionLabel?: string, onAction?: () => void) => {
     const id = createPrototypeId("toast");
@@ -3862,6 +3901,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     messageLogs,
     textAutomationRuns,
     messageNotificationSettings,
+    unreadDirectMessages,
     unreadDirectMessageCount,
     latestUnreadDirectMessage,
     directMessages,

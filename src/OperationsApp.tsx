@@ -10412,7 +10412,6 @@ function MessagePreview({ message, onSendQueuedText }: { message: MessageLog; on
 
 function MessagesPage() {
   const {
-    directMessages,
     latestUnreadDirectMessage,
     managedAccounts,
     markMessageNotificationsSeen,
@@ -10440,6 +10439,7 @@ function MessagesPage() {
     session,
     textAutomationRuns,
     accountRole,
+    unreadDirectMessages,
     unreadDirectMessageCount,
     updateMessageNotificationSettings
   } = useAppState();
@@ -10489,6 +10489,15 @@ function MessagesPage() {
   const visibleTextAutomationRuns = textAutomationRuns.slice(0, 3);
   const latestUnreadPreview = latestUnreadDirectMessage?.body.trim() || "No unread app replies are waiting.";
   const latestUnreadSender = latestUnreadDirectMessage?.senderName.trim() || "No sender";
+  const [selectedNotificationIds, setSelectedNotificationIds] = useState<Set<string>>(() => new Set());
+  const unreadNotificationIds = useMemo(() => unreadDirectMessages.map((message) => message.id), [unreadDirectMessages]);
+  const unreadNotificationIdKey = unreadNotificationIds.join("|");
+  const selectedUnreadNotificationIds = useMemo(
+    () => unreadNotificationIds.filter((id) => selectedNotificationIds.has(id)),
+    [selectedNotificationIds, unreadNotificationIds]
+  );
+  const selectedNotificationCount = selectedUnreadNotificationIds.length;
+  const allUnreadNotificationsSelected = Boolean(unreadNotificationIds.length) && selectedNotificationCount === unreadNotificationIds.length;
 
   useEffect(() => {
     setBrowserPermission(getBrowserNotificationPermission());
@@ -10505,6 +10514,14 @@ function MessagesPage() {
     }
     void clearDisplayedAppMessageNotifications();
   }, [unreadDirectMessageCount]);
+
+  useEffect(() => {
+    const unreadIds = new Set(unreadNotificationIds);
+    setSelectedNotificationIds((current) => {
+      const nextSelectedIds = new Set(Array.from(current).filter((id) => unreadIds.has(id)));
+      return nextSelectedIds.size === current.size ? current : nextSelectedIds;
+    });
+  }, [unreadNotificationIdKey, unreadNotificationIds]);
 
   useEffect(() => {
     const message = latestUnreadDirectMessage;
@@ -11374,8 +11391,32 @@ function MessagesPage() {
     showToast("Text automation manifest exported.");
   };
 
+  const toggleNotificationSelection = (messageId: string) => {
+    setSelectedNotificationIds((current) => {
+      const nextSelectedIds = new Set(current);
+      if (nextSelectedIds.has(messageId)) {
+        nextSelectedIds.delete(messageId);
+      } else {
+        nextSelectedIds.add(messageId);
+      }
+      return nextSelectedIds;
+    });
+  };
+
+  const toggleSelectAllNotifications = () => {
+    setSelectedNotificationIds(allUnreadNotificationsSelected ? new Set() : new Set(unreadNotificationIds));
+  };
+
+  const markSelectedAppMessagesSeen = () => {
+    if (!selectedNotificationCount) return;
+    markMessageNotificationsSeen(selectedUnreadNotificationIds);
+    setSelectedNotificationIds(new Set());
+    showToast(`${selectedNotificationCount} app message notification${selectedNotificationCount === 1 ? "" : "s"} marked seen.`);
+  };
+
   const markAppMessagesSeen = () => {
     markMessageNotificationsSeen();
+    setSelectedNotificationIds(new Set());
     showToast("App message notifications marked seen.");
   };
 
@@ -11396,12 +11437,48 @@ function MessagesPage() {
           </div>
           <h2>Notification Center</h2>
           <p className="message-notification-count">{unreadDirectMessageCount} unread app message{unreadDirectMessageCount === 1 ? "" : "s"}</p>
-          <article className="message-notification-preview" aria-label="Latest unread app message">
-            <strong>{latestUnreadSender}</strong>
-            <p>{latestUnreadPreview}</p>
-          </article>
+          {unreadDirectMessages.length ? (
+            <>
+              <div className="message-notification-select-row">
+                <button type="button" className="operations-action secondary" onClick={toggleSelectAllNotifications}>
+                  <CheckCircle2 size={18} /> {allUnreadNotificationsSelected ? "Clear Selection" : "Select All"}
+                </button>
+                <span>{selectedNotificationCount} selected</span>
+              </div>
+              <div className="message-notification-list" aria-label="Unread app message notifications">
+                {unreadDirectMessages.map((message) => {
+                  const isSelected = selectedNotificationIds.has(message.id);
+                  const timestamp = formatDirectMessageTimestamp(message.createdAt);
+                  return (
+                    <button
+                      type="button"
+                      className={`message-notification-item${isSelected ? " is-selected" : ""}`}
+                      aria-pressed={isSelected}
+                      aria-label={`${isSelected ? "Deselect" : "Select"} notification from ${message.senderName}`}
+                      key={message.id}
+                      onClick={() => toggleNotificationSelection(message.id)}
+                    >
+                      <span className="message-notification-item-head">
+                        <strong>{message.senderName}</strong>
+                        <time dateTime={message.createdAt}>{timestamp.sentDate} {timestamp.sentTime}</time>
+                      </span>
+                      <span>{message.body}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <article className="message-notification-preview" aria-label="Latest unread app message">
+              <strong>{latestUnreadSender}</strong>
+              <p>{latestUnreadPreview}</p>
+            </article>
+          )}
           <div className="message-notification-actions">
-            <button type="button" className="operations-action" onClick={markAppMessagesSeen} disabled={!directMessages.length}>
+            <button type="button" className="operations-action" onClick={markSelectedAppMessagesSeen} disabled={!selectedNotificationCount}>
+              <CheckCircle2 size={18} /> Mark Selected Seen
+            </button>
+            <button type="button" className="operations-action secondary" onClick={markAppMessagesSeen} disabled={!unreadDirectMessageCount}>
               <CheckCircle2 size={18} /> Mark app messages seen
             </button>
             <button type="button" className="operations-action secondary" onClick={enableDeviceNotifications}>
