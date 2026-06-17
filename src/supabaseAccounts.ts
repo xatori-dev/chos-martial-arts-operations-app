@@ -124,6 +124,10 @@ export function supabaseAuthEmailForUsername(username: string) {
   return `${normalizedUsername}@${supabaseAccountAuthDomain}`;
 }
 
+export function isSupportedSupabaseLoginUsername(username: string) {
+  return username.trim().toLowerCase() === managerUsername;
+}
+
 function saveSupabaseAuthSession(response: SupabasePasswordResponse) {
   if (!response.access_token || !response.user?.id) return;
   const expiresAt = response.expires_at ? response.expires_at * 1000 : Date.now() + Math.max(1, response.expires_in ?? 3600) * 1000;
@@ -184,6 +188,7 @@ export async function signInSupabaseAccount(credentials: { username: string; pas
   const username = normalizeSupabaseUsername(cleanedInput);
   const password = credentials.password.trim();
   if (!username || !password) return { status: "invalid" };
+  if (!isSupportedSupabaseLoginUsername(cleanedInput)) return { status: "invalid" };
 
   const authEmail = cleanedInput.includes("@") ? cleanedInput.toLowerCase() : supabaseAuthEmailForUsername(username);
   const tokenUrl = `${supabaseUrl().replace(/\/+$/, "")}/auth/v1/token?grant_type=password`;

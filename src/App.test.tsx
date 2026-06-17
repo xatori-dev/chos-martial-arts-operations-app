@@ -2381,6 +2381,30 @@ describe("login landing", () => {
     expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).not.toContainEqual({ email: "jordan.staff", role: "staff" });
   });
 
+  it("does not send retired staff usernames to Supabase when staging auth is configured", async () => {
+    vi.stubEnv("VITE_ENABLE_SUPABASE_IN_TESTS", "true");
+    vi.stubEnv("VITE_SUPABASE_URL", "https://zfuwbbepsnmmlpgfkmhz.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      renderLoggedOutApp("/");
+
+      fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "jordan.staff" } });
+      fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123!" } });
+      fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+      expect(screen.getByRole("dialog", { name: "Login failed" })).toBeInTheDocument();
+      expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("rejects the retired prototype student credential at login", () => {
     renderLoggedOutApp("/");
 
@@ -3556,6 +3580,18 @@ describe("post-login operations app", () => {
     expect(quickActions).toEqual(["Live Chat", "Manager's Panel", "Log Out"]);
     expect(within(profileTitleHeader).getByRole("link", { name: "Live Chat" })).toHaveAttribute("href", "/live-chat");
     expect(within(profileTitleHeader).getByRole("link", { name: "Manager's Panel" })).toHaveAttribute("href", "/manager");
+  });
+
+  it("does not offer local password changes from manager profile settings", async () => {
+    renderLoggedInApp("/profile");
+
+    const profileOverview = within(screen.getByLabelText("Manager home overview")).getByLabelText("Manager profile overview");
+    fireEvent.click(within(profileOverview).getByRole("link", { name: "Profile Settings" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Manager profile settings" });
+    expect(within(dialog).queryByLabelText("New Password")).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Confirm Password")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("Sign-in passwords are managed in Supabase Auth for Manager123 and cannot be changed from profile settings.")).toBeInTheDocument();
   });
 
   it.skip("opens the staff-only live chat room route", () => {
@@ -6468,8 +6504,9 @@ describe("post-login operations app", () => {
     fireEvent.change(within(dialog).getByLabelText("Username"), { target: { value: "master-cho" } });
     fireEvent.change(within(dialog).getByLabelText("Email"), { target: { value: "manager@chos.test" } });
     fireEvent.change(within(dialog).getByLabelText("Phone"), { target: { value: "(262) 555-0199" } });
-    fireEvent.change(within(dialog).getByLabelText("New Password"), { target: { value: "dojo-pass-2026" } });
-    fireEvent.change(within(dialog).getByLabelText("Confirm Password"), { target: { value: "dojo-pass-2026" } });
+    expect(within(dialog).queryByLabelText("New Password")).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Confirm Password")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("Sign-in passwords are managed in Supabase Auth for Manager123 and cannot be changed from profile settings.")).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Light" }));
     fireEvent.click(within(dialog).getByLabelText("Receive manager updates and reminders"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Save Profile Settings" }));
@@ -6483,9 +6520,9 @@ describe("post-login operations app", () => {
       email: "manager@chos.test",
       phone: "(262) 555-0199",
       updates: false,
-      theme: "light",
-      passwordUpdatedAt: expect.any(String)
+      theme: "light"
     }));
+    expect(savedProfile).not.toHaveProperty("passwordUpdatedAt");
     expect(savedProfile).not.toHaveProperty("password");
     expect(window.localStorage.getItem("chos.theme.v1")).toBe("light");
     expect(document.documentElement).toHaveAttribute("data-theme", "light");

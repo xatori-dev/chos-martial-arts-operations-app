@@ -8378,7 +8378,6 @@ function ManagerLauncherPage() {
   const profileOwnerLabel = isDeveloper ? "Developer" : isManagerOwner ? "Manager" : "Staff";
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSettings, setProfileSettings] = useState(() => readPanelProfile(session?.email));
-  const [profilePassword, setProfilePassword] = useState({ newPassword: "", confirmPassword: "" });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const managerVisibleLauncherItems = managerAccountAccess.isDeveloper
     ? [...managerLauncherItems, developerLauncherItem]
@@ -8431,7 +8430,6 @@ function ManagerLauncherPage() {
       return;
     }
     setProfileSettings(readPanelProfile(session?.email));
-    setProfilePassword({ newPassword: "", confirmPassword: "" });
     setProfileOpen(true);
     navigate("/manager", { replace: true });
   }, [isStudentPanel, location.search, navigate, readPanelProfile, session?.email]);
@@ -8449,8 +8447,6 @@ function ManagerLauncherPage() {
 
   const saveProfileSettings = (event: FormEvent) => {
     event.preventDefault();
-    const newPassword = profilePassword.newPassword.trim();
-    const confirmPassword = profilePassword.confirmPassword.trim();
     const nextProfile: ManagerProfileSettings = {
       name: profileSettings.name.trim(),
       username: profileSettings.username.trim(),
@@ -8478,25 +8474,10 @@ function ManagerLauncherPage() {
       return;
     }
 
-    if (newPassword || confirmPassword) {
-      if (newPassword.length < 8) {
-        showToast("Enter a password with at least 8 characters.");
-        return;
-      }
-
-      if (newPassword !== confirmPassword) {
-        showToast(`The ${profileOwnerLabel.toLowerCase()} passwords do not match.`);
-        return;
-      }
-
-      nextProfile.passwordUpdatedAt = new Date().toISOString();
-    }
-
     applyAppTheme(nextProfile.theme);
     writeStoredAppTheme(nextProfile.theme);
     writePanelProfile(nextProfile, session?.email);
     setProfileSettings(nextProfile);
-    setProfilePassword({ newPassword: "", confirmPassword: "" });
     setProfileOpen(false);
     navigate("/profile", { replace: true });
     showToast(`${profileOwnerLabel} profile settings saved.`);
@@ -8614,28 +8595,7 @@ function ManagerLauncherPage() {
                   placeholder="(262) 555-0100"
                 />
               </label>
-              <label className="field-label">
-                New Password
-                <input
-                  className="input"
-                  type="password"
-                  value={profilePassword.newPassword}
-                  onChange={(event) => setProfilePassword({ ...profilePassword, newPassword: event.target.value })}
-                  autoComplete="new-password"
-                  placeholder="Enter new password"
-                />
-              </label>
-              <label className="field-label">
-                Confirm Password
-                <input
-                  className="input"
-                  type="password"
-                  value={profilePassword.confirmPassword}
-                  onChange={(event) => setProfilePassword({ ...profilePassword, confirmPassword: event.target.value })}
-                  autoComplete="new-password"
-                  placeholder="Confirm new password"
-                />
-              </label>
+              <p className="operations-note">Sign-in passwords are managed in Supabase Auth for Manager123 and cannot be changed from profile settings.</p>
               <div className="manager-profile-preferences">
                 <div className="manager-theme-setting" role="group" aria-label="App theme">
                   <span>App Theme</span>

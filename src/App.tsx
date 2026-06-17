@@ -3,7 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSPrope
 import { useLocation, useNavigate } from "react-router";
 import { publicAsset } from "./appAssets";
 import { useAppState } from "./state";
-import { isSupabaseAuthConfigured, signInSupabaseAccount } from "./supabaseAccounts";
+import { isSupabaseAuthConfigured, isSupportedSupabaseLoginUsername, signInSupabaseAccount } from "./supabaseAccounts";
 import { initializeAppTheme } from "./theme";
 import {
   getInitialLaunchPhase,
@@ -352,7 +352,7 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
       return;
     }
 
-    if (supabaseConfigured) {
+    if (supabaseConfigured && isSupportedSupabaseLoginUsername(loginForm.username)) {
       setLoginPending(true);
       try {
         const supabaseLogin = await signInSupabaseAccount(loginForm);
