@@ -30,6 +30,17 @@ function offlineFallbackResponse() {
   });
 }
 
+function cachedAppShellResponse() {
+  return caches
+    .match(scopedUrl(""))
+    .then((cachedResponse) => {
+      if (cachedResponse) return cachedResponse;
+      return fetch(scopedUrl(""))
+        .then((response) => (response.ok ? response : offlineFallbackResponse()))
+        .catch(() => offlineFallbackResponse());
+    });
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
@@ -60,11 +71,14 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
-          const responseClone = response.clone();
-          event.waitUntil(caches.open(appShellCacheName).then((cache) => cache.put(scopedUrl(""), responseClone)).catch(() => undefined));
+          if (response.status === 404) return cachedAppShellResponse();
+          if (response.ok && requestUrl.toString() === scopedUrl("")) {
+            const responseClone = response.clone();
+            event.waitUntil(caches.open(appShellCacheName).then((cache) => cache.put(scopedUrl(""), responseClone)).catch(() => undefined));
+          }
           return response;
         })
-        .catch(() => caches.match(scopedUrl("")).then((cachedResponse) => cachedResponse || offlineFallbackResponse()))
+        .catch(() => cachedAppShellResponse())
     );
     return;
   }
