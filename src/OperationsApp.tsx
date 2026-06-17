@@ -9135,10 +9135,11 @@ function CreateAccountsPage() {
     phone: "",
     notes: ""
   });
+  const [isCreatingAccount, setIsCreatingAccount] = useState(false);
 
   if (!managerAccountAccess.canCreateAccounts) return <Navigate to="/manager" replace />;
 
-  const syncSupabaseAccount = (account: {
+  const createLiveSupabaseAccount = async (account: {
     displayName: string;
     username: string;
     password: string;
@@ -9150,18 +9151,27 @@ function CreateAccountsPage() {
     access?: ManagerAccessKey[];
     studentId?: string;
   }) => {
-    if (!isSupabaseAuthConfigured()) return;
+    if (!isSupabaseAuthConfigured()) return false;
     if (!readSupabaseAuthSession()) {
-      showToast("Account created locally. Sign into Supabase Manager123 to sync live accounts.");
-      return;
+      showFormMessage("Sign into Supabase Manager123 before creating live accounts.");
+      showToast("Supabase Manager123 sign-in required before creating live accounts.");
+      return true;
     }
-    void createSupabaseManagedAccount({ ...account, status: "active" }).then((result) => {
+    setIsCreatingAccount(true);
+    try {
+      const result = await createSupabaseManagedAccount({ ...account, status: "active" });
       if (result.status === "ok") {
-        showToast("Account synced to Supabase.");
-      } else if (result.status === "error") {
-        showToast(`Account created locally. ${result.message}`);
+        setFormMessage("");
+        showToast("Account created in Supabase.");
+        return true;
       }
-    });
+      const message = result.status === "error" ? result.message : "Supabase account creation is not configured.";
+      showFormMessage(message);
+      showToast(message);
+      return true;
+    } finally {
+      setIsCreatingAccount(false);
+    }
   };
 
   const validatePasswordFields = (password: string, confirmPassword: string) => {
@@ -9176,7 +9186,7 @@ function CreateAccountsPage() {
     setFormMessage(message);
   };
 
-  const createStaff = (event: FormEvent) => {
+  const createStaff = async (event: FormEvent) => {
     event.preventDefault();
     const passwordError = validatePasswordFields(staffForm.password, staffForm.confirmPassword);
     if (passwordError) {
@@ -9184,6 +9194,30 @@ function CreateAccountsPage() {
       return;
     }
     const username = normalizeCreateUsername(staffForm.username);
+    const displayName = staffForm.displayName.trim();
+    if (!displayName || !username) {
+      showFormMessage("Enter a unique staff username and profile name.");
+      return;
+    }
+    if (isSupabaseAuthConfigured()) {
+      const liveCreated = await createLiveSupabaseAccount({
+        displayName,
+        username,
+        password: staffForm.password,
+        role: "staff",
+        email: staffForm.email.trim() || `${username}@chos.prototype`,
+        phone: staffForm.phone,
+        title: staffForm.title,
+        notes: staffForm.notes,
+        access: staffForm.access
+      });
+      if (liveCreated) {
+        if (readSupabaseAuthSession()) {
+          setStaffForm({ displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "", title: "Instructor", notes: "", access: defaultStaffAccess });
+        }
+        return;
+      }
+    }
     const account = createManagedAccount({
       displayName: staffForm.displayName,
       username,
@@ -9202,20 +9236,9 @@ function CreateAccountsPage() {
     setFormMessage("");
     setStaffForm({ displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "", title: "Instructor", notes: "", access: defaultStaffAccess });
     showToast(`${account.displayName} staff account created.`);
-    syncSupabaseAccount({
-      displayName: account.displayName,
-      username: account.username,
-      password: account.password,
-      role: "staff",
-      email: account.email ?? `${account.username}@chos.prototype`,
-      phone: account.phone,
-      title: account.title,
-      notes: account.notes,
-      access: account.access
-    });
   };
 
-  const createStudent = (event: FormEvent) => {
+  const createStudent = async (event: FormEvent) => {
     event.preventDefault();
     const passwordError = validatePasswordFields(studentForm.password, studentForm.confirmPassword);
     if (passwordError) {
@@ -9223,6 +9246,31 @@ function CreateAccountsPage() {
       return;
     }
     const username = normalizeCreateUsername(studentForm.username);
+    const studentName = studentForm.fullName.trim();
+    if (!studentName || !username) {
+      showFormMessage("Enter the student name, username, and password.");
+      return;
+    }
+    if (isSupabaseAuthConfigured()) {
+      const liveCreated = await createLiveSupabaseAccount({
+        displayName: studentName,
+        username,
+        password: studentForm.password,
+        role: "student",
+        email: studentForm.studentEmail.trim() || `${username}@chos.prototype`,
+        phone: studentForm.guardianPhone,
+        title: `${studentForm.beltRank.trim() || "White"} Belt Student`,
+        notes: studentForm.notes,
+        access: [],
+        studentId: `student-${username.replace(/[^a-z0-9]+/g, "-")}`
+      });
+      if (liveCreated) {
+        if (readSupabaseAuthSession()) {
+          setStudentForm({ fullName: "", username: "", password: "", confirmPassword: "", studentEmail: "", guardianName: "", guardianPhone: "", guardianEmail: "", program: "Youth Taekwondo", beltRank: "White", notes: "" });
+        }
+        return;
+      }
+    }
     const student = addOperationsStudent({
       fullName: studentForm.fullName,
       studentEmail: studentForm.studentEmail,
@@ -9238,9 +9286,9 @@ function CreateAccountsPage() {
       showFormMessage("Enter the student name, email, guardian phone, and belt rank.");
       return;
     }
-    const studentName = fullName(student);
+    const localStudentName = fullName(student);
     const account = createManagedAccount({
-      displayName: studentName,
+      displayName: localStudentName,
       username,
       password: studentForm.password,
       role: "student",
@@ -9258,21 +9306,9 @@ function CreateAccountsPage() {
     setFormMessage("");
     setStudentForm({ fullName: "", username: "", password: "", confirmPassword: "", studentEmail: "", guardianName: "", guardianPhone: "", guardianEmail: "", program: "Youth Taekwondo", beltRank: "White", notes: "" });
     showToast(`${account.displayName} student account created.`);
-    syncSupabaseAccount({
-      displayName: account.displayName,
-      username: account.username,
-      password: account.password,
-      role: "student",
-      email: account.email ?? `${account.username}@chos.prototype`,
-      phone: account.phone,
-      title: account.title,
-      notes: account.notes,
-      access: [],
-      studentId: account.studentId
-    });
   };
 
-  const createParent = (event: FormEvent) => {
+  const createParent = async (event: FormEvent) => {
     event.preventDefault();
     const passwordError = validatePasswordFields(parentForm.password, parentForm.confirmPassword);
     if (passwordError) {
@@ -9280,6 +9316,29 @@ function CreateAccountsPage() {
       return;
     }
     const username = normalizeCreateUsername(parentForm.username);
+    const displayName = parentForm.displayName.trim();
+    if (!displayName || !username) {
+      showFormMessage("Enter a unique parent username and profile name.");
+      return;
+    }
+    if (isSupabaseAuthConfigured()) {
+      const liveCreated = await createLiveSupabaseAccount({
+        displayName,
+        username,
+        password: parentForm.password,
+        role: "guardian",
+        email: parentForm.email.trim() || `${username}@chos.prototype`,
+        phone: parentForm.phone,
+        notes: parentForm.notes,
+        access: []
+      });
+      if (liveCreated) {
+        if (readSupabaseAuthSession()) {
+          setParentForm({ displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "", notes: "" });
+        }
+        return;
+      }
+    }
     const account = createGuardianAccount({
       displayName: parentForm.displayName,
       username,
@@ -9295,16 +9354,6 @@ function CreateAccountsPage() {
     setFormMessage("");
     setParentForm({ displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "", notes: "" });
     showToast(`${account.displayName ?? account.email} parent account created.`);
-    syncSupabaseAccount({
-      displayName: account.displayName ?? account.email,
-      username: account.email,
-      password: account.password ?? parentForm.password,
-      role: "guardian",
-      email: account.contactEmail ?? `${account.email}@chos.prototype`,
-      phone: account.phone,
-      notes: account.notes,
-      access: []
-    });
   };
 
   const toggleStaffAccess = (key: ManagerAccessKey) => {
@@ -9377,7 +9426,7 @@ function CreateAccountsPage() {
             </fieldset>
             <label className="create-account-notes">Staff notes<textarea value={staffForm.notes} onChange={(event) => setStaffForm({ ...staffForm, notes: event.target.value })} /></label>
             <div className="student-editor-actions">
-              <button type="submit"><CheckCircle2 size={18} /> Create Staff Account</button>
+              <button type="submit" disabled={isCreatingAccount}><CheckCircle2 size={18} /> Create Staff Account</button>
             </div>
           </form>
         )}
@@ -9398,7 +9447,7 @@ function CreateAccountsPage() {
             </div>
             <label className="create-account-notes">Student notes<textarea value={studentForm.notes} onChange={(event) => setStudentForm({ ...studentForm, notes: event.target.value })} /></label>
             <div className="student-editor-actions">
-              <button type="submit"><CheckCircle2 size={18} /> Create Student Account</button>
+              <button type="submit" disabled={isCreatingAccount}><CheckCircle2 size={18} /> Create Student Account</button>
             </div>
           </form>
         )}
@@ -9415,7 +9464,7 @@ function CreateAccountsPage() {
             </div>
             <label className="create-account-notes">Parent notes<textarea value={parentForm.notes} onChange={(event) => setParentForm({ ...parentForm, notes: event.target.value })} /></label>
             <div className="student-editor-actions">
-              <button type="submit"><CheckCircle2 size={18} /> Create Parent Account</button>
+              <button type="submit" disabled={isCreatingAccount}><CheckCircle2 size={18} /> Create Parent Account</button>
             </div>
           </form>
         )}
