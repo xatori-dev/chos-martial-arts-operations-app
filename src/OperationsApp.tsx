@@ -7396,6 +7396,7 @@ function ManagerHomePage() {
   };
 
   const openFeedThread = (threadId: string) => {
+    updateOverviewProgress(0);
     setSelectedThreadId((currentThreadId) => currentThreadId === threadId ? null : threadId);
     const selectedThread = feedThreads.find((thread) => thread.id === threadId);
     if (selectedThread?.source === "direct") {

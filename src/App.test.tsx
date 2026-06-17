@@ -5172,6 +5172,25 @@ describe("post-login operations app", () => {
     expect(feedPanel).toBeInTheDocument();
   });
 
+  it("auto-maximizes the Home feed when a message opens", () => {
+    stubResizeObserver(360);
+    renderLoggedInApp("/profile");
+
+    const homeOverview = screen.getByLabelText("Manager home overview");
+    const overviewStage = homeOverview.closest(".manager-home-overview-stage");
+    const attendanceRow = screen.getByRole("button", { name: /John Doe.*Attendance Confirmation/i });
+
+    expect(overviewStage).toHaveAttribute("data-overview-state", "expanded");
+    expect(screen.getByRole("button", { name: "Collapse manager overview" })).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(attendanceRow);
+
+    expect(overviewStage).toHaveAttribute("data-overview-state", "collapsed");
+    expect(screen.getByRole("button", { name: "Expand manager overview" })).toHaveAttribute("aria-expanded", "false");
+    expect(attendanceRow).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Attendance Confirmation details")).toBeInTheDocument();
+  });
+
   it("lets managers update the Home profile picture in real time", async () => {
     renderLoggedInApp("/profile");
 
