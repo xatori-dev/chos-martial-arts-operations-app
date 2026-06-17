@@ -5420,6 +5420,34 @@ describe("post-login operations app", () => {
     expect(screen.getByRole("button", { name: "Compose" })).toBeInTheDocument();
   });
 
+  it("confirms before deleting selected Home feed items", () => {
+    renderLoggedInApp("/profile");
+
+    const attendanceCheckbox = screen.getByRole("checkbox", { name: "Select Attendance Confirmation" });
+    fireEvent.click(attendanceCheckbox);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+
+    let confirmationDialog = screen.getByRole("dialog", { name: "Delete selected items?" });
+    expect(within(confirmationDialog).getByText("This will remove 1 selected item from the Home Page feed.")).toBeInTheDocument();
+    expect(screen.getByText("Attendance Confirmation")).toBeInTheDocument();
+
+    fireEvent.click(within(confirmationDialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog", { name: "Delete selected items?" })).not.toBeInTheDocument();
+    expect(attendanceCheckbox).toBeChecked();
+    expect(screen.getByText("Attendance Confirmation")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    confirmationDialog = screen.getByRole("dialog", { name: "Delete selected items?" });
+    fireEvent.click(within(confirmationDialog).getByRole("button", { name: "Delete Item" }));
+
+    expect(screen.queryByRole("dialog", { name: "Delete selected items?" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Attendance Confirmation")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compose" })).toBeInTheDocument();
+  });
+
   it("logs out from the manager launcher icon button", () => {
     renderLoggedInApp("/manager");
 

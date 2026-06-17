@@ -7054,6 +7054,7 @@ function ManagerHomePage() {
   const [hiddenDirectThreadIds, setHiddenDirectThreadIds] = useState<Set<string>>(() => new Set());
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedFeedThreadIds, setSelectedFeedThreadIds] = useState<Set<string>>(() => new Set());
+  const [isFeedDeleteConfirmOpen, setIsFeedDeleteConfirmOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isFeedSearchOpen, setIsFeedSearchOpen] = useState(false);
   const [feedFilter, setFeedFilter] = useState<ManagerHomeFeedFilter>("all");
@@ -7235,6 +7236,10 @@ function ManagerHomePage() {
   }, [isFeedSearchOpen]);
 
   useEffect(() => {
+    if (!selectedFeedCount) setIsFeedDeleteConfirmOpen(false);
+  }, [selectedFeedCount]);
+
+  useEffect(() => {
     if (!isComposeOpen) return;
 
     const closeComposeOnEscape = (event: KeyboardEvent) => {
@@ -7382,6 +7387,7 @@ function ManagerHomePage() {
     const resolvedFilter: ManagerHomeFeedFilter = feedFilter === nextFilter ? "all" : nextFilter;
     setFeedFilter(resolvedFilter);
     setSelectedFeedThreadIds(new Set<string>());
+    setIsFeedDeleteConfirmOpen(false);
     setSelectedThreadId((currentThreadId) => {
       if (!currentThreadId || resolvedFilter === "all") return currentThreadId;
       const currentThread = feedThreads.find((thread) => thread.id === currentThreadId);
@@ -7401,9 +7407,19 @@ function ManagerHomePage() {
     );
   };
 
+  const requestSelectedFeedDelete = () => {
+    if (!selectedFeedCount) return;
+    setIsFeedDeleteConfirmOpen(true);
+  };
+
+  const closeSelectedFeedDelete = () => {
+    setIsFeedDeleteConfirmOpen(false);
+  };
+
   const deleteSelectedFeedThreads = () => {
     if (!selectedFeedCount) return;
     const idsToDelete = selectedFeedThreadIds;
+    setIsFeedDeleteConfirmOpen(false);
     setHiddenDirectThreadIds((currentIds) => {
       const nextIds = new Set(currentIds);
       feedThreads.forEach((thread) => {
@@ -7798,7 +7814,7 @@ function ManagerHomePage() {
               {selectedFeedCount > 0 && (
                 <span className="manager-home-bulk-actions" aria-live="polite">
                   <strong>{selectedFeedCount} selected</strong>
-                  <button type="button" aria-label="Delete selected" onClick={deleteSelectedFeedThreads}>
+                  <button type="button" aria-label="Delete selected" onClick={requestSelectedFeedDelete}>
                     <Trash2 size={17} />
                     <span>Delete</span>
                   </button>
@@ -7967,6 +7983,43 @@ function ManagerHomePage() {
             )}
           </div>
         </section>
+        {isFeedDeleteConfirmOpen && selectedFeedCount > 0 && (
+          <div
+            className="modal-backdrop manager-calendar-action-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeSelectedFeedDelete();
+            }}
+          >
+            <div
+              aria-describedby="manager-home-delete-description"
+              aria-labelledby="manager-home-delete-title"
+              aria-modal="true"
+              className="modal-card modal-form manager-calendar-delete-dialog manager-home-delete-dialog"
+              role="dialog"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="student-modal-head">
+                <div>
+                  <h2 id="manager-home-delete-title">Delete selected items?</h2>
+                  <p id="manager-home-delete-description">
+                    This will remove {selectedFeedCount} selected {selectedFeedCount === 1 ? "item" : "items"} from the Home Page feed.
+                  </p>
+                </div>
+                <button type="button" className="student-modal-close" aria-label="Close delete confirmation" onClick={closeSelectedFeedDelete}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="manager-starter-program-actions manager-calendar-delete-actions">
+                <button type="button" onClick={closeSelectedFeedDelete}>Cancel</button>
+                <button type="button" className="manager-calendar-delete-confirm" onClick={deleteSelectedFeedThreads}>
+                  <Trash2 size={18} aria-hidden="true" />
+                  Delete {selectedFeedCount === 1 ? "Item" : `${selectedFeedCount} Items`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {isComposeOpen && (
           <div
             className="manager-compose-backdrop"
