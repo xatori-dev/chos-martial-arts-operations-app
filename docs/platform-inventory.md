@@ -1,6 +1,6 @@
 # Platform Inventory
 
-Last updated: 2026-06-15
+Last updated: 2026-06-17
 
 ## GitHub
 
@@ -26,6 +26,7 @@ Last updated: 2026-06-15
 | Target staging hosting | GitHub Pages from the Xatori repo, verified |
 | Target Pages URL | `https://xatori-dev.github.io/chos-martial-arts-operations-app/` |
 | Target deployment workflow | `Deploy to GitHub Pages` deploys `main` to the `github-pages` environment |
+| Staging build variables | GitHub repo variables `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, and `VITE_ENABLE_DEVELOPER_ACCOUNT=true`; workflow preflight requires Cho's staging Supabase ref `zfuwbbepsnmmlpgfkmhz` |
 | SPA fallback behavior | `dist/404.html` is deployed. Deep links such as `/messages` return GitHub Pages HTTP 404 while serving the app shell, which is expected for the static SPA fallback. |
 | Target Cloudflare Pages name | `chos-martial-arts-operations-app` |
 | DNS/custom domain | Not configured in phase 1 |
@@ -59,7 +60,7 @@ No raw secret values belong in this repository or in chat. Record item names and
 
 Project boundary: MongTeng uses a separate Supabase project, `mongteng-food-market-ordering-app-staging` / `jqvclzlvrhdcsfhhvekr`. Do not use that ref, URL, keys, migrations, Edge Functions, or seed scripts for Cho's work.
 
-Staging has Supabase Auth profiles, RLS, `account_creation_audit`, `live_chat_messages`, `direct_messages`, `message_logs`, and the retired `manager-create-account` Edge Function. The seeded owner login is `Manager123`; the internal Auth email is `manager123@accounts.chosmartialarts.app`. The owner password must be generated, meet the Supabase setup policy, and live only in the approved secret store. Rotate any legacy seed password before real user access.
+Staging has Supabase Auth profiles, RLS, `account_creation_audit`, `live_chat_messages`, `direct_messages`, `message_logs`, and the retired `manager-create-account` Edge Function. The supported staging pilot sign-ins are `Manager123` for owner testing and public-staging `Dev123` for developer diagnostics. Individual non-owner staff profiles are not launch scope yet because the current client rejects them at sign-in. The internal Auth email for `Manager123` is `manager123@accounts.chosmartialarts.app`. The owner password must be generated, meet the Supabase setup policy, and live only in the approved secret store. Rotate any legacy seed password before real user access.
 
 The Xatori Dev Supabase organization is currently on the Free plan. The staging Security Advisor still reports `auth_leaked_password_protection` because Supabase leaked-password protection requires Pro or higher. Until the plan is upgraded and the Auth setting is enabled, the seed script enforces the local 12-character mixed password policy for the owner account.
 

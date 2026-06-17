@@ -2,13 +2,14 @@
 
 ## Current Status
 
-This project is not ready for client handoff as a production system. It is a Xatori-managed prototype with a verified GitHub Pages staging deployment, an active Supabase staging surface for manager auth/account persistence, and browser-local prototype workflows for the remaining operations data. There is no production backend, production database, payments, email provider, or live SMS provider.
+This project is not ready for client handoff as a production system. It is a Xatori-managed staging pilot with a verified GitHub Pages deployment, an active Supabase staging surface for `Manager123` auth and messaging persistence, and browser-local prototype workflows for the remaining operations data. Public staging intentionally exposes the gated `Dev123` diagnostic login for this pilot. There is no production backend, production database, payments, email provider, or live SMS provider.
 
 ## Delivery Package
 
 - Repository: `xatori-dev/chos-martial-arts-operations-app`
 - Verified staging URL: `https://xatori-dev.github.io/chos-martial-arts-operations-app/`
 - Deployment proof path: the `Deploy to GitHub Pages` workflow deploys `main` to the `github-pages` environment
+- Staging build configuration: GitHub repo variables provide browser-safe `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, and `VITE_ENABLE_DEVELOPER_ACCOUNT=true`; the workflow fails before build if they are missing or the Supabase URL does not point at Cho's staging project `zfuwbbepsnmmlpgfkmhz`
 - Current local branch: `main`, tracking `origin/main`
 - Current remote map: `origin` points to Xatori, `legacy-origin` points to `projektoutside`, and `desktop-source` points to the local desktop source checkout
 - Google Drive package: [Cho's Martial Arts Operations App - Xatori Onboarding and Handoff Package](https://docs.google.com/document/d/1E22ubixiSzLEZPNklvmA8Wiujq63J7olDCSN1YEkkh4/edit?usp=drivesdk)
@@ -25,6 +26,8 @@ This project is not ready for client handoff as a production system. It is a Xat
 - [x] Xatori GitHub repo exists and `origin/main` is reachable.
 - [x] Xatori GitHub Pages deployment is proven from the target repo.
 - [x] Local `main` tracks `origin/main`.
+- [x] Staging pilot scope is defined as `Manager123` plus public-staging `Dev123`.
+- [ ] Each launch-readiness push is verified against the live Pages URL before pilot users are invited.
 - [ ] GitHub CLI or connector identity is switched to an intended Xatori operator before live repo administration.
 - [ ] Legacy `projektoutside` repo exception is resolved or explicitly retained after Xatori deployment is proven.
 - [x] Google Drive package document exists under the connected `xatori@xatoridev.com` Drive account.
@@ -37,4 +40,4 @@ This project is not ready for client handoff as a production system. It is a Xat
 
 ## Support Transition Notes
 
-Until a production backend exists, support should focus on local prototype behavior, GitHub Pages deployment health, and documented provider-readiness gaps. Do not promise real cross-device persistence, production auth, payments, email, or live SMS from the current browser-only app.
+Until a production backend exists, support should focus on staging manager auth, local prototype behavior, GitHub Pages deployment health, and documented provider-readiness gaps. Do not promise individual staff accounts, real cross-device persistence for all operations workflows, production auth, payments, email, or live SMS from the current app.

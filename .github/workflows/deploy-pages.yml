@@ -37,7 +37,37 @@ jobs:
       - name: Test
         run: npm run test
 
+      - name: Verify staging build environment
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_ENABLE_DEVELOPER_ACCOUNT: ${{ vars.VITE_ENABLE_DEVELOPER_ACCOUNT }}
+        run: |
+          if [ -z "$VITE_SUPABASE_URL" ]; then
+            echo "VITE_SUPABASE_URL is required for staging Pages builds."
+            exit 1
+          fi
+          if [ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]; then
+            echo "VITE_SUPABASE_PUBLISHABLE_KEY is required for staging Pages builds."
+            exit 1
+          fi
+          if [ "$VITE_ENABLE_DEVELOPER_ACCOUNT" != "true" ]; then
+            echo "VITE_ENABLE_DEVELOPER_ACCOUNT must be true for the selected public staging pilot."
+            exit 1
+          fi
+          case "$VITE_SUPABASE_URL" in
+            *zfuwbbepsnmmlpgfkmhz.supabase.co*) ;;
+            *)
+              echo "VITE_SUPABASE_URL must point to Cho's staging Supabase project."
+              exit 1
+              ;;
+          esac
+
       - name: Build GitHub Pages artifact
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_ENABLE_DEVELOPER_ACCOUNT: ${{ vars.VITE_ENABLE_DEVELOPER_ACCOUNT }}
         run: npm run build:pages
 
       - name: Setup Pages

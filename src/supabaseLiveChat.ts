@@ -72,7 +72,7 @@ export type LiveChatClient = {
   channel: (name: string) => LiveChatChannel;
   removeChannel: (channel: LiveChatChannel) => unknown;
   realtime?: {
-    setAuth: (token?: string | null) => unknown;
+    setAuth: (token?: string | null) => Promise<unknown> | unknown;
   };
 };
 
@@ -89,6 +89,12 @@ export type LiveChatSubscription = {
 
 const liveChatMessageColumns = "id,room_key,sender_user_id,sender_name,sender_role,sender_avatar_path,message_kind,body,created_at";
 let cachedClient: LiveChatClient | undefined;
+let liveChatSubscriptionSequence = 0;
+
+function nextLiveChatChannelName(roomKey: string) {
+  liveChatSubscriptionSequence += 1;
+  return `live-chat:${roomKey}:${liveChatSubscriptionSequence}`;
+}
 
 export function getSupabaseLiveChatClient() {
   if (!readSupabaseAuthSession()) return undefined;
@@ -245,22 +251,45 @@ export function subscribeToLiveChatInserts({
     };
   }
 
-  client.realtime?.setAuth(session?.accessToken ?? null);
+  let channel: LiveChatChannel | undefined;
+  let isCleanedUp = false;
+  const cleanupChannel = () => {
+    if (!channel) return;
+    const channelToRemove = channel;
+    channel = undefined;
+    void client.removeChannel(channelToRemove);
+  };
 
-  const channel = client
-    .channel(`live-chat:${roomKey}`)
-    .on(
-      "postgres_changes",
-      { event: "INSERT", schema: "public", table: "live_chat_messages", filter: `room_key=eq.${roomKey}` },
-      (payload) => onMessage(mapLiveChatMessageRow(payload.new))
-    )
-    .subscribe((status, error) => onStatus?.(status, error?.message));
+  const startSubscription = async () => {
+    try {
+      await client.realtime?.setAuth(session?.accessToken ?? null);
+      if (isCleanedUp) return;
+
+      const nextChannel = client.channel(nextLiveChatChannelName(roomKey));
+      channel = nextChannel;
+      nextChannel
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "live_chat_messages", filter: `room_key=eq.${roomKey}` },
+          (payload) => onMessage(mapLiveChatMessageRow(payload.new))
+        )
+        .subscribe((status, error) => onStatus?.(status, error?.message));
+
+      if (isCleanedUp) cleanupChannel();
+    } catch (error) {
+      cleanupChannel();
+      if (!isCleanedUp) onStatus?.("CHANNEL_ERROR", error instanceof Error ? error.message : "Live chat subscription failed.");
+    }
+  };
+
+  void startSubscription();
 
   return {
     status: "subscribed",
     cleanup: () => {
-      void channel.unsubscribe();
-      void client.removeChannel(channel);
+      if (isCleanedUp) return;
+      isCleanedUp = true;
+      cleanupChannel();
     }
   };
 }

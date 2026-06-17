@@ -55,6 +55,11 @@ function testSession(): SupabaseStoredSession {
   };
 }
 
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("supabase live chat adapter", () => {
   it("returns unavailable when no Supabase client or session exists", async () => {
     await expect(fetchLiveChatMessages({ client: undefined })).resolves.toMatchObject({
@@ -137,7 +142,7 @@ describe("supabase live chat adapter", () => {
     }));
   });
 
-  it("subscribes to inserts and removes the realtime channel on cleanup", () => {
+  it("subscribes to inserts after realtime auth and removes the realtime channel on cleanup", async () => {
     let insertCallback: ((payload: { new: LiveChatMessageRow }) => void) | undefined;
     let statusCallback: ((status: string) => void) | undefined;
     const channel: LiveChatChannel = {
@@ -156,7 +161,7 @@ describe("supabase live chat adapter", () => {
       channel: vi.fn(() => channel),
       removeChannel: vi.fn(),
       realtime: {
-        setAuth: vi.fn()
+        setAuth: vi.fn(async () => undefined)
       }
     } as unknown as LiveChatClient;
     const receivedMessages: LiveChatMessage[] = [];
@@ -168,14 +173,16 @@ describe("supabase live chat adapter", () => {
       onMessage: (message) => receivedMessages.push(message),
       onStatus: (status) => receivedStatuses.push(status)
     });
+    await flushPromises();
 
     statusCallback?.("SUBSCRIBED");
     insertCallback?.({ new: liveChatRow({ id: "message-4", body: "New check-in at front desk." }) });
     subscription.cleanup();
+    subscription.cleanup();
 
     expect(subscription.status).toBe("subscribed");
     expect(client.realtime?.setAuth).toHaveBeenCalledWith("staff-access-token");
-    expect(client.channel).toHaveBeenCalledWith(`live-chat:${liveChatRoomKey}`);
+    expect(client.channel).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^live-chat:${liveChatRoomKey}:\\d+$`)));
     expect(channel.on).toHaveBeenCalledWith(
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "live_chat_messages", filter: `room_key=eq.${liveChatRoomKey}` },
@@ -183,7 +190,75 @@ describe("supabase live chat adapter", () => {
     );
     expect(receivedStatuses).toEqual(["SUBSCRIBED"]);
     expect(receivedMessages).toEqual([expect.objectContaining({ id: "message-4", body: "New check-in at front desk." })]);
-    expect(channel.unsubscribe).toHaveBeenCalled();
+    expect(channel.unsubscribe).not.toHaveBeenCalled();
+    expect(client.removeChannel).toHaveBeenCalledTimes(1);
     expect(client.removeChannel).toHaveBeenCalledWith(channel);
+  });
+
+  it("does not create a realtime channel when cleanup runs before auth finishes", async () => {
+    let resolveAuth: (() => void) | undefined;
+    const channel: LiveChatChannel = {
+      on: vi.fn(() => channel),
+      subscribe: vi.fn(() => channel),
+      unsubscribe: vi.fn()
+    };
+    const client = {
+      from: vi.fn(),
+      channel: vi.fn(() => channel),
+      removeChannel: vi.fn(),
+      realtime: {
+        setAuth: vi.fn(() => new Promise<void>((resolve) => {
+          resolveAuth = resolve;
+        }))
+      }
+    } as unknown as LiveChatClient;
+
+    const subscription = subscribeToLiveChatInserts({
+      client,
+      session: testSession(),
+      onMessage: vi.fn()
+    });
+
+    subscription.cleanup();
+    resolveAuth?.();
+    await flushPromises();
+
+    expect(client.realtime?.setAuth).toHaveBeenCalledWith("staff-access-token");
+    expect(client.channel).not.toHaveBeenCalled();
+    expect(client.removeChannel).not.toHaveBeenCalled();
+  });
+
+  it("uses a fresh realtime topic for each subscription setup", async () => {
+    const makeChannel = (): LiveChatChannel => {
+      const channel: LiveChatChannel = {
+        on: vi.fn(() => channel),
+        subscribe: vi.fn(() => channel),
+        unsubscribe: vi.fn()
+      };
+      return channel;
+    };
+    const client = {
+      from: vi.fn(),
+      channel: vi.fn(() => makeChannel()),
+      removeChannel: vi.fn(),
+      realtime: {
+        setAuth: vi.fn(async () => undefined)
+      }
+    } as unknown as LiveChatClient;
+
+    const firstSubscription = subscribeToLiveChatInserts({ client, session: testSession(), onMessage: vi.fn() });
+    await flushPromises();
+    firstSubscription.cleanup();
+    const secondSubscription = subscribeToLiveChatInserts({ client, session: testSession(), onMessage: vi.fn() });
+    await flushPromises();
+    secondSubscription.cleanup();
+
+    const channelNames = (client.channel as ReturnType<typeof vi.fn>).mock.calls.map(([name]) => name);
+    expect(channelNames).toHaveLength(2);
+    expect(channelNames[0]).not.toBe(channelNames[1]);
+    expect(channelNames).toEqual([
+      expect.stringMatching(new RegExp(`^live-chat:${liveChatRoomKey}:\\d+$`)),
+      expect.stringMatching(new RegExp(`^live-chat:${liveChatRoomKey}:\\d+$`))
+    ]);
   });
 });

@@ -4304,18 +4304,21 @@ function LiveChatPage() {
     }
 
     let isMounted = true;
-    setIsLoading(true);
-    void fetchLiveChatMessages().then((result) => {
+    const loadTimer = window.setTimeout(() => {
       if (!isMounted) return;
-      if (result.status === "ok") {
-        setChatMessages(result.data);
-        return;
-      }
-      setLiveStatusMessage(result.message);
-      if (result.status === "unavailable") setIsLiveReady(false);
-    }).finally(() => {
-      if (isMounted) setIsLoading(false);
-    });
+      setIsLoading(true);
+      void fetchLiveChatMessages().then((result) => {
+        if (!isMounted) return;
+        if (result.status === "ok") {
+          setChatMessages(result.data);
+          return;
+        }
+        setLiveStatusMessage(result.message);
+        if (result.status === "unavailable") setIsLiveReady(false);
+      }).finally(() => {
+        if (isMounted) setIsLoading(false);
+      });
+    }, 0);
 
     const subscription = subscribeToLiveChatInserts({
       onMessage: (message) => setChatMessages((currentMessages) => appendUniqueLiveChatMessage(currentMessages, message)),
@@ -4331,6 +4334,7 @@ function LiveChatPage() {
 
     return () => {
       isMounted = false;
+      window.clearTimeout(loadTimer);
       subscription.cleanup();
     };
   }, []);
