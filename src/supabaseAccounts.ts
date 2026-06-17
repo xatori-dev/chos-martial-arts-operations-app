@@ -46,7 +46,7 @@ type SupabaseCreateAccountInput = {
   displayName: string;
   username: string;
   password: string;
-  role: "staff" | "student" | "guardian";
+  role: "staff";
   status?: ManagedAccount["status"];
   email: string;
   phone?: string;
@@ -58,14 +58,13 @@ type SupabaseCreateAccountInput = {
 
 type SupabaseCreateAccountResult =
   | { status: "not-configured" }
-  | { status: "missing-session" }
-  | { status: "unauthorized"; message: string }
-  | { status: "error"; message: string }
-  | { status: "created"; account: Omit<ManagedAccount, "password"> };
+  | { status: "error"; message: string };
 
 const supabaseSessionStorageKey = "chos.supabase.auth.v1";
 const managerUsername = prototypeManagerLogin.username.toLowerCase();
 const supabaseAccountAuthDomain = "accounts.chosmartialarts.app";
+const mongTengSupabaseProjectRef = "jqvclzlvrhdcsfhhvekr";
+const forbiddenSupabaseProjectRefs = new Set([mongTengSupabaseProjectRef]);
 
 function supabaseUrl() {
   return import.meta.env.VITE_SUPABASE_URL?.trim() ?? "";
@@ -75,16 +74,39 @@ function supabasePublicKey() {
   return (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY ?? "").trim();
 }
 
+export function supabaseProjectRefFromUrl(url: string) {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return hostname.endsWith(".supabase.co") ? hostname.split(".")[0] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function isChoSupabaseProjectUrlAllowed(url: string) {
+  const projectRef = supabaseProjectRefFromUrl(url);
+  return !projectRef || !forbiddenSupabaseProjectRefs.has(projectRef);
+}
+
 export function getSupabaseBrowserConfig() {
+  const url = supabaseUrl();
+  if (!isChoSupabaseProjectUrlAllowed(url)) {
+    return {
+      url: "",
+      publicKey: ""
+    };
+  }
+
   return {
-    url: supabaseUrl(),
+    url,
     publicKey: supabasePublicKey()
   };
 }
 
 export function isSupabaseAuthConfigured() {
   if (import.meta.env.MODE === "test" && import.meta.env.VITE_ENABLE_SUPABASE_IN_TESTS !== "true") return false;
-  return Boolean(supabaseUrl() && supabasePublicKey());
+  const { url, publicKey } = getSupabaseBrowserConfig();
+  return Boolean(url && publicKey);
 }
 
 export function normalizeSupabaseUsername(username: string) {
@@ -131,15 +153,6 @@ export function readSupabaseAuthSession() {
   } catch {
     clearSupabaseAuthSession();
     return undefined;
-  }
-}
-
-async function readErrorMessage(response: Response, fallback: string) {
-  try {
-    const body = (await response.json()) as { error?: string; msg?: string; message?: string };
-    return body.error ?? body.msg ?? body.message ?? fallback;
-  } catch {
-    return fallback;
   }
 }
 
@@ -193,6 +206,7 @@ export async function signInSupabaseAccount(credentials: { username: string; pas
     const profile = await fetchSupabaseProfile(session.user.id, session.access_token);
     if (!profile) return { status: "invalid" };
     if (profile.status !== "active") return { status: "inactive" };
+    if (profile.username !== managerUsername) return { status: "invalid" };
 
     saveSupabaseAuthSession(session);
     return {
@@ -207,35 +221,7 @@ export async function signInSupabaseAccount(credentials: { username: string; pas
 }
 
 export async function createSupabaseManagedAccount(account: SupabaseCreateAccountInput): Promise<SupabaseCreateAccountResult> {
+  void account;
   if (!isSupabaseAuthConfigured()) return { status: "not-configured" };
-
-  const authSession = readSupabaseAuthSession();
-  if (!authSession) return { status: "missing-session" };
-
-  try {
-    const response = await fetch(`${supabaseUrl().replace(/\/+$/, "")}/functions/v1/manager-create-account`, {
-      method: "POST",
-      headers: {
-        apikey: supabasePublicKey(),
-        Authorization: `Bearer ${authSession.accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(account)
-    });
-
-    if (response.status === 401 || response.status === 403) {
-      if (response.status === 401) clearSupabaseAuthSession();
-      return { status: "unauthorized", message: await readErrorMessage(response, "Manager authorization failed.") };
-    }
-
-    if (!response.ok) {
-      return { status: "error", message: await readErrorMessage(response, "Unable to create Supabase account.") };
-    }
-
-    const body = (await response.json()) as { account?: Omit<ManagedAccount, "password"> };
-    if (!body.account) return { status: "error", message: "Supabase did not return the created account." };
-    return { status: "created", account: body.account };
-  } catch (error) {
-    return { status: "error", message: error instanceof Error ? error.message : "Unable to create Supabase account." };
-  }
+  return { status: "error", message: "Managed staff account creation is retired. Only Manager123 and Dev123 sign-ins are supported." };
 }

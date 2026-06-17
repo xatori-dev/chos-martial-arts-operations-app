@@ -1,12 +1,12 @@
 # Supabase Auth Setup
 
-This app keeps the browser on publishable Supabase credentials only. Account creation runs through the `manager-create-account` Edge Function so the service role key never enters Vite or localStorage.
+This app keeps the browser on publishable Supabase credentials only. Manager sign-in uses Supabase Auth directly, and chat/message records use Supabase REST and Realtime with row-level security. The service role key never enters Vite or localStorage.
 
 ## Required project setup
 
-1. Create or connect a Supabase project.
-2. Apply `supabase/migrations/20260609183000_manager_accounts.sql`.
-3. Deploy `supabase/functions/manager-create-account/index.ts` with platform JWT verification disabled. The function validates the caller's JWT and owner profile itself before using the server-side admin client.
+1. Create or connect the Cho's Supabase project. Current staging is `chos-martial-arts-operations-app-staging` / `zfuwbbepsnmmlpgfkmhz`.
+2. Apply the migrations in `supabase/migrations`.
+3. Deploy `supabase/functions/manager-create-account/index.ts` only if the retired account-creation endpoint must return its explicit 410 response in that environment.
 4. Set the deployed app env vars:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_PUBLISHABLE_KEY`
@@ -23,16 +23,18 @@ node scripts/seed-supabase-manager.mjs
 
 `MANAGER_PASSWORD` is required and must be at least 12 characters with uppercase, lowercase, a number, and a symbol. Store the actual value in 1Password or the approved secret store, not in this repository or chat. The seed script creates or updates only the owner login by default. To delete every other Supabase Auth user, run it with `--delete-extra-auth-users --yes-delete-extra-auth-users`; do that only after confirming the target project is the correct environment.
 
+Do not run Cho's migrations, seed scripts, smoke checks, or Edge Function deploys against MongTeng's Supabase project `mongteng-food-market-ordering-app-staging` / `jqvclzlvrhdcsfhhvekr`. This app also refuses that project ref at runtime if it is accidentally placed in `VITE_SUPABASE_URL`.
+
 For an existing staging project, rotate any legacy seeded owner password by rerunning this script with a generated `MANAGER_PASSWORD` from the approved secret store. Do not preserve sample or prototype passwords in Supabase Auth.
 
 ## Runtime behavior
 
 - `Manager123` signs in through Supabase when `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are configured.
-- Manager-created accounts are inserted into Supabase Auth and `public.profiles` through the Edge Function.
-- Manager-created Supabase account passwords must meet the same 12-character mixed password policy as the seeded owner password.
-- The local prototype state is still updated after the Supabase create succeeds so the UI reflects the new account immediately.
+- Manager-created staff accounts are retired. Only `Manager123` and the gated local `Dev123` diagnostic login are supported.
+- `live_chat_messages`, `direct_messages`, and `message_logs` persist in Supabase when the user is signed in with a valid Supabase manager session.
+- The local prototype fallback is only used when Supabase env vars or a Supabase auth session are unavailable.
 
 ## Hosted Auth hardening
 
 - Enable Supabase leaked-password protection in Auth settings after the Supabase organization is on Pro or higher. The Free plan leaves the Security Advisor warning `auth_leaked_password_protection` active.
-- Keep the local password policy in the seed script and `manager-create-account` Edge Function even after hosted leaked-password protection is enabled; the hosted check rejects known compromised passwords, while the local policy blocks short or composition-weak passwords.
+- Keep the local password policy in the seed script even after hosted leaked-password protection is enabled; the hosted check rejects known compromised passwords, while the local policy blocks short or composition-weak passwords.

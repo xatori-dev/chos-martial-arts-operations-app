@@ -257,34 +257,20 @@ export function validateLoginForm(input: { username: string; password: string })
 
 export const prototypeManagerLogin = {
   username: "Manager123",
-  password: "123456",
+  password: "Cho$Manager2026!",
   email: "manager123@chos.prototype",
   role: "staff"
 } as const;
 
 export const prototypeDeveloperLogin = {
   username: "Dev123",
-  password: "xatori",
+  password: "Xatori$Dev2026!",
   email: "dev123@chos.prototype",
   role: "staff"
 } as const;
 
 export const defaultProfileAvatarPath = "assets/CheetahProfilePic/Cheetah.png";
 export const developerProfileAvatarPath = "assets/DeveloperProfilePic/TigerDeveloper.png";
-
-export const prototypeStudentLogin = {
-  username: "Student123",
-  password: "123456",
-  email: "student123@chos.prototype",
-  role: "student"
-} as const;
-
-export const prototypeParentLogin = {
-  username: "Parent123",
-  password: "123456",
-  email: "parent123@chos.prototype",
-  role: "guardian"
-} as const;
 
 export function isPrototypeManagerLogin(input: { username: string; password: string }) {
   return input.username.trim().toLowerCase() === prototypeManagerLogin.username.toLowerCase() && input.password.trim() === prototypeManagerLogin.password;
@@ -309,25 +295,6 @@ export function isPrototypeManagerOwnerEmail(email?: string) {
 
 export function profileAvatarPathForSession(email?: string) {
   return isPrototypeDeveloperEmail(email) ? developerProfileAvatarPath : defaultProfileAvatarPath;
-}
-
-export function isPrototypeStudentLogin(input: { username: string; password: string }) {
-  return input.username.trim().toLowerCase() === prototypeStudentLogin.username.toLowerCase() && input.password.trim() === prototypeStudentLogin.password;
-}
-
-export function isPrototypeParentLogin(input: { username: string; password: string }) {
-  return input.username.trim().toLowerCase() === prototypeParentLogin.username.toLowerCase() && input.password.trim() === prototypeParentLogin.password;
-}
-
-export function validateRegisterForm(input: { email: string; password: string }) {
-  const errors: Record<string, string> = {};
-  if (!validateEmail(input.email)) errors.email = "Valid email is required.";
-  if (input.password.trim().length < 6) errors.password = "Password must be at least 6 characters.";
-  return errors;
-}
-
-export function createGuestSession(): AccountSession {
-  return { email: "guest@chos.prototype", remembered: false, createdAt: new Date().toISOString() };
 }
 
 export function getInitialLaunchPhase(prefersReducedMotion: boolean) {

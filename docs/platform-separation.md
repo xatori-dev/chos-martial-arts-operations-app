@@ -17,7 +17,8 @@ App: Cho's Martial Arts Operations App
 | --- | --- | --- |
 | GitHub | `projektoutside/chos-martial-arts-prototype` | Temporary legacy source |
 | GitHub Pages | `https://projektoutside.github.io/chos-martial-arts-prototype/` | Legacy exception; Xatori staging is now proven, so retirement is a business decision |
-| Backend/database/payments/email/auth | Not integrated | No migration required in phase 1 |
+| Backend/database/auth | Supabase staging owns manager auth and message persistence | Must remain isolated to Cho's Supabase project refs only |
+| Payments/email | Not integrated | No migration required in phase 1 |
 | Twilio/Web Push | Credential-free browser handoff contracts | Private server still required for live sends |
 
 ## Xatori Target Resources
@@ -31,8 +32,9 @@ App: Cho's Martial Arts Operations App
 | 1Password development vault | `client-chos-martial-arts Development` |
 | 1Password production vault | `client-chos-martial-arts Production` |
 | 1Password handoff vault | `client-chos-martial-arts Handoff` |
-| Supabase staging project | `chos-martial-arts-operations-app-staging` |
+| Supabase staging project | `chos-martial-arts-operations-app-staging` / `zfuwbbepsnmmlpgfkmhz` |
 | Supabase production project | `chos-martial-arts-operations-app-production` |
+| Forbidden Supabase project for this app | MongTeng `mongteng-food-market-ordering-app-staging` / `jqvclzlvrhdcsfhhvekr` |
 | Twilio dev subaccount | `xd-chos-martial-arts-operations-app-dev` |
 | Twilio prod subaccount | `xd-chos-martial-arts-operations-app-prod` |
 | Twilio transactional Messaging Service | `xd-chos-martial-arts-operations-app-txn` |
@@ -45,6 +47,8 @@ App: Cho's Martial Arts Operations App
 ## Isolation Rules
 
 - Do not share production databases across apps.
+- Cho's `VITE_SUPABASE_URL` must point only to a Cho's Supabase project. Current staging is `https://zfuwbbepsnmmlpgfkmhz.supabase.co`.
+- Never use MongTeng's Supabase project `mongteng-food-market-ordering-app-staging` (`jqvclzlvrhdcsfhhvekr`) for Cho's local, staging, production, seed, migration, Edge Function, or smoke-test work.
 - Do not share Twilio Messaging Services between transactional and broadcast use cases.
 - Do not share Stripe webhook secrets across apps or environments.
 - Do not commit `.env.local`, `.env.staging`, `.env.production`, or real API keys.

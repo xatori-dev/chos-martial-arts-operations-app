@@ -1,49 +1,22 @@
-import { AlertTriangle, ArrowRight, Award, BookOpenCheck, ChevronLeft, Dumbbell, Eye, EyeOff, HeartHandshake, Lock, ShieldCheck, User, X } from "lucide-react";
+import { AlertTriangle, Eye, EyeOff, Lock, User, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { publicAsset } from "./appAssets";
 import { useAppState } from "./state";
 import { isSupabaseAuthConfigured, signInSupabaseAccount } from "./supabaseAccounts";
 import { initializeAppTheme } from "./theme";
-import type { AccountRole } from "./types";
 import {
-  createGuestSession,
   getInitialLaunchPhase,
   getLoginGateState,
   isPrototypeDeveloperLogin,
   isPrototypeManagerLogin,
-  isPrototypeParentLogin,
-  isPrototypeStudentLogin,
   prototypeDeveloperLogin,
   prototypeManagerLogin,
-  prototypeParentLogin,
-  prototypeStudentLogin,
-  validateLoginForm,
-  validateRegisterForm
+  validateLoginForm
 } from "./utils";
 
 const LazyOperationsApp = lazy(() => import("./OperationsApp").then(({ OperationsApp }) => ({ default: OperationsApp })));
 const TestOperationsApp = import.meta.env.MODE === "test" ? (await import("./OperationsApp")).OperationsApp : undefined;
-
-type SelfServiceAccountType = "staff" | "parent" | "student";
-
-const selfServiceAccountTypes: { type: SelfServiceAccountType; label: string; role: AccountRole; description: string; icon: ReactNode }[] = [
-  { type: "staff", label: "Staff", role: "staff", description: "Help run the studio workspace and daily operations.", icon: <ShieldCheck size={22} /> },
-  { type: "parent", label: "Parent", role: "guardian", description: "Manage family profiles and student-side handoffs.", icon: <HeartHandshake size={22} /> },
-  { type: "student", label: "Student", role: "student", description: "Open the student profile and training tools.", icon: <Award size={22} /> }
-];
-
-function getSelfServiceAccountType(type: SelfServiceAccountType) {
-  return selfServiceAccountTypes.find((item) => item.type === type);
-}
-
-function selfServiceAccountButtonLabel(type: SelfServiceAccountType) {
-  return getSelfServiceAccountType(type)?.label ?? "Account";
-}
-
-function selfServiceAccountRole(type: SelfServiceAccountType): AccountRole {
-  return getSelfServiceAccountType(type)?.role ?? "guardian";
-}
 
 type FullscreenCapableDocument = Document & {
   webkitFullscreenElement?: Element | null;
@@ -116,12 +89,14 @@ function useAppPortraitRuntime() {
 
 function App() {
   useAppPortraitRuntime();
+  const location = useLocation();
   useEffect(() => {
     initializeAppTheme();
   }, []);
   const { session } = useAppState();
   const [launchComplete, setLaunchComplete] = useState(false);
   const loginGateState = getLoginGateState(session);
+  const portraitShellVariant = loginGateState !== "login" && location.pathname === "/students" ? "students-board" : undefined;
   const previousLoginGateStateRef = useRef(loginGateState);
   const loginJustCompleted = previousLoginGateStateRef.current === "login" && loginGateState !== "login";
   const [loginTransitionActive, setLoginTransitionActive] = useState(false);
@@ -156,7 +131,7 @@ function App() {
 
   return (
     <>
-      <PortraitAppShell>
+      <PortraitAppShell variant={portraitShellVariant}>
         <div className={`authenticated-app-shell${loginJustCompleted || loginTransitionActive ? " is-login-transitioning" : ""}`} data-testid="authenticated-app-shell">
           {TestOperationsApp ? (
             <TestOperationsApp />
@@ -172,9 +147,11 @@ function App() {
   );
 }
 
-function PortraitAppShell({ children }: { children: ReactNode }) {
+function PortraitAppShell({ children, variant }: { children: ReactNode; variant?: "students-board" }) {
+  const className = `portrait-app-shell${variant === "students-board" ? " portrait-app-shell--students-board" : ""}`;
+
   return (
-    <div className="portrait-app-shell" data-testid="portrait-app-shell" data-orientation-lock="portrait" aria-label="Cho's Martial Arts portrait app frame">
+    <div className={className} data-testid="portrait-app-shell" data-orientation-lock="portrait" aria-label="Cho's Martial Arts portrait app frame">
       <div className="portrait-app-frame">
         {children}
       </div>
@@ -300,72 +277,20 @@ function LaunchLogoAnimation({ onReveal, onComplete }: { onReveal: () => void; o
   );
 }
 
-const guestTeachingHighlights = [
-  {
-    cue: "01",
-    icon: <BookOpenCheck size={20} />,
-    title: "Focus",
-    text: "Listen. Practice. Improve."
-  },
-  {
-    cue: "02",
-    icon: <HeartHandshake size={20} />,
-    title: "Respect",
-    text: "Courtesy. Control. Confidence."
-  },
-  {
-    cue: "03",
-    icon: <Dumbbell size={20} />,
-    title: "Strength",
-    text: "Balance. Fitness. Awareness."
-  }
-];
-
-const guestProgramAudiences = ["Kids", "Teens", "Adults", "Families"];
-
-const guestIntroStages = [
-  {
-    id: "arrive",
-    label: "Arrive",
-    title: "Step onto the mat",
-    text: "Settle in with a clear view of the studio and class energy."
-  },
-  {
-    id: "practice",
-    label: "Practice",
-    title: "Follow the rhythm",
-    text: "See focus, respect, and technique build through guided repetition."
-  },
-  {
-    id: "belong",
-    label: "Belong",
-    title: "Preview the path",
-    text: "Continue into the app with the full guest workspace ready."
-  }
-];
-
 function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean; handoffActive?: boolean }) {
-  const { childUsernameExists, login, loginChildCredentials, loginManagedAccount, loginRegisteredAccount, managedUsernameExists, register, showToast } = useAppState();
+  const { login, showToast } = useAppState();
   const navigate = useNavigate();
-  const prefersReducedMotion = usePrefersReducedMotion();
   const loginLandingRef = useRef<HTMLElement | null>(null);
   const portraitStageRef = useRef<HTMLDivElement | null>(null);
   const usernameFieldRef = useRef<HTMLLabelElement | null>(null);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
-  const [registerForm, setRegisterForm] = useState({ email: "", password: "" });
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [registerErrors, setRegisterErrors] = useState<Record<string, string>>({});
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [portraitVisible, setPortraitVisible] = useState(true);
-  const [registerOpen, setRegisterOpen] = useState(false);
-  const [registerAccountType, setRegisterAccountType] = useState<SelfServiceAccountType | null>(null);
-  const [guestIntroOpen, setGuestIntroOpen] = useState(false);
   const [loginFailedOpen, setLoginFailedOpen] = useState(false);
   const [loginPending, setLoginPending] = useState(false);
   const supabaseConfigured = isSupabaseAuthConfigured();
   const loginLandingStyle = { "--login-bg-image": `url("${publicAsset("NewFinalBackground.png")}")` } as CSSProperties;
-  const guestIntroImage = publicAsset("assets/guest-intro/cho-guest-class-intro-v2.png");
-  const guestIntroStyle = { "--guest-intro-image": `url("${guestIntroImage}")` } as CSSProperties;
 
   useEffect(() => {
     const landing = loginLandingRef.current;
@@ -448,84 +373,7 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
       navigate("/");
       return;
     }
-    if (isPrototypeStudentLogin(loginForm)) {
-      login(prototypeStudentLogin.email, true, prototypeStudentLogin.role);
-      navigate("/");
-      return;
-    }
-    if (isPrototypeParentLogin(loginForm)) {
-      login(prototypeParentLogin.email, true, prototypeParentLogin.role);
-      navigate("/");
-      return;
-    }
-    const childAccount = loginChildCredentials(loginForm);
-    if (childAccount) {
-      navigate("/");
-      return;
-    }
-    const registeredAccount = loginRegisteredAccount(loginForm);
-    if (registeredAccount) {
-      navigate("/");
-      return;
-    }
-    const managedAccount = loginManagedAccount(loginForm);
-    if (managedAccount) {
-      navigate("/");
-      return;
-    }
-    if (managedUsernameExists(loginForm.username)) {
-      failLogin("Check the username and password.");
-      return;
-    }
-    if (childUsernameExists(loginForm.username)) {
-      failLogin("Check the child username and password.");
-      return;
-    }
     failLogin("Check the username and password.");
-  };
-
-  const submitRegister = (event: FormEvent) => {
-    event.preventDefault();
-    if (!registerAccountType) {
-      showToast("Choose an account type first.");
-      return;
-    }
-    const nextErrors = validateRegisterForm(registerForm);
-    setRegisterErrors(nextErrors);
-    if (Object.keys(nextErrors).length) {
-      showToast("Check the create account fields.");
-      return;
-    }
-    const role = selfServiceAccountRole(registerAccountType);
-    const registeredAccount = register({ ...registerForm, role });
-    if (!registeredAccount) {
-      showToast("That account is already registered. Sign in with the saved password.");
-      return;
-    }
-    login(registeredAccount.email, true, role);
-    navigate("/");
-  };
-
-  const openRegister = () => {
-    if (supabaseConfigured) {
-      showToast("Sign in as Manager123 to create Supabase accounts.");
-      return;
-    }
-    setRegisterErrors({});
-    setRegisterAccountType(null);
-    setRegisterOpen(true);
-  };
-
-  const closeRegister = () => {
-    setRegisterOpen(false);
-    setRegisterAccountType(null);
-    setRegisterErrors({});
-  };
-
-  const continueAsGuest = () => {
-    const guestSession = createGuestSession();
-    login(guestSession.email, guestSession.remembered, "staff");
-    navigate("/");
   };
 
   return (
@@ -577,14 +425,6 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
           <button className="login-submit" type="submit" disabled={loginPending}>
             {loginPending ? "Signing In..." : "Sign In"}
           </button>
-          <div className="login-secondary-actions">
-            <button className="login-create" type="button" onClick={openRegister}>
-              {supabaseConfigured ? "Manager Creates Accounts" : "Create New Account"}
-            </button>
-            <button className="login-guest" type="button" onClick={() => setGuestIntroOpen(true)}>
-              Sign in as Guest
-            </button>
-          </div>
         </form>
         <div className="login-divider" aria-hidden="true">
           <span></span>
@@ -592,50 +432,6 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
           <span></span>
         </div>
       </div>
-      {registerOpen && (
-        <ModalShell label="Create New Account" onClose={closeRegister} panelClass="modal-card login-register-modal">
-          <div className="drawer-head">
-            <h2>Create New Account</h2>
-            <button className="icon-button" aria-label="Close create account" onClick={closeRegister}>
-              <X size={20} />
-            </button>
-          </div>
-          {!registerAccountType ? (
-            <section className="register-account-type-panel" aria-label="Account type choices">
-              <h3>Choose account type</h3>
-              <div className="register-account-type-grid">
-                {selfServiceAccountTypes.map((accountType) => (
-                  <button className="register-account-type-card" key={accountType.type} type="button" aria-label={accountType.label} onClick={() => setRegisterAccountType(accountType.type)}>
-                    <span aria-hidden="true">{accountType.icon}</span>
-                    <strong>{accountType.label}</strong>
-                    <small>{accountType.description}</small>
-                  </button>
-                ))}
-              </div>
-              <p className="muted">This creates a local prototype account only.</p>
-            </section>
-          ) : (
-            <form className="modal-form" onSubmit={submitRegister}>
-              <div className="register-selected-account">
-                <span>{selfServiceAccountButtonLabel(registerAccountType)} account</span>
-                <button className="btn btn-ghost" type="button" onClick={() => setRegisterAccountType(null)}>
-                  <ChevronLeft size={16} /> Back to account types
-                </button>
-              </div>
-              <Field label="Email address" error={registerErrors.email}>
-                <input className="input" autoComplete="email" value={registerForm.email} onChange={(event) => setRegisterForm({ ...registerForm, email: event.target.value })} />
-              </Field>
-              <Field label="Password" error={registerErrors.password}>
-                <input className="input" type="password" autoComplete="new-password" value={registerForm.password} onChange={(event) => setRegisterForm({ ...registerForm, password: event.target.value })} />
-              </Field>
-              <p className="muted">This creates a local prototype account only.</p>
-              <button className="btn btn-red" type="submit">
-                Create {selfServiceAccountButtonLabel(registerAccountType)} Account
-              </button>
-            </form>
-          )}
-        </ModalShell>
-      )}
       {loginFailedOpen && (
         <ModalShell label="Login failed" onClose={() => setLoginFailedOpen(false)} panelClass="modal-card login-failed-modal">
           <div className="login-failed-content">
@@ -650,107 +446,7 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
           </div>
         </ModalShell>
       )}
-      {guestIntroOpen && (
-        <section
-          className="guest-intro-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Cho's Martial Arts guest introduction"
-          aria-describedby="guest-intro-description"
-          data-motion={prefersReducedMotion ? "reduced" : "sequence"}
-        >
-          <div className="guest-intro-panel" data-testid="guest-intro-panel" style={guestIntroStyle}>
-            <div className="guest-intro-frame" aria-hidden="true">
-              <span></span>
-              <span></span>
-              <span></span>
-              <span></span>
-            </div>
-            <div className="guest-intro-media" aria-hidden="true">
-              <div className="guest-intro-sequence" data-testid="guest-intro-sequence">
-                {guestIntroStages.map((stage) => (
-                  <figure
-                    className={`guest-intro-scene guest-intro-scene--${stage.id}`}
-                    data-testid={`guest-intro-scene-${stage.id}`}
-                    key={stage.id}
-                  >
-                    <span className="guest-intro-scene-image"></span>
-                    <figcaption>
-                      <span>{stage.label}</span>
-                      <strong>{stage.title}</strong>
-                      <small>{stage.text}</small>
-                    </figcaption>
-                  </figure>
-                ))}
-              </div>
-              <div className="guest-intro-timeline" data-testid="guest-intro-timeline">
-                {guestIntroStages.map((stage) => (
-                  <span key={stage.id}>{stage.label}</span>
-                ))}
-              </div>
-            </div>
-            <div className="guest-intro-content">
-              <div className="guest-intro-copy">
-                <div className="guest-intro-brand">
-                  <span className="guest-intro-mark" aria-hidden="true">
-                    <ShieldCheck size={20} />
-                  </span>
-                  <span>Cho's Martial Arts</span>
-                </div>
-                <p className="guest-intro-eyebrow">Guest preview</p>
-                <h2 id="guest-intro-title">Confidence. Respect. Focus.</h2>
-                <p id="guest-intro-description">A guided first look at the mat, the rhythm, and the class community.</p>
-                <p className="guest-intro-subcopy">Discipline. Fitness. Self-defense. Character.</p>
-              </div>
-              <div className="guest-intro-highlights" aria-label="What Cho's Martial Arts teaches">
-                {guestTeachingHighlights.map((highlight) => (
-                  <article key={highlight.title}>
-                    <span className="guest-intro-highlight-icon" aria-hidden="true">{highlight.icon}</span>
-                    <div>
-                      <span className="guest-intro-highlight-cue">{highlight.cue}</span>
-                      <h3>{highlight.title}</h3>
-                      <p>{highlight.text}</p>
-                    </div>
-                  </article>
-                ))}
-              </div>
-              <div className="guest-intro-programs" aria-label="Guest introduction class overview">
-                {guestProgramAudiences.map((audience) => (
-                  <span key={audience}>
-                    <Award size={15} aria-hidden="true" />
-                    {audience}
-                  </span>
-                ))}
-              </div>
-              <div className="guest-intro-actions">
-                <div className="guest-intro-action-note" aria-hidden="true">
-                  <span></span>
-                  Ready when you are
-                </div>
-                <div className="guest-intro-action-buttons">
-                  <button className="guest-intro-back" type="button" onClick={() => setGuestIntroOpen(false)}>
-                    <ChevronLeft size={18} /> Back
-                  </button>
-                  <button className="guest-intro-continue" type="button" onClick={continueAsGuest}>
-                    Enter as Guest <ArrowRight size={19} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
     </section>
-  );
-}
-
-function Field({ label, error, children }: { label: string; error?: string; children: ReactNode }) {
-  return (
-    <label className="field-label">
-      {label}
-      {children}
-      {error && <span className="form-error">{error}</span>}
-    </label>
   );
 }
 

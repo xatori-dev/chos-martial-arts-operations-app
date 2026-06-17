@@ -39,7 +39,16 @@
     "supabase": {
       "organization": "Xatori Dev",
       "stagingProjectName": "chos-martial-arts-operations-app-staging",
-      "productionProjectName": "chos-martial-arts-operations-app-production"
+      "stagingProjectRef": "zfuwbbepsnmmlpgfkmhz",
+      "productionProjectName": "chos-martial-arts-operations-app-production",
+      "forbiddenProjectRefs": [
+        {
+          "app": "mongteng-food-market-ordering-app",
+          "environment": "staging",
+          "projectName": "mongteng-food-market-ordering-app-staging",
+          "projectRef": "jqvclzlvrhdcsfhhvekr"
+        }
+      ]
     },
     "twilio": {
       "parentAccount": "Xatori Dev",

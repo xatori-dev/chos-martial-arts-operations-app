@@ -70,7 +70,7 @@ import {
 } from "./beltCase";
 import { childUsernameFromName, normalizeChildUsername } from "./childAccountUtils";
 import { beltRanks } from "./data";
-import { createSupabaseManagedAccount, isSupabaseAuthConfigured } from "./supabaseAccounts";
+import { isSupabaseAuthConfigured } from "./supabaseAccounts";
 import {
   readManagerProfile,
   readGuardianProfile,
@@ -92,7 +92,6 @@ import {
   clearStoredVisualTheme,
   defaultVisualThemeColors,
   normalizeVisualThemeColors,
-  readStoredAppTheme,
   readStoredVisualTheme,
   visualColorKeys,
   writeStoredAppTheme,
@@ -368,7 +367,7 @@ const webPushServerContract = {
   deliveryPlanner: "buildChoWebPushDeliveryPlan",
   providerResponseResultBuilder: "buildChoWebPushResultFromProviderResponse",
   deliveryReconciliationPlanner: "buildChoWebPushDeliveryReconciliationPlan",
-  supportedAccountRoles: ["staff", "student", "guardian"]
+  supportedAccountRoles: ["staff"]
 };
 const messagingServerAdapterContract = {
   module: "src/messagingServerContract.ts",
@@ -8677,512 +8676,27 @@ function ManagerLauncherPage() {
   );
 }
 
-type StaffAccountForm = {
-  displayName: string;
-  username: string;
-  password: string;
-  confirmPassword: string;
-  email: string;
-  phone: string;
-  title: string;
-  notes: string;
-};
-
-type StudentAccountForm = {
-  fullName: string;
-  username: string;
-  password: string;
-  confirmPassword: string;
-  dateOfBirth: string;
-  gender: string;
-  studentEmail: string;
-  guardianName: string;
-  guardianPhone: string;
-  guardianEmail: string;
-  program: string;
-  status: string;
-  beltRank: string;
-  notes: string;
-};
-
-const staffAccessOptions: { key: ManagerAccessKey; label: string; helper: string }[] = [
-  { key: "dashboard", label: "Dashboard", helper: "Calendar and overview" },
-  { key: "students", label: "Students", helper: "Student directory" },
-  { key: "classes", label: "Classes", helper: "Class setup" },
-  { key: "scheduling", label: "Scheduling", helper: "Calendar scheduling" },
-  { key: "messages", label: "Messages", helper: "Messaging tools" },
-  { key: "events", label: "Events", helper: "Event creation" },
-  { key: "merchandise", label: "Merchandise", helper: "Store tools" },
-  { key: "videos", label: "Videos", helper: "Training videos" },
-  { key: "studyGuide", label: "Study Guide", helper: "Study files" },
-  { key: "reports", label: "Reports", helper: "Reports tab" },
-  { key: "create", label: "Create account access", helper: "Create staff and students" }
-];
-
-const managerAccessLabelMap: Record<ManagerAccessKey, string> = staffAccessOptions.reduce(
-  (labels, option) => ({ ...labels, [option.key]: option.key === "create" ? "Create" : option.label }),
-  {} as Record<ManagerAccessKey, string>
-);
-
-const staffPanelAccessOptions = staffAccessOptions.filter((option) => option.key !== "create");
-const staffPanelAccessKeys: ManagerAccessKey[] = staffPanelAccessOptions.map((option) => option.key);
-const managedAccountPasswordPolicyMessage = "Use at least 12 characters with uppercase, lowercase, a number, and a symbol.";
-
-function renderStaffAccessList(displayName: string) {
-  return (
-    <div className="create-account-access-list" aria-label={`${displayName} access`}>
-      {staffPanelAccessKeys.map((key) => <span key={key}>{managerAccessLabelMap[key]}</span>)}
-    </div>
-  );
-}
-
-function makeBlankStaffAccountForm(): StaffAccountForm {
-  return {
-    displayName: "",
-    username: "",
-    password: "",
-    confirmPassword: "",
-    email: "",
-    phone: "",
-    title: "Instructor",
-    notes: ""
-  };
-}
-
-function makeBlankStudentAccountForm(): StudentAccountForm {
-  return {
-    fullName: "",
-    username: "",
-    password: "",
-    confirmPassword: "",
-    dateOfBirth: "",
-    gender: "Not specified",
-    studentEmail: "",
-    guardianName: "",
-    guardianPhone: "",
-    guardianEmail: "",
-    program: "Youth Taekwondo",
-    status: "Active",
-    beltRank: "White",
-    notes: ""
-  };
-}
-
-function normalizeCreateUsername(username: string) {
-  return username
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ".")
-    .replace(/[^a-z0-9._-]+/g, "")
-    .replace(/^[._-]+|[._-]+$/g, "");
-}
-
 function CreateAccountsPage() {
-  const {
-    addOperationsStudent,
-    createManagedAccount,
-    managedAccounts,
-    managedUsernameExists,
-    showToast,
-    updateManagedAccountStatus
-  } = useAppState();
-  const [mode, setMode] = useState<"staff" | "student">("staff");
-  const [staffForm, setStaffForm] = useState(makeBlankStaffAccountForm);
-  const [studentForm, setStudentForm] = useState(makeBlankStudentAccountForm);
-  const [savingAccountType, setSavingAccountType] = useState<"staff" | "student" | null>(null);
-  const staffAccounts = managedAccounts.filter((account) => account.role === "staff");
-  const studentAccounts = managedAccounts.filter((account) => account.role === "student");
-  const staffToolCount = staffPanelAccessOptions.length;
-
-  const validatePasswordPair = (password: string, confirmPassword: string) => {
-    const trimmedPassword = password.trim();
-    if (
-      trimmedPassword.length < 12 ||
-      !/[a-z]/.test(trimmedPassword) ||
-      !/[A-Z]/.test(trimmedPassword) ||
-      !/\d/.test(trimmedPassword) ||
-      !/[^A-Za-z0-9]/.test(trimmedPassword)
-    ) {
-      showToast(managedAccountPasswordPolicyMessage);
-      return false;
-    }
-
-    if (trimmedPassword !== confirmPassword.trim()) {
-      showToast("The passwords do not match.");
-      return false;
-    }
-
-    return true;
-  };
-
-  const submitStaffAccount = async (event: FormEvent) => {
-    event.preventDefault();
-    const username = normalizeCreateUsername(staffForm.username);
-    if (!staffForm.displayName.trim() || !username || !staffForm.email.trim() || !staffForm.phone.trim()) {
-      showToast("Enter staff name, username, email, and phone.");
-      return;
-    }
-
-    if (!validateEmail(staffForm.email)) {
-      showToast("Enter a valid staff email.");
-      return;
-    }
-
-    if (!validatePasswordPair(staffForm.password, staffForm.confirmPassword)) return;
-
-    if (managedUsernameExists(username)) {
-      showToast("That username is already in use.");
-      return;
-    }
-
-    const accountInput = {
-      displayName: staffForm.displayName,
-      username,
-      password: staffForm.password,
-      role: "staff",
-      status: "active",
-      email: staffForm.email,
-      phone: staffForm.phone,
-      title: staffForm.title,
-      notes: staffForm.notes,
-      access: staffPanelAccessKeys
-    } as const;
-
-    if (isSupabaseAuthConfigured()) {
-      setSavingAccountType("staff");
-      const supabaseAccount = await createSupabaseManagedAccount(accountInput);
-      setSavingAccountType(null);
-      if (supabaseAccount.status !== "created") {
-        showToast(
-          supabaseAccount.status === "missing-session"
-            ? "Sign in again as Manager123 before creating Supabase accounts."
-            : supabaseAccount.status === "unauthorized" || supabaseAccount.status === "error"
-              ? supabaseAccount.message
-              : "Unable to create Supabase staff account."
-        );
-        return;
-      }
-    }
-
-    const account = createManagedAccount(accountInput);
-
-    if (!account) {
-      showToast("Unable to create staff account.");
-      return;
-    }
-
-    setStaffForm(makeBlankStaffAccountForm());
-    showToast(`${account.displayName} staff account created.`);
-  };
-
-  const submitStudentAccount = async (event: FormEvent) => {
-    event.preventDefault();
-    const username = normalizeCreateUsername(studentForm.username);
-    if (!studentForm.fullName.trim() || !username || !studentForm.studentEmail.trim() || !studentForm.guardianPhone.trim()) {
-      showToast("Enter student name, username, email, and guardian phone.");
-      return;
-    }
-
-    if (!validateEmail(studentForm.studentEmail)) {
-      showToast("Enter a valid student email.");
-      return;
-    }
-
-    if (!validatePasswordPair(studentForm.password, studentForm.confirmPassword)) return;
-
-    if (managedUsernameExists(username)) {
-      showToast("That username is already in use.");
-      return;
-    }
-
-    if (isSupabaseAuthConfigured()) {
-      setSavingAccountType("student");
-      const supabaseAccount = await createSupabaseManagedAccount({
-        displayName: studentForm.fullName,
-        username,
-        password: studentForm.password,
-        role: "student",
-        status: "active",
-        email: studentForm.studentEmail,
-        phone: studentForm.guardianPhone,
-        title: `${studentForm.beltRank} Belt Student`,
-        notes: studentForm.notes,
-        access: []
-      });
-      setSavingAccountType(null);
-      if (supabaseAccount.status !== "created") {
-        showToast(
-          supabaseAccount.status === "missing-session"
-            ? "Sign in again as Manager123 before creating Supabase accounts."
-            : supabaseAccount.status === "unauthorized" || supabaseAccount.status === "error"
-              ? supabaseAccount.message
-              : "Unable to create Supabase student account."
-        );
-        return;
-      }
-    }
-
-    const student = addOperationsStudent({
-      fullName: studentForm.fullName,
-      dateOfBirth: studentForm.dateOfBirth,
-      gender: studentForm.gender,
-      studentEmail: studentForm.studentEmail,
-      guardianName: studentForm.guardianName,
-      guardianPhone: studentForm.guardianPhone,
-      guardianEmail: studentForm.guardianEmail,
-      program: studentForm.program,
-      status: studentForm.status,
-      beltRank: studentForm.beltRank,
-      notes: studentForm.notes
-    });
-
-    if (!student) {
-      showToast("Enter student name, guardian phone, and email.");
-      return;
-    }
-
-    const account = createManagedAccount({
-      displayName: fullName(student),
-      username,
-      password: studentForm.password,
-      role: "student",
-      status: "active",
-      email: student.email,
-      phone: student.phone,
-      title: `${student.beltRank} Belt Student`,
-      notes: studentForm.notes,
-      studentId: student.id,
-      linkedStudent: student
-    });
-
-    if (!account) {
-      showToast("Student record saved, but the login account could not be created.");
-      return;
-    }
-
-    setStudentForm(makeBlankStudentAccountForm());
-    showToast(`${account.displayName} student login created.`);
-  };
-
-  const setManagedAccountLifecycleStatus = (account: ManagedAccount, status: ManagedAccount["status"]) => {
-    const updatedAccount = updateManagedAccountStatus(account.id, status);
-    if (!updatedAccount) {
-      showToast("Unable to update account status.");
-      return;
-    }
-
-    showToast(`${account.displayName} account ${status === "active" ? "reactivated" : "deactivated"}.`);
-  };
-
-  const renderAccountCard = (account: ManagedAccount) => (
-    <article className="create-account-card" key={account.id} aria-label={`${account.displayName} ${account.role} account`}>
-      <div className="create-account-card-main">
-        <span className={`create-account-avatar create-account-avatar--${account.role}`} aria-hidden="true">
-          {account.role === "staff" ? <ShieldCheck size={20} /> : <Users size={20} />}
-        </span>
-        <div>
-          <h3>{account.displayName}</h3>
-          <p>{account.username}</p>
-        </div>
-      </div>
-      <div className="create-account-card-meta">
-        <span>{account.role === "staff" ? account.title || "Staff" : "Student"}</span>
-        <span>{account.status === "active" ? "Active" : "Inactive"}</span>
-      </div>
-      {account.role === "staff" && renderStaffAccessList(account.displayName)}
-      <div className="create-account-card-actions">
-        {account.status === "inactive" ? (
-          <button type="button" onClick={() => setManagedAccountLifecycleStatus(account, "active")} aria-label={`Reactivate ${account.displayName} account`}>
-            <CheckCircle2 size={15} aria-hidden="true" />
-            <span>Reactivate</span>
-          </button>
-        ) : (
-          <button type="button" className="is-warning" onClick={() => setManagedAccountLifecycleStatus(account, "inactive")} aria-label={`Deactivate ${account.displayName} account`}>
-            <X size={15} aria-hidden="true" />
-            <span>Deactivate</span>
-          </button>
-        )}
-      </div>
-    </article>
-  );
-
   return (
     <OperationsPage
       className="operations-page--create-accounts"
       title="Create Accounts"
-      text="Create custom staff and student logins, assign manager-panel access, and keep the setup simple enough to complete in one pass."
+      text="Custom staff accounts are retired. Manager123 and the gated Dev123 account are the only supported app sign-ins."
     >
       <div className="operations-stats create-account-stats">
-        <StatCard label="Staff accounts" value={staffAccounts.length} icon={<ShieldCheck />} />
-        <StatCard label="Student logins" value={studentAccounts.length} icon={<Users />} />
-        <StatCard label="Staff tools" value={staffToolCount} icon={<UserPlus />} />
+        <StatCard label="Manager accounts" value={1} icon={<ShieldCheck />} />
+        <StatCard label="Staff accounts" value={0} icon={<UserPlus />} />
       </div>
 
-      <section className="operations-panel create-account-builder" aria-label="Create account builder">
-        <div className="create-account-mode-tabs" role="group" aria-label="Account type">
-          <button type="button" aria-pressed={mode === "staff"} onClick={() => setMode("staff")}>
-            <ShieldCheck size={18} /> Staff
-          </button>
-          <button type="button" aria-pressed={mode === "student"} onClick={() => setMode("student")}>
-            <Users size={18} /> Student
-          </button>
-        </div>
-
-        {mode === "staff" ? (
-          <form className="create-account-form" aria-label="Create staff account" onSubmit={submitStaffAccount}>
-            <div className="student-form-grid">
-              <label>
-                Staff full name
-                <input autoFocus value={staffForm.displayName} onChange={(event) => setStaffForm({ ...staffForm, displayName: event.target.value })} placeholder="Jordan Lee" />
-              </label>
-              <label>
-                Staff username
-                <input autoComplete="username" value={staffForm.username} onChange={(event) => setStaffForm({ ...staffForm, username: event.target.value })} placeholder="jordan.staff" />
-              </label>
-              <label>
-                Staff password
-                <input type="password" autoComplete="new-password" value={staffForm.password} onChange={(event) => setStaffForm({ ...staffForm, password: event.target.value })} placeholder="12+ chars, mixed" />
-              </label>
-              <label>
-                Confirm staff password
-                <input type="password" autoComplete="new-password" value={staffForm.confirmPassword} onChange={(event) => setStaffForm({ ...staffForm, confirmPassword: event.target.value })} placeholder="Repeat password" />
-              </label>
-              <label>
-                Staff email
-                <input inputMode="email" value={staffForm.email} onChange={(event) => setStaffForm({ ...staffForm, email: event.target.value })} placeholder="staff@chos.prototype" />
-              </label>
-              <label>
-                Staff phone
-                <input value={staffForm.phone} onChange={(event) => setStaffForm({ ...staffForm, phone: event.target.value })} placeholder="(262) 555-0100" />
-              </label>
-              <label>
-                Staff title
-                <input value={staffForm.title} onChange={(event) => setStaffForm({ ...staffForm, title: event.target.value })} placeholder="Instructor" />
-              </label>
-            </div>
-
-            <fieldset className="create-account-access-grid">
-              <legend>Staff panel access</legend>
-              {staffPanelAccessOptions.map((option) => (
-                <label className="create-account-access-option" key={option.key}>
-                  <input aria-label={option.label} type="checkbox" checked disabled />
-                  <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.helper}</small>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
-
-            <label className="create-account-notes">
-              Notes
-              <textarea rows={3} value={staffForm.notes} onChange={(event) => setStaffForm({ ...staffForm, notes: event.target.value })} placeholder="Optional internal notes" />
-            </label>
-
-            <div className="student-editor-actions">
-              <button type="submit" disabled={savingAccountType === "staff"}>
-                <UserPlus size={18} /> {savingAccountType === "staff" ? "Creating Staff..." : "Create Staff Account"}
-              </button>
-            </div>
-          </form>
-        ) : (
-          <form className="create-account-form" aria-label="Create student account" onSubmit={submitStudentAccount}>
-            <div className="student-form-grid">
-              <label>
-                Student full name
-                <input autoFocus value={studentForm.fullName} onChange={(event) => setStudentForm({ ...studentForm, fullName: event.target.value })} placeholder="Avery Kim" />
-              </label>
-              <label>
-                Student username
-                <input autoComplete="username" value={studentForm.username} onChange={(event) => setStudentForm({ ...studentForm, username: event.target.value })} placeholder="avery.student" />
-              </label>
-              <label>
-                Student password
-                <input type="password" autoComplete="new-password" value={studentForm.password} onChange={(event) => setStudentForm({ ...studentForm, password: event.target.value })} placeholder="12+ chars, mixed" />
-              </label>
-              <label>
-                Confirm student password
-                <input type="password" autoComplete="new-password" value={studentForm.confirmPassword} onChange={(event) => setStudentForm({ ...studentForm, confirmPassword: event.target.value })} placeholder="Repeat password" />
-              </label>
-              <label>
-                Student email
-                <input inputMode="email" value={studentForm.studentEmail} onChange={(event) => setStudentForm({ ...studentForm, studentEmail: event.target.value })} placeholder="student@chos.prototype" />
-              </label>
-              <label>
-                Date of birth
-                <input type="date" value={studentForm.dateOfBirth} onChange={(event) => setStudentForm({ ...studentForm, dateOfBirth: event.target.value })} />
-              </label>
-              <label>
-                Gender
-                <select value={studentForm.gender} onChange={(event) => setStudentForm({ ...studentForm, gender: event.target.value })}>
-                  {genderOptions.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Parent/guardian name
-                <input value={studentForm.guardianName} onChange={(event) => setStudentForm({ ...studentForm, guardianName: event.target.value })} placeholder="Parent or guardian" />
-              </label>
-              <label>
-                Parent/guardian phone
-                <input value={studentForm.guardianPhone} onChange={(event) => setStudentForm({ ...studentForm, guardianPhone: event.target.value })} placeholder="(262) 555-0122" />
-              </label>
-              <label>
-                Parent/guardian email
-                <input inputMode="email" value={studentForm.guardianEmail} onChange={(event) => setStudentForm({ ...studentForm, guardianEmail: event.target.value })} placeholder="parent@chos.prototype" />
-              </label>
-              <label>
-                Program
-                <input value={studentForm.program} onChange={(event) => setStudentForm({ ...studentForm, program: event.target.value })} />
-              </label>
-              <label>
-                Status
-                <select value={studentForm.status} onChange={(event) => setStudentForm({ ...studentForm, status: event.target.value })}>
-                  {statusOptions.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Belt rank
-                <select value={studentForm.beltRank} onChange={(event) => setStudentForm({ ...studentForm, beltRank: event.target.value })}>
-                  {beltOptions.map((rank) => (
-                    <option key={rank} value={rank}>{rank}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <label className="create-account-notes">
-              Notes
-              <textarea rows={3} value={studentForm.notes} onChange={(event) => setStudentForm({ ...studentForm, notes: event.target.value })} placeholder="Optional student notes" />
-            </label>
-
-            <div className="student-editor-actions">
-              <button type="submit" disabled={savingAccountType === "student"}>
-                <UserPlus size={18} /> {savingAccountType === "student" ? "Creating Student..." : "Create Student Account"}
-              </button>
-            </div>
-          </form>
-        )}
-      </section>
-
-      <section className="operations-panel create-account-directory" aria-label="Created custom accounts">
+      <section className="operations-panel create-account-directory" aria-label="Retired custom accounts">
         <div className="student-roster-head">
           <div>
-            <h2>Created Accounts</h2>
-            <p>Saved staff and student usernames can sign in from the main login screen immediately.</p>
+            <h2>Custom Accounts Retired</h2>
+            <p>Saved staff usernames are ignored at login and cleared during startup cleanup.</p>
           </div>
-          <span>{managedAccounts.length} account{managedAccounts.length === 1 ? "" : "s"}</span>
+          <span>0 accounts</span>
         </div>
-        {managedAccounts.length ? (
-          <div className="create-account-card-grid">
-            {managedAccounts.map(renderAccountCard)}
-          </div>
-        ) : (
-          <p className="operations-note">No custom staff or student accounts have been created yet.</p>
-        )}
+        <p className="operations-note">Use Manager123 for owner testing or enable Dev123 for developer diagnostics.</p>
       </section>
     </OperationsPage>
   );
@@ -9973,6 +9487,19 @@ function beltClassName(rank: string) {
   return slugClassName(rank);
 }
 
+function studentDirectoryBeltRank(rank: string) {
+  const normalizedRank = rank.trim().toLowerCase();
+  return beltRanks.find((beltRank) => beltRank.name.toLowerCase() === normalizedRank || beltRank.slug.toLowerCase() === normalizedRank);
+}
+
+function studentDirectoryBeltStyle(rank: string) {
+  const beltRank = studentDirectoryBeltRank(rank);
+  return {
+    "--student-belt-color": beltRank?.color ?? "#b8f5e2",
+    "--student-belt-text": beltRank?.textColor ?? "#17202d"
+  } as CSSProperties;
+}
+
 function audienceLabel(value: StudioEvent["audience"]) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
@@ -9998,6 +9525,10 @@ function studentDirectoryAge(student: StudentRecord) {
   return age.toString();
 }
 
+function studentDirectoryLastCheckIn(student: StudentRecord) {
+  return student.lastCheckIn?.trim() ? `Last check-in ${student.lastCheckIn}` : "No check-in yet";
+}
+
 function StudentsPage() {
   const {
     students,
@@ -10015,7 +9546,7 @@ function StudentsPage() {
   const [studentModalMode, setStudentModalMode] = useState<"create" | "edit" | null>(null);
   const [statusFilter, setStatusFilter] = useState<StudentDirectoryStatusFilter>("All");
   const [studentSearchQuery, setStudentSearchQuery] = useState("");
-  const welcomeLogs = messageLogs.filter((message) => message.kind === "welcome");
+  const welcomeLogs = useMemo(() => messageLogs.filter((message) => message.kind === "welcome"), [messageLogs]);
   const normalizedStudentSearchQuery = studentSearchQuery.trim().toLowerCase();
   const statusCounts = useMemo(() => {
     const counts = studentDirectoryStatusFilters.reduce(
@@ -10046,7 +9577,9 @@ function StudentsPage() {
           ? `${visibleStudents.length} ${statusFilter.toLowerCase()} student${visibleStudents.length === 1 ? "" : "s"} matches search. Clear search to show everyone.`
           : `No ${statusFilter.toLowerCase()} students match this search.`
       : statusFilter === "All"
-      ? `${students.length} student${students.length === 1 ? "" : "s"} listed by belt. Select a name to open student info.`
+      ? students.length
+        ? `${students.length} student${students.length === 1 ? "" : "s"} listed by belt. Select a name to open student info.`
+        : "No students listed yet. Create a student when you are ready."
       : `${visibleStudents.length} ${statusFilter.toLowerCase()} student${visibleStudents.length === 1 ? "" : "s"} listed by belt. Clear filter to show everyone.`;
 
   const studentsByBelt = useMemo(() => {
@@ -10142,14 +9675,34 @@ function StudentsPage() {
 
   const renderStudentNameButton = (student: StudentRecord) => {
     const studentName = fullName(student);
+    const ageLabel = studentDirectoryAge(student);
     const genderLabel = student.gender?.trim() || "Not set";
+    const programLabel = student.program?.trim() || "Program not set";
+    const statusLabel = normalizeStudentDirectoryStatus(student);
 
     return (
-      <button key={student.id} type="button" className="student-name-list-button" data-testid="student-name-list-button" aria-label={`Open ${studentName} student info`} onClick={() => selectStudent(student)}>
-        <span className="student-name-list-icon" aria-hidden="true" />
-        <span className="student-name-list-name">{studentName}</span>
-        <span className="student-name-list-cell student-name-list-cell--gender">{genderLabel}</span>
-        <span className="student-name-list-cell student-name-list-cell--age">{studentDirectoryAge(student)}</span>
+      <button
+        key={student.id}
+        type="button"
+        className="student-name-list-button"
+        data-testid="student-name-list-button"
+        aria-label={`Open ${studentName} student info`}
+        style={studentDirectoryBeltStyle(student.beltRank)}
+        onClick={() => selectStudent(student)}
+      >
+        <span className="student-name-list-belt-rail" aria-hidden="true" />
+        <span className="student-name-list-main">
+          <span className="student-name-list-name">{studentName}</span>
+          <span className="student-name-list-subline">
+            <span className="student-name-list-cell student-name-list-cell--age">Age {ageLabel}</span>
+            <span className="student-name-list-cell student-name-list-cell--gender">{genderLabel}</span>
+            <span className={`student-name-list-status student-name-list-status--${slugClassName(statusLabel)}`}>{statusLabel}</span>
+          </span>
+        </span>
+        <span className="student-name-list-training">
+          <span>{programLabel}</span>
+          <small>{studentDirectoryLastCheckIn(student)}</small>
+        </span>
       </button>
     );
   };
@@ -10163,12 +9716,12 @@ function StudentsPage() {
   const selectedStudentName = selectedStudent ? fullName(selectedStudent) : "";
 
   return (
-    <OperationsPage className="operations-page--students" title="Students" text="Review each belt group as a compact student list, then select a student name to open their full info." action={headerAction}>
+    <OperationsPage className="operations-page--students" title="Students" text="Scan every student by belt rank, then select a compact card to open the full student record." action={headerAction}>
       <div className="students-workspace students-workspace--directory">
         <section className="operations-panel student-roster-panel student-directory-panel student-directory-panel--compact">
-          <div className="student-roster-head">
+          <div className="student-roster-head student-directory-command">
             <div>
-              <h2>Student Directory</h2>
+              <h2>Belt Board</h2>
               <p>{directorySummary}</p>
             </div>
             <div className="student-directory-tools">
@@ -10207,35 +9760,44 @@ function StudentsPage() {
           </div>
           <div className="student-directory-scroll student-belt-directory-grid" aria-label="Student directory by belt">
             {studentsByBelt.length ? studentsByBelt.map(({ belt, students: beltStudents }) => (
-              <section key={belt} className={`student-belt-group student-belt-group--card student-belt-group--${beltClassName(belt)}`} role="group" aria-label={`${belt} belt students`}>
+              <section
+                key={belt}
+                className={`student-belt-group student-belt-group--card student-belt-group--${beltClassName(belt)}`}
+                role="group"
+                aria-label={`${belt} belt students`}
+                style={studentDirectoryBeltStyle(belt)}
+              >
                 <div className="student-belt-group-head">
                   <div>
                     <span className="student-belt-group-swatch" aria-hidden="true" />
                     <h3>{belt} Belt</h3>
                   </div>
-                  <span>{beltStudents.length} student{beltStudents.length === 1 ? "" : "s"}</span>
+                  <span className="student-belt-group-count">{beltStudents.length} student{beltStudents.length === 1 ? "" : "s"}</span>
                 </div>
                 <div className="student-name-list">
-                  <div className="student-name-list-head" aria-hidden="true">
-                    <span aria-hidden="true" />
-                    <span className="student-name-list-column-label">Name</span>
-                    <span className="student-name-list-column-label">Gender</span>
-                    <span className="student-name-list-column-label">Age</span>
-                  </div>
                   {beltStudents.map(renderStudentNameButton)}
                 </div>
               </section>
             )) : (
               <p className="operations-note student-directory-empty">
-                {normalizedStudentSearchQuery ? "No matching students in this view." : `No ${statusFilter.toLowerCase()} students match this filter.`}
+                {normalizedStudentSearchQuery
+                  ? "No matching students in this view."
+                  : students.length === 0 && statusFilter === "All"
+                    ? "No students are in the directory yet."
+                    : `No ${statusFilter.toLowerCase()} students match this filter.`}
               </p>
             )}
           </div>
-        </section>
 
-        <section className="operations-panel student-welcome-panel">
-          <h2>Welcome Text Queue</h2>
-          {welcomeLogs.length ? welcomeLogs.map((message) => <MessagePreview key={message.id} message={message} />) : <p>No welcome texts queued yet.</p>}
+          <section className="student-welcome-panel student-welcome-rail" aria-label="Welcome text queue">
+            <div className="student-welcome-rail-head">
+              <h2>Welcome Text Queue</h2>
+              <span>{welcomeLogs.length} queued</span>
+            </div>
+            <div className="student-welcome-rail-list">
+              {welcomeLogs.length ? welcomeLogs.map((message) => <MessagePreview key={message.id} message={message} />) : <p>No welcome texts queued yet.</p>}
+            </div>
+          </section>
         </section>
       </div>
 

@@ -6,6 +6,7 @@ import { parseOperationsBackupSnapshot, type OperationsBackupData } from "./oper
 import { getClassReminderCandidates, getLeadCandidates, getMerchandiseTargetStock, getStudentCelebrationEvents, getStudentProfileIssues, hasGuardianSmsConsent, hasStaffSmsConsent, hasStudentSmsConsent, isAttendanceGapFollowUpDue, isBeltTestInviteDue, isLowStockMerchandiseItem, isMilestoneEncouragementDue, isMissedClassFollowUpDue, isNewStudentCheckInDue, isPausedStudentReviewDue, isProfileUpdateRequestDue, isQueuedMessageDeliverable, isStaleOneTimeScheduledClass, isTrialConversionDue } from "./operationsReports";
 import { buildStudentBeltProgress } from "./studentProgress";
 import { clearSupabaseAuthSession } from "./supabaseAccounts";
+import { deleteSupabaseDirectMessages, deleteSupabaseMessageLogs, fetchSupabaseDirectMessages, fetchSupabaseMessageLogs, isSupabaseMessagePersistenceAvailable, persistSupabaseDirectMessages, persistSupabaseMessageLogs } from "./supabaseMessagePersistence";
 import { normalizeTwilioInboundSmsWebhookForServer, normalizeTwilioStatusCallbackForServer, type TwilioInboundSmsWebhook } from "./twilioRelayContract";
 import type {
   AccountRole,
@@ -41,7 +42,7 @@ import type {
   TrainingVideo,
   TrainingVideoFolder
 } from "./types";
-import { applyCoupon, calculateTotals, createOrder, estimateSmsSegments, hasSmsOptOutLanguage, isPrototypeDeveloperEmail, isPrototypeManagerOwnerEmail, prototypeDeveloperLogin, prototypeManagerLogin, prototypeParentLogin, prototypeStudentLogin } from "./utils";
+import { applyCoupon, calculateTotals, createOrder, estimateSmsSegments, hasSmsOptOutLanguage, isPrototypeDeveloperEmail, isPrototypeManagerOwnerEmail, prototypeDeveloperLogin, prototypeManagerLogin } from "./utils";
 
 const keys = {
   cart: "chos.cart.v1",
@@ -76,537 +77,25 @@ const keys = {
   studyGuideMaterials: "chos.operations.studyGuideMaterials.v1"
 } as const;
 
-const prototypeSeedSmsConsentUpdatedAt = "2026-05-01T10:00:00.000Z";
+const studentPrototypeDataResetKey = "chos.prototype.studentDataReset.v1";
+const retiredStudentPrototypeEmails = new Set(["student123@chos.prototype", "parent123@chos.prototype"]);
+const retiredStudentScopedStoragePrefixes = [
+  "chos.beltCase.student.",
+  "chos.parentTutorial.",
+  "chos.profile.student.",
+  "chos.profile.guardian."
+];
+const retiredStudentScopedStorageFragments = [
+  "student123-chos.prototype",
+  "parent123-chos.prototype",
+  "student123@chos.prototype",
+  "parent123@chos.prototype"
+];
 
-const seedStudents: StudentRecord[] = [
-  {
-    id: "student-talia-brooks-seed",
-    firstName: "Talia",
-    lastName: "Brooks",
-    dateOfBirth: "2019-09-14",
-    gender: "Female",
-    phone: "(262) 555-0201",
-    email: "talia.brooks@example.com",
-    profileImagePath: "assets/student-profiles/talia-brooks.webp",
-    guardianName: "Monica Brooks",
-    guardianPhone: "(262) 555-0201",
-    guardianEmail: "monica.brooks@example.com",
-    emergencyContactName: "Evan Hart",
-    emergencyContactRelationship: "Uncle",
-    emergencyContactPhone: "(262) 555-0301",
-    emergencyContactEmail: "evan.hart@example.com",
-    enrollmentDate: "2026-04-06",
-    program: "Little Dragons",
-    status: "Active",
-    beltRank: "White",
-    classesAttended: 4,
-    missedClassCount: 0,
-    lastCheckIn: "2026-05-15",
-    joinedAt: "2026-04-06",
-    notes: "Prototype testing profile for a young beginner student."
-  },
-  {
-    id: "student-evan-ramirez-seed",
-    firstName: "Evan",
-    lastName: "Ramirez",
-    dateOfBirth: "2018-07-22",
-    gender: "Male",
-    phone: "(262) 555-0202",
-    email: "evan.ramirez@example.com",
-    profileImagePath: "assets/student-profiles/evan-ramirez.webp",
-    guardianName: "Rosa Ramirez",
-    guardianPhone: "(262) 555-0202",
-    guardianEmail: "rosa.ramirez@example.com",
-    emergencyContactName: "Luis Ramirez",
-    emergencyContactRelationship: "Grandfather",
-    emergencyContactPhone: "(262) 555-0302",
-    emergencyContactEmail: "luis.ramirez@example.com",
-    enrollmentDate: "2026-03-21",
-    program: "Youth Foundations",
-    status: "Trial",
-    beltRank: "Yellow",
-    classesAttended: 11,
-    missedClassCount: 1,
-    lastCheckIn: "2026-05-11",
-    joinedAt: "2026-03-21",
-    notes: "Prototype testing profile with trial status."
-  },
-  {
-    id: "student-gia-patel-seed",
-    firstName: "Gia",
-    lastName: "Patel",
-    dateOfBirth: "2017-11-05",
-    gender: "Female",
-    phone: "(262) 555-0203",
-    email: "gia.patel@example.com",
-    profileImagePath: "assets/student-profiles/gia-patel.webp",
-    guardianName: "Nisha Patel",
-    guardianPhone: "(262) 555-0203",
-    guardianEmail: "nisha.patel@example.com",
-    emergencyContactName: "Arun Patel",
-    emergencyContactRelationship: "Father",
-    emergencyContactPhone: "(262) 555-0303",
-    emergencyContactEmail: "arun.patel@example.com",
-    enrollmentDate: "2026-02-19",
-    program: "Youth Foundations",
-    status: "Active",
-    beltRank: "Orange",
-    classesAttended: 19,
-    missedClassCount: 0,
-    lastCheckIn: "2026-05-13",
-    joinedAt: "2026-02-19",
-    notes: "Prototype testing profile for youth basics and forms."
-  },
-  {
-    id: "student-noah-bennett-seed",
-    firstName: "Noah",
-    lastName: "Bennett",
-    dateOfBirth: "2016-06-18",
-    gender: "Male",
-    phone: "(262) 555-0204",
-    email: "noah.bennett@example.com",
-    profileImagePath: "assets/student-profiles/noah-bennett.webp",
-    guardianName: "Kelly Bennett",
-    guardianPhone: "(262) 555-0204",
-    guardianEmail: "kelly.bennett@example.com",
-    emergencyContactName: "Mark Bennett",
-    emergencyContactRelationship: "Father",
-    emergencyContactPhone: "(262) 555-0304",
-    emergencyContactEmail: "mark.bennett@example.com",
-    enrollmentDate: "2026-01-28",
-    program: "Youth Foundations",
-    status: "Paused",
-    beltRank: "Green",
-    classesAttended: 27,
-    missedClassCount: 2,
-    lastCheckIn: "2026-04-29",
-    joinedAt: "2026-01-28",
-    notes: "Prototype testing profile for paused student workflows."
-  },
-  {
-    id: "student-iris-morgan-seed",
-    firstName: "Iris",
-    lastName: "Morgan",
-    dateOfBirth: "2015-12-02",
-    gender: "Female",
-    phone: "(262) 555-0205",
-    email: "iris.morgan@example.com",
-    profileImagePath: "assets/student-profiles/iris-morgan.webp",
-    guardianName: "Avery Morgan",
-    guardianPhone: "(262) 555-0205",
-    guardianEmail: "avery.morgan@example.com",
-    emergencyContactName: "Casey Morgan",
-    emergencyContactRelationship: "Aunt",
-    emergencyContactPhone: "(262) 555-0305",
-    emergencyContactEmail: "casey.morgan@example.com",
-    enrollmentDate: "2025-12-14",
-    program: "Youth Intermediate",
-    status: "Active",
-    beltRank: "Blue",
-    classesAttended: 36,
-    missedClassCount: 0,
-    lastCheckIn: "2026-05-16",
-    joinedAt: "2025-12-14",
-    notes: "Prototype testing profile for steady attendance."
-  },
-  {
-    id: "student-caleb-nguyen-seed",
-    firstName: "Caleb",
-    lastName: "Nguyen",
-    dateOfBirth: "2014-09-30",
-    gender: "Male",
-    phone: "(262) 555-0206",
-    email: "caleb.nguyen@example.com",
-    profileImagePath: "assets/student-profiles/caleb-nguyen.webp",
-    guardianName: "Linh Nguyen",
-    guardianPhone: "(262) 555-0206",
-    guardianEmail: "linh.nguyen@example.com",
-    emergencyContactName: "Bao Nguyen",
-    emergencyContactRelationship: "Uncle",
-    emergencyContactPhone: "(262) 555-0306",
-    emergencyContactEmail: "bao.nguyen@example.com",
-    enrollmentDate: "2025-11-08",
-    program: "Youth Intermediate",
-    status: "Trial",
-    beltRank: "Purple",
-    classesAttended: 44,
-    missedClassCount: 1,
-    lastCheckIn: "2026-05-09",
-    joinedAt: "2025-11-08",
-    notes: "Prototype testing profile with trial follow-up status."
-  },
-  {
-    id: "student-lila-thompson-seed",
-    firstName: "Lila",
-    lastName: "Thompson",
-    dateOfBirth: "2013-07-07",
-    gender: "Female",
-    phone: "(262) 555-0207",
-    email: "lila.thompson@example.com",
-    profileImagePath: "assets/student-profiles/lila-thompson.webp",
-    guardianName: "Dana Thompson",
-    guardianPhone: "(262) 555-0207",
-    guardianEmail: "dana.thompson@example.com",
-    emergencyContactName: "Robin Thompson",
-    emergencyContactRelationship: "Grandparent",
-    emergencyContactPhone: "(262) 555-0307",
-    emergencyContactEmail: "robin.thompson@example.com",
-    enrollmentDate: "2025-10-02",
-    program: "Youth Advanced",
-    status: "Inactive",
-    beltRank: "Brown",
-    classesAttended: 57,
-    missedClassCount: 4,
-    lastCheckIn: "2026-03-22",
-    lastContactedAt: "2026-04-05",
-    joinedAt: "2025-10-02",
-    notes: "Prototype testing profile for inactive student records."
-  },
-  {
-    id: "student-owen-carter-seed",
-    firstName: "Owen",
-    lastName: "Carter",
-    dateOfBirth: "2011-08-25",
-    gender: "Male",
-    phone: "(262) 555-0208",
-    email: "owen.carter@example.com",
-    profileImagePath: "assets/student-profiles/owen-carter.webp",
-    guardianName: "Erin Carter",
-    guardianPhone: "(262) 555-0208",
-    guardianEmail: "erin.carter@example.com",
-    emergencyContactName: "Shawn Carter",
-    emergencyContactRelationship: "Father",
-    emergencyContactPhone: "(262) 555-0308",
-    emergencyContactEmail: "shawn.carter@example.com",
-    enrollmentDate: "2025-08-18",
-    program: "Youth Advanced",
-    status: "Active",
-    beltRank: "Red",
-    classesAttended: 74,
-    missedClassCount: 0,
-    lastCheckIn: "2026-05-14",
-    joinedAt: "2025-08-18",
-    notes: "Prototype testing profile for testing-prep workflows."
-  },
-  {
-    id: "student-maya-robinson-seed",
-    firstName: "Maya",
-    lastName: "Robinson",
-    dateOfBirth: "2009-10-12",
-    gender: "Female",
-    phone: "(262) 555-0209",
-    email: "maya.robinson@example.com",
-    profileImagePath: "assets/student-profiles/maya-robinson.webp",
-    guardianName: "Jordan Robinson",
-    guardianPhone: "(262) 555-0209",
-    guardianEmail: "jordan.robinson@example.com",
-    emergencyContactName: "Pat Robinson",
-    emergencyContactRelationship: "Grandparent",
-    emergencyContactPhone: "(262) 555-0309",
-    emergencyContactEmail: "pat.robinson@example.com",
-    enrollmentDate: "2025-06-10",
-    program: "Black Belt Prep",
-    status: "Paused",
-    beltRank: "Dark Brown",
-    classesAttended: 92,
-    missedClassCount: 3,
-    lastCheckIn: "2026-04-18",
-    joinedAt: "2025-06-10",
-    notes: "Prototype testing profile for dark-brown belt coverage."
-  },
-  {
-    id: "student-andre-coleman-seed",
-    firstName: "Andre",
-    lastName: "Coleman",
-    dateOfBirth: "2007-06-04",
-    gender: "Male",
-    phone: "(262) 555-0210",
-    email: "andre.coleman@example.com",
-    profileImagePath: "assets/student-profiles/andre-coleman.webp",
-    guardianName: "Michelle Coleman",
-    guardianPhone: "(262) 555-0210",
-    guardianEmail: "michelle.coleman@example.com",
-    emergencyContactName: "Terrence Coleman",
-    emergencyContactRelationship: "Father",
-    emergencyContactPhone: "(262) 555-0310",
-    emergencyContactEmail: "terrence.coleman@example.com",
-    enrollmentDate: "2025-04-12",
-    program: "Black Belt Leadership",
-    status: "Active",
-    beltRank: "Black",
-    classesAttended: 120,
-    missedClassCount: 0,
-    lastCheckIn: "2026-05-16",
-    joinedAt: "2025-04-12",
-    notes: "Prototype testing profile for black belt leadership."
-  },
-  {
-    id: "student-sophie-jensen-seed",
-    firstName: "Sophie",
-    lastName: "Jensen",
-    dateOfBirth: "2005-08-19",
-    gender: "Female",
-    phone: "(262) 555-0211",
-    email: "sophie.jensen@example.com",
-    profileImagePath: "assets/student-profiles/sophie-jensen.webp",
-    guardianName: "Kara Jensen",
-    guardianPhone: "(262) 555-0211",
-    guardianEmail: "kara.jensen@example.com",
-    emergencyContactName: "Milo Jensen",
-    emergencyContactRelationship: "Brother",
-    emergencyContactPhone: "(262) 555-0311",
-    emergencyContactEmail: "milo.jensen@example.com",
-    enrollmentDate: "2025-03-01",
-    program: "Adult Taekwondo",
-    status: "Trial",
-    beltRank: "Black",
-    classesAttended: 112,
-    missedClassCount: 1,
-    lastCheckIn: "2026-05-06",
-    joinedAt: "2025-03-01",
-    notes: "Prototype testing profile for adult black belt trial status."
-  },
-  {
-    id: "student-marcus-reid-seed",
-    firstName: "Marcus",
-    lastName: "Reid",
-    dateOfBirth: "2003-09-28",
-    gender: "Male",
-    phone: "(262) 555-0212",
-    email: "marcus.reid@example.com",
-    profileImagePath: "assets/student-profiles/marcus-reid.webp",
-    guardianName: "Alicia Reid",
-    guardianPhone: "(262) 555-0212",
-    guardianEmail: "alicia.reid@example.com",
-    emergencyContactName: "Corey Reid",
-    emergencyContactRelationship: "Cousin",
-    emergencyContactPhone: "(262) 555-0312",
-    emergencyContactEmail: "corey.reid@example.com",
-    enrollmentDate: "2026-04-18",
-    program: "Adult Foundations",
-    status: "Active",
-    beltRank: "White",
-    classesAttended: 7,
-    missedClassCount: 0,
-    lastCheckIn: "2026-05-12",
-    joinedAt: "2026-04-18",
-    notes: "Prototype testing profile for adult beginner workflows."
-  },
-  {
-    id: "student-priya-shah-seed",
-    firstName: "Priya",
-    lastName: "Shah",
-    dateOfBirth: "2000-07-03",
-    gender: "Female",
-    phone: "(262) 555-0213",
-    email: "priya.shah@example.com",
-    profileImagePath: "assets/student-profiles/priya-shah.webp",
-    guardianName: "Dev Shah",
-    guardianPhone: "(262) 555-0213",
-    guardianEmail: "dev.shah@example.com",
-    emergencyContactName: "Meera Shah",
-    emergencyContactRelationship: "Sister",
-    emergencyContactPhone: "(262) 555-0313",
-    emergencyContactEmail: "meera.shah@example.com",
-    enrollmentDate: "2026-03-05",
-    program: "Adult Foundations",
-    status: "Inactive",
-    beltRank: "Yellow",
-    classesAttended: 16,
-    missedClassCount: 5,
-    lastCheckIn: "2026-03-30",
-    lastContactedAt: "2026-04-12",
-    joinedAt: "2026-03-05",
-    notes: "Prototype testing profile for inactive adult beginner state."
-  },
-  {
-    id: "student-elena-torres-seed",
-    firstName: "Elena",
-    lastName: "Torres",
-    dateOfBirth: "1997-08-16",
-    gender: "Female",
-    phone: "(262) 555-0214",
-    email: "elena.torres@example.com",
-    profileImagePath: "assets/student-profiles/elena-torres.webp",
-    guardianName: "Rafael Torres",
-    guardianPhone: "(262) 555-0214",
-    guardianEmail: "rafael.torres@example.com",
-    emergencyContactName: "Lucia Torres",
-    emergencyContactRelationship: "Mother",
-    emergencyContactPhone: "(262) 555-0314",
-    emergencyContactEmail: "lucia.torres@example.com",
-    enrollmentDate: "2026-01-12",
-    program: "Adult Foundations",
-    status: "Active",
-    beltRank: "Orange",
-    classesAttended: 24,
-    missedClassCount: 0,
-    lastCheckIn: "2026-05-10",
-    joinedAt: "2026-01-12",
-    notes: "Prototype testing profile for adult orange belt state."
-  },
-  {
-    id: "student-jacob-ellis-seed",
-    firstName: "Jacob",
-    lastName: "Ellis",
-    dateOfBirth: "1994-11-09",
-    gender: "Male",
-    phone: "(262) 555-0215",
-    email: "jacob.ellis@example.com",
-    profileImagePath: "assets/student-profiles/jacob-ellis.webp",
-    guardianName: "Morgan Ellis",
-    guardianPhone: "(262) 555-0215",
-    guardianEmail: "morgan.ellis@example.com",
-    emergencyContactName: "Terry Ellis",
-    emergencyContactRelationship: "Brother",
-    emergencyContactPhone: "(262) 555-0315",
-    emergencyContactEmail: "terry.ellis@example.com",
-    enrollmentDate: "2025-12-05",
-    program: "MMA Fitness",
-    status: "Paused",
-    beltRank: "Green",
-    classesAttended: 32,
-    missedClassCount: 2,
-    lastCheckIn: "2026-04-25",
-    joinedAt: "2025-12-05",
-    notes: "Prototype testing profile for paused adult class membership."
-  },
-  {
-    id: "student-natalie-brooks-seed",
-    firstName: "Natalie",
-    lastName: "Brooks",
-    dateOfBirth: "1991-06-21",
-    gender: "Female",
-    phone: "(262) 555-0216",
-    email: "natalie.brooks@example.com",
-    profileImagePath: "assets/student-profiles/natalie-brooks.webp",
-    guardianName: "Elliot Brooks",
-    guardianPhone: "(262) 555-0216",
-    guardianEmail: "elliot.brooks@example.com",
-    emergencyContactName: "Mara Brooks",
-    emergencyContactRelationship: "Sister",
-    emergencyContactPhone: "(262) 555-0316",
-    emergencyContactEmail: "mara.brooks@example.com",
-    enrollmentDate: "2025-10-16",
-    program: "MMA Fitness",
-    status: "Trial",
-    beltRank: "Blue",
-    classesAttended: 41,
-    missedClassCount: 1,
-    lastCheckIn: "2026-05-07",
-    joinedAt: "2025-10-16",
-    notes: "Prototype testing profile for trial adult fitness membership."
-  },
-  {
-    id: "student-victor-lane-seed",
-    firstName: "Victor",
-    lastName: "Lane",
-    dateOfBirth: "1987-09-01",
-    gender: "Male",
-    phone: "(262) 555-0217",
-    email: "victor.lane@example.com",
-    profileImagePath: "assets/student-profiles/victor-lane.webp",
-    guardianName: "Jules Lane",
-    guardianPhone: "(262) 555-0217",
-    guardianEmail: "jules.lane@example.com",
-    emergencyContactName: "Sam Lane",
-    emergencyContactRelationship: "Spouse",
-    emergencyContactPhone: "(262) 555-0317",
-    emergencyContactEmail: "sam.lane@example.com",
-    enrollmentDate: "2025-08-04",
-    program: "MMA Advanced",
-    status: "Active",
-    beltRank: "Purple",
-    classesAttended: 52,
-    missedClassCount: 0,
-    lastCheckIn: "2026-05-15",
-    joinedAt: "2025-08-04",
-    notes: "Prototype testing profile for adult advanced attendance."
-  },
-  {
-    id: "student-hannah-kim-seed",
-    firstName: "Hannah",
-    lastName: "Kim",
-    dateOfBirth: "1983-12-18",
-    gender: "Female",
-    phone: "(262) 555-0218",
-    email: "hannah.kim@example.com",
-    profileImagePath: "assets/student-profiles/hannah-kim.webp",
-    guardianName: "Peter Kim",
-    guardianPhone: "(262) 555-0218",
-    guardianEmail: "peter.kim@example.com",
-    emergencyContactName: "June Kim",
-    emergencyContactRelationship: "Sister",
-    emergencyContactPhone: "(262) 555-0318",
-    emergencyContactEmail: "june.kim@example.com",
-    enrollmentDate: "2025-06-25",
-    program: "MMA Advanced",
-    status: "Inactive",
-    beltRank: "Brown",
-    classesAttended: 68,
-    missedClassCount: 4,
-    lastCheckIn: "2026-03-18",
-    lastContactedAt: "2026-04-02",
-    joinedAt: "2025-06-25",
-    notes: "Prototype testing profile for inactive advanced adult workflows."
-  },
-  {
-    id: "student-derek-miles-seed",
-    firstName: "Derek",
-    lastName: "Miles",
-    dateOfBirth: "1979-08-06",
-    gender: "Male",
-    phone: "(262) 555-0219",
-    email: "derek.miles@example.com",
-    profileImagePath: "assets/student-profiles/derek-miles.webp",
-    guardianName: "Rachel Miles",
-    guardianPhone: "(262) 555-0219",
-    guardianEmail: "rachel.miles@example.com",
-    emergencyContactName: "Gina Miles",
-    emergencyContactRelationship: "Spouse",
-    emergencyContactPhone: "(262) 555-0319",
-    emergencyContactEmail: "gina.miles@example.com",
-    enrollmentDate: "2025-04-20",
-    program: "Black Belt Prep",
-    status: "Active",
-    beltRank: "Red",
-    classesAttended: 83,
-    missedClassCount: 0,
-    lastCheckIn: "2026-05-09",
-    joinedAt: "2025-04-20",
-    notes: "Prototype testing profile for adult red belt testing prep."
-  },
-  {
-    id: "student-serena-park-seed",
-    firstName: "Serena",
-    lastName: "Park",
-    dateOfBirth: "1975-09-23",
-    gender: "Female",
-    phone: "(262) 555-0220",
-    email: "serena.park@example.com",
-    profileImagePath: "assets/student-profiles/serena-park.webp",
-    guardianName: "Min Park",
-    guardianPhone: "(262) 555-0220",
-    guardianEmail: "min.park@example.com",
-    emergencyContactName: "Jae Park",
-    emergencyContactRelationship: "Spouse",
-    emergencyContactPhone: "(262) 555-0320",
-    emergencyContactEmail: "jae.park@example.com",
-    enrollmentDate: "2025-02-11",
-    program: "Black Belt Prep",
-    status: "Paused",
-    beltRank: "Dark Brown",
-    classesAttended: 98,
-    missedClassCount: 3,
-    lastCheckIn: "2026-04-10",
-    joinedAt: "2025-02-11",
-    notes: "Prototype testing profile for senior dark-brown belt coverage."
-  }
-].map((student) => ({ ...student, smsConsentUpdatedAt: prototypeSeedSmsConsentUpdatedAt }));
+const seedStudents: StudentRecord[] = [];
 
 const seedScheduledClasses: ScheduledClass[] = [
-  { id: "schedule-youth-beginners", title: "Youth Beginners", date: "2026-05-18", time: "5:00 PM", type: "class", notes: "Beginner martial arts fundamentals." },
-  { id: "schedule-private-intro", title: "Private Intro Lesson", date: "2026-05-19", time: "12:30 PM", type: "private-lesson", studentId: "student-talia-brooks-seed", notes: "Welcome and starter assessment." }
+  { id: "schedule-youth-beginners", title: "Youth Beginners", date: "2026-05-18", time: "5:00 PM", type: "class", notes: "Beginner martial arts fundamentals." }
 ];
 
 const seedStudioClasses: StudioClass[] = [
@@ -614,51 +103,15 @@ const seedStudioClasses: StudioClass[] = [
   { id: "class-family-training", name: "Family Training", daysOfWeek: [2, 4], startTime: "18:00", endTime: "18:50", notes: "All-belt family class with basics, forms, and fitness." }
 ];
 
-const seedMessageLogs: MessageLog[] = [
-  {
-    id: "message-reminder-seed",
-    kind: "reminder",
-    recipientName: "Talia Brooks",
-    recipientPhone: "(262) 555-0201",
-    body: "Reminder: Youth Beginners meets this week at Cho's Martial Arts.",
-    status: "sent",
-    createdAt: "2026-05-10T15:00:00.000Z"
-  }
-];
+const seedMessageLogs: MessageLog[] = [];
 
-const seedDirectMessages: DirectMessage[] = [
-  {
-    id: "direct-message-talia-seed-1",
-    threadId: "direct-staff-seed__student-talia-brooks-seed",
-    senderId: "direct-staff-seed",
-    senderName: "Cho's Manager",
-    recipientId: "student-talia-brooks-seed",
-    recipientName: "Talia Brooks",
-    body: "Hi Talia, your next class notes are ready when you arrive.",
-    createdAt: "2026-05-13T18:00:00.000Z",
-    status: "sent"
-  },
-  {
-    id: "direct-message-talia-seed-2",
-    threadId: "direct-staff-seed__student-talia-brooks-seed",
-    senderId: "student-talia-brooks-seed",
-    senderName: "Talia Brooks",
-    recipientId: "direct-staff-seed",
-    recipientName: "Cho's Manager",
-    body: "Thank you, I will be there for training.",
-    createdAt: "2026-05-13T18:05:00.000Z",
-    status: "sent"
-  }
-];
+const seedDirectMessages: DirectMessage[] = [];
 
 const defaultMessageNotificationSettings: MessageNotificationSettings = {
   browserNotificationsEnabled: false
 };
 
-const seedStudioEvents: StudioEvent[] = [
-  { id: "event-testing-seed", title: "Color Belt Testing", date: "2026-05-30", time: "10:00 AM", details: "Testing date for students cleared by instructors.", audience: "students" },
-  { id: "event-movie-night-seed", title: "Movie Night", date: "2026-06-07", time: "6:30 PM", details: "Family movie night at the studio.", audience: "families" }
-];
+const seedStudioEvents: StudioEvent[] = [];
 
 const seedMerchandiseItems: MerchandiseItem[] = [
   { id: "merch-gloves-seed", name: "Youth Boxing Gloves", category: "Gloves", price: 39, stock: 2, reorderPoint: 3, targetStock: 8, description: "Youth 6oz gloves for bag work and sparring prep.", imageLabel: "gloves" },
@@ -730,26 +183,7 @@ type StudioEventInput = {
   audience: StudioEvent["audience"];
 };
 
-const seedChildAccounts: ChildAccount[] = [
-  {
-    id: "child-mina-cho",
-    parentEmail: prototypeParentLogin.email,
-    name: "Mina Cho",
-    username: "mina-cho.child",
-    age: "8",
-    beltSlug: "green",
-    createdAt: "2026-05-01T10:00:00.000Z"
-  },
-  {
-    id: "child-eli-cho",
-    parentEmail: prototypeParentLogin.email,
-    name: "Eli Cho",
-    username: "eli-cho.child",
-    age: "5",
-    beltSlug: "white",
-    createdAt: "2026-05-01T10:05:00.000Z"
-  }
-];
+const seedChildAccounts: ChildAccount[] = [];
 
 type StudentInput = {
   fullName: string;
@@ -768,21 +202,6 @@ type StudentInput = {
   status?: string;
   beltRank: string;
   notes?: string;
-};
-
-type ManagedAccountInput = {
-  displayName: string;
-  username: string;
-  password: string;
-  role: "staff" | "student";
-  status?: ManagedAccount["status"];
-  email?: string;
-  phone?: string;
-  title?: string;
-  notes?: string;
-  access?: ManagerAccessKey[];
-  studentId?: string;
-  linkedStudent?: StudentRecord;
 };
 
 type RegisteredAccountInput = {
@@ -969,16 +388,12 @@ interface AppState {
   saveContact: (contact: ContactSubmission) => void;
   login: (email: string, remembered: boolean, role?: AccountRole) => void;
   loginRegisteredAccount: (credentials: { username: string; password: string }) => AccountRecord | undefined;
-  loginManagedAccount: (credentials: { username: string; password: string }) => ManagedAccount | undefined;
   loginChildAccount: (childId: string) => void;
   loginChildCredentials: (credentials: { username: string; password: string }) => ChildAccount | undefined;
-  managedUsernameExists: (username: string) => boolean;
   childUsernameExists: (username: string, options?: { excludeChildId?: string }) => boolean;
   logout: () => void;
   register: (account: RegisteredAccountInput) => AccountRecord | undefined;
   setAccountRole: (role: AccountRole) => void;
-  createManagedAccount: (account: ManagedAccountInput) => ManagedAccount | undefined;
-  updateManagedAccountStatus: (accountId: string, status: ManagedAccount["status"]) => ManagedAccount | undefined;
   addChildAccount: (child: { name: string; age: string; beltSlug: string; username: string; password: string }) => ChildAccount | undefined;
   updateChildAccount: (childId: string, child: { name: string; age: string; beltSlug: string; username: string; password: string }) => ChildAccount | undefined;
   addOperationsStudent: (student: StudentInput) => StudentRecord | undefined;
@@ -1094,17 +509,122 @@ function removeSessionStorage(key: string) {
   }
 }
 
-function useStoredState<T>(key: string, fallback: T) {
-  const [value, setValue] = useState<T>(() => readStorage<T>(key, fallback));
+function normalizedStoredEmail(value: unknown) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function readStoredArray<T>(key: string): T[] {
+  const value = readStorage<unknown>(key, []);
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function removeRetiredStudentScopedStorage() {
+  if (typeof window === "undefined") return;
+  try {
+    for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.localStorage.key(index);
+      if (!key) continue;
+      const shouldRemove =
+        retiredStudentScopedStoragePrefixes.some((prefix) => key.startsWith(prefix)) ||
+        retiredStudentScopedStorageFragments.some((fragment) => key.includes(fragment));
+      if (shouldRemove) window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Best-effort cleanup only; blocked storage should not stop app startup.
+  }
+}
+
+function shouldClearSessionEmail(
+  email: string,
+  retiredAccountEmails: ReadonlySet<string>,
+  managedAccounts: readonly ManagedAccount[],
+  childAccounts: readonly ChildAccount[]
+) {
+  if (!email) return false;
+  if (retiredAccountEmails.has(email)) return true;
+  if (managedAccounts.some((account) => account.username.trim().toLowerCase() === email)) return true;
+  return childAccounts.some((child) => child.username.trim().toLowerCase() === email);
+}
+
+function cleanupRetiredStudentPrototypeStorage() {
+  if (typeof window === "undefined" || import.meta.env.MODE === "test") return;
+  try {
+    if (window.localStorage.getItem(studentPrototypeDataResetKey)) return;
+  } catch {
+    return;
+  }
+
+  const accountRoles = readStoredArray<AccountRoleRecord>(keys.accountRoles);
+  const retiredAccountEmails = new Set(retiredStudentPrototypeEmails);
+  accountRoles.forEach((record) => {
+    const email = normalizedStoredEmail(record.email);
+    if (email && !isPrototypeManagerOwnerEmail(email)) retiredAccountEmails.add(email);
+  });
+
+  const managedAccounts = readStoredArray<ManagedAccount>(keys.managedAccounts);
+  const childAccounts = readStoredArray<ChildAccount>(keys.childAccounts);
+  const scheduledClasses = readStoredArray<ScheduledClass>(keys.scheduledClasses);
+  const studioEvents = readStoredArray<StudioEvent>(keys.studioEvents);
+
+  writeStorage(keys.accountRoles, accountRoles.filter((record) => isPrototypeManagerOwnerEmail(record.email)));
+  writeStorage(keys.accounts, [] as AccountRecord[]);
+  writeStorage(keys.managedAccounts, [] as ManagedAccount[]);
+  writeStorage(keys.childAccounts, [] as ChildAccount[]);
+  writeStorage(keys.students, [] as StudentRecord[]);
+  writeStorage(keys.checkIns, [] as StudentCheckIn[]);
+  removeStorage(keys.messageLogs);
+  removeStorage(keys.directMessages);
+  writeStorage(keys.messageCampaigns, [] as MessageCampaign[]);
+  writeStorage(keys.scheduledTextCampaigns, [] as ScheduledTextCampaign[]);
+  writeStorage(keys.scheduledClasses, scheduledClasses.filter((scheduledClass) => !scheduledClass.studentId?.trim()));
+  writeStorage(keys.studioEvents, studioEvents.filter((event) => event.audience === "public"));
+
+  const localSession = readStorage<AccountSession | undefined>(keys.session, undefined);
+  const sessionSession = readSessionStorage<AccountSession | undefined>(keys.session, undefined);
+  if (
+    shouldClearSessionEmail(normalizedStoredEmail(localSession?.email), retiredAccountEmails, managedAccounts, childAccounts) ||
+    shouldClearSessionEmail(normalizedStoredEmail(sessionSession?.email), retiredAccountEmails, managedAccounts, childAccounts)
+  ) {
+    removeStorage(keys.session);
+    removeSessionStorage(keys.session);
+    clearSupabaseAuthSession();
+  }
+
+  removeRetiredStudentScopedStorage();
+  try {
+    window.localStorage.setItem(studentPrototypeDataResetKey, new Date().toISOString());
+  } catch {
+    // Cleanup already ran; lack of marker only means it may retry on the next startup.
+  }
+}
+
+function useStoredState<T>(key: string, fallback: T, options?: { remoteBacked?: boolean; remoteFallback?: T }) {
+  const remoteBacked = Boolean(options?.remoteBacked);
+  const remoteFallback = options?.remoteFallback ?? fallback;
+  const [value, setValue] = useState<T>(() => (remoteBacked ? remoteFallback : readStorage<T>(key, fallback)));
+
+  useEffect(() => {
+    if (remoteBacked) {
+      removeStorage(key);
+      setValue(remoteFallback);
+      return;
+    }
+    setValue(readStorage<T>(key, fallback));
+  }, [key, remoteBacked]);
+
   const update = useCallback(
     (next: T | ((previous: T) => T)) => {
       setValue((previous) => {
         const resolved = typeof next === "function" ? (next as (previous: T) => T)(previous) : next;
-        writeStorage(key, resolved);
+        if (remoteBacked) {
+          removeStorage(key);
+        } else {
+          writeStorage(key, resolved);
+        }
         return resolved;
       });
     },
-    [key]
+    [key, remoteBacked]
   );
   return [value, update] as const;
 }
@@ -1191,32 +711,11 @@ function hasValidManagedStudentLink(account: Pick<ManagedAccount, "role" | "stud
   return Boolean(studentId && students.some((student) => student.id === studentId && isCurrentStudentEnrollment(student)));
 }
 
-function hasValidManagedStudentInputLink(account: Pick<ManagedAccountInput, "role" | "status" | "studentId" | "linkedStudent">, students: readonly Pick<StudentRecord, "id" | "status">[]) {
-  if (account.role !== "student" || (account.status ?? "active") !== "active") return true;
-  const studentId = account.studentId?.trim();
-  const linkedStudent = account.linkedStudent?.id === studentId ? account.linkedStudent : students.find((student) => student.id === studentId);
-  return Boolean(studentId && linkedStudent && isCurrentStudentEnrollment(linkedStudent));
-}
-
 function validatePrototypeSession(session: AccountSession | undefined) {
   if (!session?.email) return undefined;
   const normalizedEmail = session.email.toLowerCase();
   if (normalizedEmail === prototypeManagerLogin.email.toLowerCase()) return session;
   if (isPrototypeDeveloperEmail(normalizedEmail)) return session;
-  if (normalizedEmail === prototypeStudentLogin.email.toLowerCase()) return session;
-  if (normalizedEmail === prototypeParentLogin.email.toLowerCase()) return session;
-  const accounts = readStorage<AccountRecord[]>(keys.accounts, []);
-  const managedAccounts = readStorage<ManagedAccount[]>(keys.managedAccounts, []);
-  const childAccounts = readStorage<ChildAccount[]>(keys.childAccounts, seedChildAccounts);
-  const registeredAccount = accounts.some((account) => account.email.trim().toLowerCase() === normalizedEmail && Boolean(account.password?.trim()));
-  if (registeredAccount && isRegisteredAccountLoginCollision(normalizedEmail, managedAccounts, childAccounts)) {
-    removeStorage(keys.session);
-    return undefined;
-  }
-  if (registeredAccount) return session;
-  const students = readStorage<StudentRecord[]>(keys.students, seedStudents);
-  if (managedAccounts.some((account) => account.username.toLowerCase() === normalizedEmail && account.status !== "inactive" && hasValidManagedStudentLink(account, students))) return session;
-  if (childAccounts.some((child) => child.username.toLowerCase() === normalizedEmail)) return session;
   removeStorage(keys.session);
   return undefined;
 }
@@ -1234,8 +733,6 @@ function inferBuiltInPrototypeAccountRole(email: string): AccountRole | undefine
   const normalizedEmail = email.toLowerCase();
   if (normalizedEmail === prototypeManagerLogin.email.toLowerCase()) return "staff";
   if (isPrototypeDeveloperEmail(normalizedEmail)) return "staff";
-  if (normalizedEmail === prototypeStudentLogin.email.toLowerCase()) return "student";
-  if (normalizedEmail === prototypeParentLogin.email.toLowerCase()) return "guardian";
   return undefined;
 }
 
@@ -1297,22 +794,13 @@ function createPrototypeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function normalizeAccountUsername(username: string) {
-  return username
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ".")
-    .replace(/[^a-z0-9._-]+/g, "")
-    .replace(/^[._-]+|[._-]+$/g, "");
-}
-
 function normalizeRegisteredAccountRole(role?: AccountRole): AccountRole {
   return role === "staff" || role === "student" || role === "guardian" ? role : "guardian";
 }
 
 function isPrototypeLoginUsername(username: string) {
   const normalizedUsername = username.trim().toLowerCase();
-  return [prototypeManagerLogin.username, prototypeDeveloperLogin.username, prototypeStudentLogin.username, prototypeParentLogin.username].some((prototypeUsername) => prototypeUsername.toLowerCase() === normalizedUsername);
+  return [prototypeManagerLogin.username, prototypeDeveloperLogin.username].some((prototypeUsername) => prototypeUsername.toLowerCase() === normalizedUsername);
 }
 
 function isChildUsernameUnavailable(username: string, childAccounts: readonly ChildAccount[], managedAccounts: readonly ManagedAccount[], excludeChildId?: string) {
@@ -1333,22 +821,6 @@ function isRegisteredAccountLoginCollision(email: string, managedAccounts: reado
     managedAccounts.some((account) => account.username.trim().toLowerCase() === normalizedEmail) ||
     childAccounts.some((child) => child.username.trim().toLowerCase() === normalizedEmail)
   );
-}
-
-function managedAccountCreationKey(account: Pick<ManagedAccount, "displayName" | "username" | "password" | "role" | "status" | "studentId" | "email" | "phone" | "title" | "notes" | "access">) {
-  return [
-    normalizeContactText(account.displayName),
-    normalizeAccountUsername(account.username),
-    account.password.trim(),
-    account.role,
-    account.status,
-    account.studentId?.trim() ?? "",
-    normalizeContactText(account.email ?? ""),
-    normalizeContactText(account.phone ?? ""),
-    normalizeContactText(account.title ?? ""),
-    normalizeContactText(account.notes ?? ""),
-    account.access.join(",")
-  ].join("::");
 }
 
 function childAccountCreationKey(child: Pick<ChildAccount, "parentEmail" | "name" | "username" | "password" | "age" | "beltSlug">) {
@@ -2223,12 +1695,15 @@ function isSessionAvailableAfterRestore(
 }
 
 export function AppStateProvider({ children }: PropsWithChildren) {
+  cleanupRetiredStudentPrototypeStorage();
+
   const [cart, setCart] = useStoredState<CartItem[]>(keys.cart, []);
   const [orders, setOrders] = useStoredState<Order[]>(keys.orders, []);
   const [bookings, setBookings] = useStoredState<BookingDetails[]>(keys.bookings, []);
   const [contacts, setContacts] = useStoredState<ContactSubmission[]>(keys.contacts, []);
   const [leadReviews, setLeadReviews] = useStoredState<LeadReview[]>(keys.leadReviews, []);
   const [session, setSession] = useSessionState();
+  const supabaseMessagesRemoteBacked = isSupabaseMessagePersistenceAvailable();
   const [accounts, setAccounts] = useStoredState<AccountRecord[]>(keys.accounts, []);
   const [accountRoles, setAccountRoles] = useStoredState<AccountRoleRecord[]>(keys.accountRoles, []);
   const [managedAccounts, setManagedAccounts] = useStoredState<ManagedAccount[]>(keys.managedAccounts, []);
@@ -2239,10 +1714,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const [scheduledClasses, setScheduledClasses] = useStoredState<ScheduledClass[]>(keys.scheduledClasses, seedScheduledClasses);
   const [messageCampaigns, setMessageCampaigns] = useStoredState<MessageCampaign[]>(keys.messageCampaigns, []);
   const [scheduledTextCampaigns, setScheduledTextCampaigns] = useStoredState<ScheduledTextCampaign[]>(keys.scheduledTextCampaigns, []);
-  const [messageLogs, setMessageLogs] = useStoredState<MessageLog[]>(keys.messageLogs, seedMessageLogs);
+  const [messageLogs, setMessageLogs] = useStoredState<MessageLog[]>(keys.messageLogs, seedMessageLogs, { remoteBacked: supabaseMessagesRemoteBacked, remoteFallback: [] });
   const [textAutomationRuns, setTextAutomationRuns] = useStoredState<TextAutomationRun[]>(keys.textAutomationRuns, []);
   const [messageNotificationSettings, setMessageNotificationSettingsState] = useState<MessageNotificationSettings>(() => readMessageNotificationSettingsForSession(session?.email));
-  const [directMessages, setDirectMessages] = useStoredState<DirectMessage[]>(keys.directMessages, seedDirectMessages);
+  const [directMessages, setDirectMessages] = useStoredState<DirectMessage[]>(keys.directMessages, seedDirectMessages, { remoteBacked: supabaseMessagesRemoteBacked, remoteFallback: [] });
   const [studioEvents, setStudioEvents] = useStoredState<StudioEvent[]>(keys.studioEvents, seedStudioEvents);
   const [merchandiseItems, setMerchandiseItems] = useStoredState<MerchandiseItem[]>(keys.merchandiseItems, seedMerchandiseItems);
   const [checkIns, setCheckIns] = useStoredState<StudentCheckIn[]>(keys.checkIns, []);
@@ -2264,8 +1739,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const checkInsRef = useRef(checkIns);
   const scheduledTextCampaignsRef = useRef(scheduledTextCampaigns);
   const messageLogsRef = useRef(messageLogs);
+  const supabaseMessageLogsPersistedIdsRef = useRef<Set<string>>(new Set());
+  const supabaseMessageLogsHydratedRef = useRef(false);
   const textAutomationRunsRef = useRef(textAutomationRuns);
   const directMessagesRef = useRef(directMessages);
+  const supabaseDirectMessagesPersistedIdsRef = useRef<Set<string>>(new Set());
+  const supabaseDirectMessagesHydratedRef = useRef(false);
   const leadReviewsRef = useRef(leadReviews);
   const managedAccountsRef = useRef(managedAccounts);
   const childAccountsRef = useRef(childAccounts);
@@ -2531,6 +2010,67 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   }, [directMessages]);
 
   useEffect(() => {
+    supabaseMessageLogsHydratedRef.current = false;
+    supabaseDirectMessagesHydratedRef.current = false;
+    if (!supabaseMessagesRemoteBacked) {
+      supabaseMessageLogsPersistedIdsRef.current = new Set();
+      supabaseDirectMessagesPersistedIdsRef.current = new Set();
+      return;
+    }
+
+    let cancelled = false;
+    void Promise.all([fetchSupabaseDirectMessages(), fetchSupabaseMessageLogs()]).then(([directMessagesResult, messageLogsResult]) => {
+      if (cancelled) return;
+      if (directMessagesResult.status === "ok") {
+        supabaseDirectMessagesPersistedIdsRef.current = new Set(directMessagesResult.data.map((message) => message.id));
+        supabaseDirectMessagesHydratedRef.current = true;
+        directMessagesRef.current = directMessagesResult.data;
+        setDirectMessages(directMessagesResult.data);
+        removeStorage(keys.directMessages);
+      }
+      if (messageLogsResult.status === "ok") {
+        supabaseMessageLogsPersistedIdsRef.current = new Set(messageLogsResult.data.map((message) => message.id));
+        supabaseMessageLogsHydratedRef.current = true;
+        messageLogsRef.current = messageLogsResult.data;
+        setMessageLogs(messageLogsResult.data);
+        removeStorage(keys.messageLogs);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.email, setDirectMessages, setMessageLogs, supabaseMessagesRemoteBacked]);
+
+  useEffect(() => {
+    if (!supabaseMessagesRemoteBacked || !supabaseDirectMessagesHydratedRef.current) return;
+    const currentIds = new Set(directMessages.map((message) => message.id));
+    const removedIds = [...supabaseDirectMessagesPersistedIdsRef.current].filter((id) => !currentIds.has(id));
+    const syncTimer = window.setTimeout(() => {
+      void Promise.all([persistSupabaseDirectMessages(directMessages), deleteSupabaseDirectMessages(removedIds)]).then(([persistResult, deleteResult]) => {
+        if (persistResult.status === "ok" && deleteResult.status === "ok") {
+          supabaseDirectMessagesPersistedIdsRef.current = currentIds;
+        }
+      });
+    }, 300);
+    return () => window.clearTimeout(syncTimer);
+  }, [directMessages, supabaseMessagesRemoteBacked]);
+
+  useEffect(() => {
+    if (!supabaseMessagesRemoteBacked || !supabaseMessageLogsHydratedRef.current) return;
+    const currentIds = new Set(messageLogs.map((message) => message.id));
+    const removedIds = [...supabaseMessageLogsPersistedIdsRef.current].filter((id) => !currentIds.has(id));
+    const syncTimer = window.setTimeout(() => {
+      void Promise.all([persistSupabaseMessageLogs(messageLogs), deleteSupabaseMessageLogs(removedIds)]).then(([persistResult, deleteResult]) => {
+        if (persistResult.status === "ok" && deleteResult.status === "ok") {
+          supabaseMessageLogsPersistedIdsRef.current = currentIds;
+        }
+      });
+    }, 300);
+    return () => window.clearTimeout(syncTimer);
+  }, [messageLogs, supabaseMessagesRemoteBacked]);
+
+  useEffect(() => {
     leadReviewsRef.current = leadReviews;
   }, [leadReviews]);
 
@@ -2605,10 +2145,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       if (inserted.length) {
         messageLogsRef.current = next;
         setMessageLogs(next);
+        if (supabaseMessagesRemoteBacked) void persistSupabaseMessageLogs(inserted);
       }
       return inserted;
     },
-    [setMessageLogs]
+    [setMessageLogs, supabaseMessagesRemoteBacked]
   );
 
   const findExistingMessageLog = useCallback(
@@ -2830,39 +2371,6 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [saveRoleForEmail, setSession]
   );
 
-  const managedUsernameExists = useCallback(
-    (username: string) => {
-      const normalizedUsername = normalizeAccountUsername(username);
-      if (!normalizedUsername) return false;
-      return (
-        isPrototypeLoginUsername(normalizedUsername) ||
-        managedAccountsRef.current.some((account) => account.username.toLowerCase() === normalizedUsername.toLowerCase()) ||
-        childAccountsRef.current.some((child) => child.username.toLowerCase() === normalizedUsername.toLowerCase())
-      );
-    },
-    []
-  );
-
-  const loginManagedAccount = useCallback(
-    (credentials: { username: string; password: string }) => {
-      const normalizedUsername = normalizeAccountUsername(credentials.username);
-      const password = credentials.password.trim();
-      if (!normalizedUsername || !password) return undefined;
-      const account = managedAccountsRef.current.find(
-        (item) =>
-          item.username.toLowerCase() === normalizedUsername.toLowerCase() &&
-          item.password === password &&
-          item.status !== "inactive" &&
-          hasValidManagedStudentLink(item, studentsRef.current)
-      );
-      if (!account) return undefined;
-      saveRoleForEmail(account.username, account.role);
-      setSession({ email: account.username, remembered: true, createdAt: new Date().toISOString() });
-      return account;
-    },
-    [saveRoleForEmail, setSession]
-  );
-
   const logout = useCallback(() => {
     clearSupabaseAuthSession();
     setSession(undefined);
@@ -2874,54 +2382,6 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       saveRoleForEmail(session.email, role);
     },
     [saveRoleForEmail, session]
-  );
-
-  const createManagedAccount = useCallback(
-    (account: ManagedAccountInput) => {
-      const displayName = account.displayName.trim();
-      const username = normalizeAccountUsername(account.username);
-      const password = account.password.trim();
-      if (!displayName || !username || !password) return undefined;
-      const role = account.role;
-      const status = account.status ?? "active";
-      const studentId = account.studentId?.trim() || undefined;
-      if (!hasValidManagedStudentInputLink({ ...account, status, studentId }, students)) return undefined;
-      const createdAccount: ManagedAccount = {
-        id: createPrototypeId("managed-account"),
-        displayName,
-        username,
-        password,
-        role,
-        status,
-        email: account.email?.trim() || undefined,
-        phone: account.phone?.trim() || undefined,
-        title: account.title?.trim() || undefined,
-        notes: account.notes?.trim() || undefined,
-        access: role === "staff" ? staffManagerAccess : [],
-        studentId: role === "student" ? studentId : undefined,
-        createdBy: session?.email,
-        createdAt: new Date().toISOString()
-      };
-      const existingAccount = managedAccountsRef.current.find((currentAccount) => managedAccountCreationKey(currentAccount) === managedAccountCreationKey(createdAccount));
-      if (existingAccount) return existingAccount;
-      if (managedUsernameExists(username)) return undefined;
-      updateManagedAccountsState((current) => [createdAccount, ...current]);
-      saveRoleForEmail(username, role);
-      return createdAccount;
-    },
-    [managedUsernameExists, saveRoleForEmail, session?.email, students, updateManagedAccountsState]
-  );
-
-  const updateManagedAccountStatus = useCallback(
-    (accountId: string, status: ManagedAccount["status"]) => {
-      const existingAccount = managedAccounts.find((account) => account.id === accountId);
-      if (!existingAccount) return undefined;
-      if (status === "active" && !hasValidManagedStudentLink(existingAccount, students)) return undefined;
-      const updatedAccount: ManagedAccount = { ...existingAccount, status };
-      setManagedAccounts((current) => current.map((account) => (account.id === accountId ? updatedAccount : account)));
-      return updatedAccount;
-    },
-    [managedAccounts, setManagedAccounts, students]
   );
 
   const addChildAccount = useCallback(
@@ -4341,9 +3801,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const nextDirectMessages = [...directMessagesRef.current, createdMessage];
       directMessagesRef.current = nextDirectMessages;
       setDirectMessages(nextDirectMessages);
+      if (supabaseMessagesRemoteBacked) void persistSupabaseDirectMessages([createdMessage]);
       return { imported: 1, optedOut: 0, optedIn: 0, ignored: 0 };
     },
-    [recordSmsOptOut, setDirectMessages]
+    [recordSmsOptOut, setDirectMessages, supabaseMessagesRemoteBacked]
   );
 
   const sendDirectMessage = useCallback(
@@ -4369,9 +3830,10 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       const nextDirectMessages = [...directMessagesRef.current, createdMessage];
       directMessagesRef.current = nextDirectMessages;
       setDirectMessages(nextDirectMessages);
+      if (supabaseMessagesRemoteBacked) void persistSupabaseDirectMessages([createdMessage]);
       return createdMessage;
     },
-    [setDirectMessages]
+    [setDirectMessages, supabaseMessagesRemoteBacked]
   );
 
   const value: AppState = {
@@ -4425,16 +3887,12 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     saveContact,
     login,
     loginRegisteredAccount,
-    loginManagedAccount,
     loginChildAccount,
     loginChildCredentials,
-    managedUsernameExists,
     childUsernameExists,
     logout,
     register,
     setAccountRole,
-    createManagedAccount,
-    updateManagedAccountStatus,
     addChildAccount,
     updateChildAccount,
     addOperationsStudent,

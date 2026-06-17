@@ -1,5 +1,7 @@
 const fallbackMessagePath = "messages";
 const logoAssetPath = "682e95109aa21_chos-logo.png";
+const appShellCacheName = "chos-operations-shell-v2";
+const appShellPaths = ["", "manifest.webmanifest", logoAssetPath, "icons/icon-192.png", "icons/icon-512.png"];
 
 function scopedUrl(path) {
   const scope = self.registration?.scope || self.location?.origin || "/";
@@ -20,6 +22,66 @@ function safeScopedUrl(value, fallbackPath) {
 function safeNotificationUrl(value) {
   return safeScopedUrl(value, fallbackMessagePath);
 }
+
+function offlineFallbackResponse() {
+  return new Response("Cho's Martial Arts is offline.", {
+    status: 503,
+    headers: { "Content-Type": "text/plain; charset=utf-8" }
+  });
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches
+      .open(appShellCacheName)
+      .then((cache) => cache.addAll(appShellPaths.map((path) => scopedUrl(path))))
+      .then(() => self.skipWaiting())
+      .catch(() => undefined)
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((cacheNames) => Promise.all(cacheNames.filter((cacheName) => cacheName !== appShellCacheName).map((cacheName) => caches.delete(cacheName))))
+      .then(() => self.clients.claim())
+      .catch(() => undefined)
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  if (event.request.method !== "GET") return;
+  const scope = self.registration?.scope || self.location?.origin || "/";
+  const requestUrl = new URL(event.request.url);
+  if (!requestUrl.toString().startsWith(scope)) return;
+
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const responseClone = response.clone();
+          event.waitUntil(caches.open(appShellCacheName).then((cache) => cache.put(scopedUrl(""), responseClone)).catch(() => undefined));
+          return response;
+        })
+        .catch(() => caches.match(scopedUrl("")).then((cachedResponse) => cachedResponse || offlineFallbackResponse()))
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(event.request).then((cachedResponse) => {
+      if (cachedResponse) return cachedResponse;
+      return fetch(event.request).then((response) => {
+        if (response.ok && requestUrl.origin === self.location.origin) {
+          const responseClone = response.clone();
+          event.waitUntil(caches.open(appShellCacheName).then((cache) => cache.put(event.request, responseClone)).catch(() => undefined));
+        }
+        return response;
+      }).catch(() => Response.error());
+    })
+  );
+});
 
 function unreadCountFromPayload(payload) {
   const value = payload.unreadCount ?? payload.badgeCount;

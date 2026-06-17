@@ -2,17 +2,15 @@ import { describe, expect, it } from "vitest";
 import { products } from "./data";
 import {
   applyCoupon,
-  createGuestSession,
   createOrder,
   generateClassEvents,
   generateIcs,
   getInitialLaunchPhase,
   getLoginGateState,
-  isPrototypeParentLogin,
-  isPrototypeStudentLogin,
+  prototypeDeveloperLogin,
+  prototypeManagerLogin,
   searchSite,
   validateLoginForm,
-  validateRegisterForm,
   validateContactForm
 } from "./utils";
 
@@ -118,31 +116,23 @@ describe("login landing utilities", () => {
     expect(getLoginGateState({ email: "student@example.com", remembered: true, createdAt: "2026-05-10T00:00:00.000Z" })).toBe("app");
   });
 
-  it("validates login and registration forms", () => {
+  it("validates login forms", () => {
     expect(validateLoginForm({ username: "", password: "" })).toEqual({
       username: "Username is required.",
       password: "Password is required."
     });
 
     expect(validateLoginForm({ username: "student", password: "blackbelt" })).toEqual({});
-    expect(isPrototypeStudentLogin({ username: "Student123", password: "123456" })).toBe(true);
-    expect(isPrototypeStudentLogin({ username: "Student123", password: "wrong" })).toBe(false);
-    expect(isPrototypeParentLogin({ username: "Parent123", password: "123456" })).toBe(true);
-    expect(isPrototypeParentLogin({ username: "Parent123", password: "wrong" })).toBe(false);
-
-    expect(validateRegisterForm({ email: "bad", password: "123" })).toEqual({
-      email: "Valid email is required.",
-      password: "Password must be at least 6 characters."
-    });
-
-    expect(validateRegisterForm({ email: "student@example.com", password: "blackbelt" })).toEqual({});
   });
 
-  it("creates a guest session and selects the reduced-motion launch phase", () => {
-    const guest = createGuestSession();
-    expect(guest.email).toBe("guest@chos.prototype");
-    expect(guest.remembered).toBe(false);
+  it("keeps local fallback credentials on the strong-password floor", () => {
+    const strongPasswordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,}$/;
 
+    expect(prototypeManagerLogin.password).toMatch(strongPasswordPattern);
+    expect(prototypeDeveloperLogin.password).toMatch(strongPasswordPattern);
+  });
+
+  it("selects the reduced-motion launch phase", () => {
     expect(getInitialLaunchPhase(false)).toBe("playing");
     expect(getInitialLaunchPhase(true)).toBe("final-logo");
   });
