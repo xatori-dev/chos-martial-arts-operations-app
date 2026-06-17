@@ -7166,6 +7166,9 @@ function ManagerHomePage() {
     sections.push({ date: thread.sentDate, threads: [thread] });
     return sections;
   }, []);
+  const visibleFeedThreadIds = visibleThreads.map((thread) => thread.id);
+  const allVisibleFeedThreadsSelected =
+    Boolean(visibleFeedThreadIds.length) && visibleFeedThreadIds.every((threadId) => selectedFeedThreadIds.has(threadId));
   const homeScheduleWeekDays = useMemo(() => weekDaysForDate(parseCalendarDate(homeScheduleWeekStartKey)), [homeScheduleWeekStartKey]);
   const homeAgendaItems = useMemo(
     () => buildHomeAgendaItems(homeScheduleWeekDays, scheduledClasses, studioClasses, studioEvents),
@@ -7369,6 +7372,10 @@ function ManagerHomePage() {
       }
       return nextIds;
     });
+  };
+
+  const toggleAllVisibleFeedThreadSelection = () => {
+    setSelectedFeedThreadIds(() => allVisibleFeedThreadsSelected ? new Set<string>() : new Set(visibleFeedThreadIds));
   };
 
   const changeFeedFilter = (nextFilter: ManagerHomeThread["kind"]) => {
@@ -7762,7 +7769,7 @@ function ManagerHomePage() {
           <span className="manager-home-overview-handle-bar" aria-hidden="true" />
         </button>
         <section className="manager-home-feed-panel" aria-label="Messages and event notifications">
-          <div className="manager-home-feed-head">
+          <div className={`manager-home-feed-head${selectedFeedCount > 0 && !isFeedSearchOpen ? " is-selecting" : ""}`}>
             <div className="manager-home-feed-counts" aria-label="Feed totals">
               <button
                 className={`manager-home-count manager-home-count--message${feedFilter === "message" ? " is-active" : ""}`}
@@ -7799,7 +7806,7 @@ function ManagerHomePage() {
               )}
             </div>
           </div>
-          <div className={`manager-home-search-shell${isFeedSearchOpen ? " is-open" : ""}`}>
+          <div className={`manager-home-search-shell${isFeedSearchOpen ? " is-open" : ""}${selectedFeedCount > 0 && !isFeedSearchOpen ? " is-selecting" : ""}`}>
             {isFeedSearchOpen ? (
               <div className="manager-home-search" role="search">
                 <Search size={22} aria-hidden="true" />
@@ -7819,16 +7826,30 @@ function ManagerHomePage() {
                 </button>
               </div>
             ) : (
-              <button
-                className="manager-home-search-trigger"
-                type="button"
-                aria-label="Open search messages and event notifications"
-                aria-controls="manager-home-feed-search"
-                aria-expanded="false"
-                onClick={() => setIsFeedSearchOpen(true)}
-              >
-                <Search size={24} />
-              </button>
+              <>
+                {selectedFeedCount > 0 && (
+                  <label className="manager-home-select-all-toggle">
+                    <span>All</span>
+                    <input
+                      aria-label="Select all visible feed items"
+                      type="checkbox"
+                      checked={allVisibleFeedThreadsSelected}
+                      onChange={toggleAllVisibleFeedThreadSelection}
+                    />
+                    <span aria-hidden="true" />
+                  </label>
+                )}
+                <button
+                  className="manager-home-search-trigger"
+                  type="button"
+                  aria-label="Open search messages and event notifications"
+                  aria-controls="manager-home-feed-search"
+                  aria-expanded="false"
+                  onClick={() => setIsFeedSearchOpen(true)}
+                >
+                  <Search size={24} />
+                </button>
+              </>
             )}
           </div>
           <div className="manager-home-unified-feed" id="manager-home-unified-feed" aria-label="Home message and notification feed">

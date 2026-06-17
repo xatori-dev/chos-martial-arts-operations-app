@@ -5393,6 +5393,7 @@ describe("post-login operations app", () => {
 
     expect(screen.getByRole("button", { name: "Compose" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Select all visible feed items" })).not.toBeInTheDocument();
 
     const attendanceCheckbox = screen.getByRole("checkbox", { name: "Select Attendance Confirmation" });
     fireEvent.click(attendanceCheckbox);
@@ -5402,10 +5403,19 @@ describe("post-login operations app", () => {
     expect(screen.getByRole("button", { name: "Delete selected" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
 
-    fireEvent.click(attendanceCheckbox);
+    const allVisibleFeedItemsCheckbox = screen.getByRole("checkbox", { name: "Select all visible feed items" });
+    expect(allVisibleFeedItemsCheckbox).not.toBeChecked();
+
+    fireEvent.click(allVisibleFeedItemsCheckbox);
+
+    expect(allVisibleFeedItemsCheckbox).toBeChecked();
+    expect(screen.getByText("6 selected")).toBeInTheDocument();
+
+    fireEvent.click(allVisibleFeedItemsCheckbox);
 
     expect(attendanceCheckbox).not.toBeChecked();
-    expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+    expect(screen.queryByText("6 selected")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Select all visible feed items" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Compose" })).toBeInTheDocument();
   });
