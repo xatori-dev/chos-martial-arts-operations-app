@@ -668,6 +668,8 @@ function normalizeMessageNotificationSettings(value: unknown): MessageNotificati
   const settings = value as Partial<MessageNotificationSettings>;
   return {
     browserNotificationsEnabled: Boolean(settings.browserNotificationsEnabled),
+    liveChatNotificationsEnabled: Boolean(settings.liveChatNotificationsEnabled),
+    mentionNotificationsEnabled: Boolean(settings.mentionNotificationsEnabled),
     ...(cleanNotificationPermission(settings.browserPermission) ? { browserPermission: cleanNotificationPermission(settings.browserPermission) } : {}),
     ...(cleanNotificationString(settings.lastSeenDirectMessageAt) ? { lastSeenDirectMessageAt: cleanNotificationString(settings.lastSeenDirectMessageAt) } : {}),
     ...(cleanNotificationStringList(settings.seenDirectMessageIds) ? { seenDirectMessageIds: cleanNotificationStringList(settings.seenDirectMessageIds) } : {}),
@@ -1982,6 +1984,19 @@ export function AppStateProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     setMessageNotificationSettingsState(readMessageNotificationSettingsForSession(session?.email));
+  }, [session?.email]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const scopedSettingsKey = scopedMessageNotificationSettingsKey(session?.email);
+    const legacySettingsKey = isPrototypeManagerNotificationSession(session?.email) ? keys.messageNotificationSettings : "";
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea !== window.localStorage) return;
+      if (event.key !== scopedSettingsKey && event.key !== legacySettingsKey) return;
+      setMessageNotificationSettingsState(readMessageNotificationSettingsForSession(session?.email));
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
   }, [session?.email]);
 
   const setMessageNotificationSettings = useCallback(

@@ -419,6 +419,8 @@ export interface TwilioRelayResultPayload {
 
 export interface MessageNotificationSettings {
   browserNotificationsEnabled: boolean;
+  liveChatNotificationsEnabled?: boolean;
+  mentionNotificationsEnabled?: boolean;
   browserPermission?: "default" | "granted" | "denied" | "unsupported";
   lastSeenDirectMessageAt?: string;
   seenDirectMessageIds?: string[];

@@ -426,9 +426,217 @@ function smsConsentUpdatedAt(optOutAt?: string, consentUpdatedAt?: string) {
   return optOutAt?.trim() || consentUpdatedAt?.trim() || null;
 }
 
-function getBrowserNotificationPermission() {
-  if (typeof window === "undefined" || !("Notification" in window)) return "unsupported" as const;
+type BrowserNotificationPermission = NotificationPermission | "unsupported";
+
+function getBrowserNotificationPermission(): BrowserNotificationPermission {
+  if (typeof window === "undefined" || typeof window.Notification === "undefined") return "unsupported";
   return window.Notification.permission;
+}
+
+function canRequestBrowserNotifications() {
+  return typeof window !== "undefined" && typeof window.Notification !== "undefined" && typeof window.Notification.requestPermission === "function";
+}
+
+function notificationPermissionDisplay(permission: BrowserNotificationPermission) {
+  return permission === "unsupported" ? "unavailable" : permission;
+}
+
+function notificationHelperText(permission: BrowserNotificationPermission, enabled: boolean) {
+  if (permission === "unsupported") return "Device alerts are unavailable in this browser.";
+  if (permission === "denied") return "Device alerts are blocked in browser or system settings.";
+  if (enabled && permission === "granted") return "Device alerts are on for the selected notification types on this browser.";
+  return "Unread messages and Notification Center remain available when device alerts are off.";
+}
+
+type ProfileNotificationChannel = {
+  id: "messages" | "liveChats" | "mentions";
+  label: string;
+  description: string;
+  enabled: boolean;
+};
+
+type ProfileNotificationChannelId = ProfileNotificationChannel["id"];
+
+function profileNotificationChannelSettings(channelId: ProfileNotificationChannelId, enabled: boolean): Partial<MessageNotificationSettings> {
+  if (channelId === "liveChats") return { liveChatNotificationsEnabled: enabled };
+  if (channelId === "mentions") return { mentionNotificationsEnabled: enabled };
+  return { browserNotificationsEnabled: enabled };
+}
+
+function profileNotificationChannels(settings: MessageNotificationSettings): ProfileNotificationChannel[] {
+  return [
+    {
+      id: "messages",
+      label: "Messages",
+      description: "Direct app messages and replies.",
+      enabled: settings.browserNotificationsEnabled
+    },
+    {
+      id: "liveChats",
+      label: "Live Chats",
+      description: "New activity in Live Chat rooms.",
+      enabled: Boolean(settings.liveChatNotificationsEnabled)
+    },
+    {
+      id: "mentions",
+      label: "Mentions",
+      description: "Live Chat messages that mention you.",
+      enabled: Boolean(settings.mentionNotificationsEnabled)
+    }
+  ];
+}
+
+function buildNotificationDeviceSyncPatch(settings: MessageNotificationSettings, permission: BrowserNotificationPermission): Partial<MessageNotificationSettings> | undefined {
+  const patch: Partial<MessageNotificationSettings> = {};
+  if (settings.browserPermission !== permission) patch.browserPermission = permission;
+
+  if (permission !== "granted") {
+    if (settings.browserNotificationsEnabled) patch.browserNotificationsEnabled = false;
+    if (settings.liveChatNotificationsEnabled) patch.liveChatNotificationsEnabled = false;
+    if (settings.mentionNotificationsEnabled) patch.mentionNotificationsEnabled = false;
+    if (settings.pushSubscriptionEndpoint) patch.pushSubscriptionEndpoint = undefined;
+    if (settings.pushSubscriptionJson) patch.pushSubscriptionJson = undefined;
+    if (settings.pushSubscribedAt) patch.pushSubscribedAt = undefined;
+  }
+
+  return Object.keys(patch).length ? patch : undefined;
+}
+
+function notificationDeviceSyncLabel(permission: BrowserNotificationPermission, enabled: boolean) {
+  if (permission === "unsupported") return "unavailable";
+  if (permission === "denied") return "blocked";
+  if (permission === "granted" && enabled) return "ready";
+  return "off";
+}
+
+function useNotificationDevicePermissionSync({
+  enabled = true,
+  settings,
+  setPermission,
+  updateSettings
+}: {
+  enabled?: boolean;
+  settings: MessageNotificationSettings;
+  setPermission: (permission: BrowserNotificationPermission) => void;
+  updateSettings: (settings: Partial<MessageNotificationSettings>) => void;
+}) {
+  const settingsRef = useRef(settings);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  const syncDevicePermission = useCallback(() => {
+    const permission = getBrowserNotificationPermission();
+    setPermission(permission);
+    const patch = buildNotificationDeviceSyncPatch(settingsRef.current, permission);
+    if (patch) updateSettings(patch);
+  }, [setPermission, updateSettings]);
+
+  useEffect(() => {
+    if (!enabled || typeof window === "undefined") return undefined;
+    syncDevicePermission();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "hidden") syncDevicePermission();
+    };
+
+    window.addEventListener("focus", syncDevicePermission);
+    window.addEventListener("pageshow", syncDevicePermission);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    let permissionStatus: PermissionStatus | undefined;
+    let cancelled = false;
+    if (typeof navigator !== "undefined" && navigator.permissions?.query) {
+      void navigator.permissions.query({ name: "notifications" as PermissionName }).then((status) => {
+        if (cancelled) return;
+        permissionStatus = status;
+        status.onchange = syncDevicePermission;
+      }).catch(() => undefined);
+    }
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", syncDevicePermission);
+      window.removeEventListener("pageshow", syncDevicePermission);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (permissionStatus) permissionStatus.onchange = null;
+    };
+  }, [enabled, syncDevicePermission]);
+
+  return syncDevicePermission;
+}
+
+function useHomeNotificationStorageSync(email: string | undefined, setSettings: (settings: MessageNotificationSettings) => void) {
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const storageKey = homeMessageNotificationStorageKey(email);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea !== window.localStorage || event.key !== storageKey) return;
+      setSettings(readHomeMessageNotificationSettings(email));
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [email, setSettings]);
+}
+
+function ProfileNotificationSettingsControl({
+  channels,
+  onSendTest,
+  onToggle,
+  permission,
+  pushSubscriptionReady
+}: {
+  channels: ProfileNotificationChannel[];
+  onSendTest: () => void;
+  onToggle: (channelId: ProfileNotificationChannel["id"]) => void;
+  permission: BrowserNotificationPermission;
+  pushSubscriptionReady: boolean;
+}) {
+  const enabled = channels.some((channel) => channel.enabled);
+  const notificationsReady = enabled && permission === "granted";
+  const deviceSyncStatus = notificationDeviceSyncLabel(permission, enabled);
+  return (
+    <section className="profile-notification-settings" aria-label="Profile notification settings">
+      <div className="profile-notification-head">
+        <div className="profile-notification-copy">
+          <span>Notifications</span>
+          <strong>Device alert preferences</strong>
+          <p>{notificationHelperText(permission, enabled)}</p>
+        </div>
+      </div>
+      <div className="profile-notification-channel-list">
+        {channels.map((channel) => (
+          <button
+            type="button"
+            className={`profile-notification-channel${channel.enabled ? " is-on" : ""}`}
+            role="switch"
+            aria-checked={channel.enabled}
+            aria-label={`${channel.label} notifications`}
+            key={channel.id}
+            onClick={() => onToggle(channel.id)}
+          >
+            <span className="profile-notification-channel-copy">
+              <strong>{channel.label}</strong>
+              <small>{channel.description}</small>
+            </span>
+            <span className="profile-notification-switch" aria-hidden="true">
+              <span />
+              <b>{channel.enabled ? "On" : "Off"}</b>
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="profile-notification-status-list" aria-label="Notification readiness">
+        <span>Browser permission: {notificationPermissionDisplay(permission)}</span>
+        <span>Device sync: {deviceSyncStatus}</span>
+        <span>Push subscription: {pushSubscriptionReady ? "connected" : "not connected"}</span>
+      </div>
+      <button type="button" className="profile-notification-test" onClick={onSendTest} disabled={!notificationsReady}>
+        <Bell size={16} aria-hidden="true" /> Send Test Notification
+      </button>
+    </section>
+  );
 }
 
 async function showDirectMessageBrowserNotification(title: string, options: NotificationOptions) {
@@ -605,6 +813,8 @@ function readHomeMessageNotificationSettings(email?: string): MessageNotificatio
     const parsed = JSON.parse(window.localStorage.getItem(homeMessageNotificationStorageKey(email)) ?? "null") as Partial<MessageNotificationSettings> | null;
     return {
       browserNotificationsEnabled: Boolean(parsed?.browserNotificationsEnabled),
+      liveChatNotificationsEnabled: Boolean(parsed?.liveChatNotificationsEnabled),
+      mentionNotificationsEnabled: Boolean(parsed?.mentionNotificationsEnabled),
       browserPermission: parsed?.browserPermission,
       lastBrowserNotifiedDirectMessageAt: typeof parsed?.lastBrowserNotifiedDirectMessageAt === "string" ? parsed.lastBrowserNotifiedDirectMessageAt : undefined,
       pushPublicKey: cleanNotificationSettingString(parsed?.pushPublicKey),
@@ -5172,6 +5382,8 @@ function StudentProfilePage() {
   const eventCount = feedThreads.filter((thread) => thread.kind === "event").length;
   const studentNotificationPermissionLabel = studentNotificationPermission === "unsupported" ? "Unavailable" : studentNotificationPermission;
   const studentDeviceNotificationsReady = studentMessageNotificationSettings.browserNotificationsEnabled && studentNotificationPermission === "granted";
+  const studentProfileNotificationChannels = profileNotificationChannels(studentMessageNotificationSettings);
+  const studentProfileNotificationsReady = studentProfileNotificationChannels.some((channel) => channel.enabled) && studentNotificationPermission === "granted";
   const studentPushSubscriptionReady = Boolean(studentMessageNotificationSettings.pushSubscriptionEndpoint?.trim());
   const visibleThreads = feedThreads.filter((thread) => {
     if (feedFilter !== "all" && thread.kind !== feedFilter) return false;
@@ -5265,6 +5477,13 @@ function StudentProfilePage() {
     },
     [session?.email]
   );
+
+  useHomeNotificationStorageSync(session?.email, setStudentMessageNotificationSettings);
+  useNotificationDevicePermissionSync({
+    settings: studentMessageNotificationSettings,
+    setPermission: setStudentNotificationPermission,
+    updateSettings: updateStudentMessageNotificationSettings
+  });
 
   useEffect(() => {
     const thread = latestUnreadStudentDirectThread;
@@ -5363,7 +5582,7 @@ function StudentProfilePage() {
   };
 
   const enableStudentMessageNotifications = async () => {
-    if (typeof window === "undefined" || !("Notification" in window)) {
+    if (!canRequestBrowserNotifications()) {
       updateStudentMessageNotificationSettings({
         browserNotificationsEnabled: false,
         browserPermission: "unsupported"
@@ -5381,8 +5600,44 @@ function StudentProfilePage() {
     showToast(permission === "granted" ? "Device notifications enabled for your app messages." : "Device notifications were not enabled.");
   };
 
+  const toggleStudentProfileNotificationChannel = async (channelId: ProfileNotificationChannelId) => {
+    const isEnabled = studentProfileNotificationChannels.some((channel) => channel.id === channelId && channel.enabled);
+    if (isEnabled) {
+      const permission = getBrowserNotificationPermission();
+      setStudentNotificationPermission(permission);
+      updateStudentMessageNotificationSettings({
+        ...profileNotificationChannelSettings(channelId, false),
+        browserPermission: permission
+      });
+      showToast(channelId === "messages" ? "Device notifications turned off for your app messages." : `${channelId === "liveChats" ? "Live Chat" : "Mention"} notifications turned off.`);
+      return;
+    }
+    if (!canRequestBrowserNotifications()) {
+      setStudentNotificationPermission("unsupported");
+      updateStudentMessageNotificationSettings({
+        ...profileNotificationChannelSettings(channelId, false),
+        browserPermission: "unsupported"
+      });
+      showToast("Device notifications are unavailable in this browser.");
+      return;
+    }
+    const permission = window.Notification.permission === "granted" ? "granted" : await window.Notification.requestPermission();
+    setStudentNotificationPermission(permission);
+    updateStudentMessageNotificationSettings({
+      ...profileNotificationChannelSettings(channelId, permission === "granted"),
+      browserPermission: permission
+    });
+    showToast(
+      permission === "granted"
+        ? channelId === "messages"
+          ? "Device notifications enabled for your app messages."
+          : `${channelId === "liveChats" ? "Live Chat" : "Mention"} notifications enabled.`
+        : "Device notifications were not enabled."
+    );
+  };
+
   const sendStudentTestNotification = async () => {
-    if (!studentDeviceNotificationsReady) {
+    if (!studentProfileNotificationsReady) {
       showToast("Enable message notifications before sending a test.");
       return;
     }
@@ -5946,6 +6201,13 @@ function StudentProfilePage() {
                   />
                   <span>Receive class and event updates</span>
                 </label>
+                <ProfileNotificationSettingsControl
+                  channels={studentProfileNotificationChannels}
+                  onSendTest={sendStudentTestNotification}
+                  onToggle={toggleStudentProfileNotificationChannel}
+                  permission={studentNotificationPermission}
+                  pushSubscriptionReady={studentPushSubscriptionReady}
+                />
               </div>
               <ProfileColorEditingTool sessionEmail={session?.email} showToast={showToast} preview={studentColorPreview} />
             </section>
@@ -6431,6 +6693,8 @@ function ParentProfilePage() {
   const notificationCount = studentHomeThreads.filter((thread) => thread.kind === "event").length + studioEvents.length;
   const parentNotificationPermissionLabel = parentNotificationPermission === "unsupported" ? "Unavailable" : parentNotificationPermission;
   const parentDeviceNotificationsReady = parentMessageNotificationSettings.browserNotificationsEnabled && parentNotificationPermission === "granted";
+  const parentProfileNotificationChannels = profileNotificationChannels(parentMessageNotificationSettings);
+  const parentProfileNotificationsReady = parentProfileNotificationChannels.some((channel) => channel.enabled) && parentNotificationPermission === "granted";
   const parentPushSubscriptionReady = Boolean(parentMessageNotificationSettings.pushSubscriptionEndpoint?.trim());
   const tutorialActive = tutorialStepId !== null;
   const parentColorPreview: ProfileColorPreviewData = {
@@ -6483,6 +6747,13 @@ function ParentProfilePage() {
     },
     [session?.email]
   );
+
+  useHomeNotificationStorageSync(session?.email, setParentMessageNotificationSettings);
+  useNotificationDevicePermissionSync({
+    settings: parentMessageNotificationSettings,
+    setPermission: setParentNotificationPermission,
+    updateSettings: updateParentMessageNotificationSettings
+  });
 
   useEffect(() => {
     setParentProfile(readGuardianProfile(session?.email));
@@ -6652,7 +6923,7 @@ function ParentProfilePage() {
   };
 
   const enableParentMessageNotifications = async () => {
-    if (typeof window === "undefined" || !("Notification" in window)) {
+    if (!canRequestBrowserNotifications()) {
       updateParentMessageNotificationSettings({
         browserNotificationsEnabled: false,
         browserPermission: "unsupported"
@@ -6670,8 +6941,44 @@ function ParentProfilePage() {
     showToast(permission === "granted" ? "Device notifications enabled for parent app messages." : "Device notifications were not enabled.");
   };
 
+  const toggleParentProfileNotificationChannel = async (channelId: ProfileNotificationChannelId) => {
+    const isEnabled = parentProfileNotificationChannels.some((channel) => channel.id === channelId && channel.enabled);
+    if (isEnabled) {
+      const permission = getBrowserNotificationPermission();
+      setParentNotificationPermission(permission);
+      updateParentMessageNotificationSettings({
+        ...profileNotificationChannelSettings(channelId, false),
+        browserPermission: permission
+      });
+      showToast(channelId === "messages" ? "Device notifications turned off for parent app messages." : `${channelId === "liveChats" ? "Live Chat" : "Mention"} notifications turned off.`);
+      return;
+    }
+    if (!canRequestBrowserNotifications()) {
+      setParentNotificationPermission("unsupported");
+      updateParentMessageNotificationSettings({
+        ...profileNotificationChannelSettings(channelId, false),
+        browserPermission: "unsupported"
+      });
+      showToast("Device notifications are unavailable in this browser.");
+      return;
+    }
+    const permission = window.Notification.permission === "granted" ? "granted" : await window.Notification.requestPermission();
+    setParentNotificationPermission(permission);
+    updateParentMessageNotificationSettings({
+      ...profileNotificationChannelSettings(channelId, permission === "granted"),
+      browserPermission: permission
+    });
+    showToast(
+      permission === "granted"
+        ? channelId === "messages"
+          ? "Device notifications enabled for parent app messages."
+          : `${channelId === "liveChats" ? "Live Chat" : "Mention"} notifications enabled.`
+        : "Device notifications were not enabled."
+    );
+  };
+
   const sendParentTestNotification = async () => {
-    if (!parentDeviceNotificationsReady) {
+    if (!parentProfileNotificationsReady) {
       showToast("Enable parent message notifications before sending a test.");
       return;
     }
@@ -7045,6 +7352,13 @@ function ParentProfilePage() {
                   <Palette size={18} aria-hidden="true" />
                   <span>Saved colors apply only to this parent login.</span>
                 </div>
+                <ProfileNotificationSettingsControl
+                  channels={parentProfileNotificationChannels}
+                  onSendTest={sendParentTestNotification}
+                  onToggle={toggleParentProfileNotificationChannel}
+                  permission={parentNotificationPermission}
+                  pushSubscriptionReady={parentPushSubscriptionReady}
+                />
               </div>
               <ProfileColorEditingTool sessionEmail={session?.email} showToast={showToast} preview={parentColorPreview} />
             </section>
@@ -8388,7 +8702,7 @@ function ManagerHomePage() {
 }
 
 function ManagerLauncherPage() {
-  const { accountRole, currentManagedAccount, logout, managerAccountAccess, session, showToast, students } = useAppState();
+  const { accountRole, currentManagedAccount, logout, managerAccountAccess, messageNotificationSettings, session, showToast, students, updateMessageNotificationSettings } = useAppState();
   const location = useLocation();
   const navigate = useNavigate();
   const isManagerOwner = managerAccountAccess.isManagerOwner;
@@ -8400,6 +8714,7 @@ function ManagerLauncherPage() {
   const profileOwnerLabel = isDeveloper ? "Developer" : isManagerOwner ? "Manager" : "Staff";
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileSettings, setProfileSettings] = useState(() => readPanelProfile(session?.email));
+  const [profileNotificationPermission, setProfileNotificationPermission] = useState(() => getBrowserNotificationPermission());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const managerVisibleLauncherItems = managerAccountAccess.isDeveloper
     ? [...managerLauncherItems, developerLauncherItem]
@@ -8420,6 +8735,8 @@ function ManagerLauncherPage() {
   const launcherAriaLabel = isStudentPanel ? "Student app launcher" : isStaffPanel ? "Staff app launcher" : isDeveloper ? "Developer app launcher" : "Manager app launcher";
   const workspaceFrameLabel = isStudentPanel ? "Student launcher workspace frame" : isStaffPanel ? "Staff launcher workspace frame" : isDeveloper ? "Developer launcher workspace frame" : "Manager launcher workspace frame";
   const sidebarToggleLabel = isSidebarCollapsed ? `Expand ${launcherName} app launcher` : `Collapse ${launcherName} app launcher`;
+  const managerProfileNotificationChannels = profileNotificationChannels(messageNotificationSettings);
+  const managerProfilePushSubscriptionReady = Boolean(messageNotificationSettings.pushSubscriptionEndpoint?.trim());
   const studentRecord = selectSessionStudent(students, session?.email, currentManagedAccount?.studentId);
   const studentPanelProfile = isStudentPanel ? readStudentProfile(session?.email, studentRecord) : undefined;
   const profileAvatarPath = profileAvatarPathForSession(session?.email);
@@ -8445,6 +8762,13 @@ function ManagerLauncherPage() {
     ]
   };
 
+  useNotificationDevicePermissionSync({
+    enabled: !isStudentPanel,
+    settings: messageNotificationSettings,
+    setPermission: setProfileNotificationPermission,
+    updateSettings: updateMessageNotificationSettings
+  });
+
   useEffect(() => {
     if (new URLSearchParams(location.search).get("profile") !== "settings") return;
     if (isStudentPanel) {
@@ -8452,9 +8776,14 @@ function ManagerLauncherPage() {
       return;
     }
     setProfileSettings(readPanelProfile(session?.email));
+    setProfileNotificationPermission(getBrowserNotificationPermission());
     setProfileOpen(true);
     navigate("/manager", { replace: true });
   }, [isStudentPanel, location.search, navigate, readPanelProfile, session?.email]);
+
+  useEffect(() => {
+    if (profileOpen) setProfileNotificationPermission(getBrowserNotificationPermission());
+  }, [profileOpen, session?.email]);
 
   const selectProfileTheme = (theme: AppThemeMode) => {
     setProfileSettings((current) => ({ ...current, theme }));
@@ -8503,6 +8832,60 @@ function ManagerLauncherPage() {
     setProfileOpen(false);
     navigate("/profile", { replace: true });
     showToast(`${profileOwnerLabel} profile settings saved.`);
+  };
+
+  const toggleManagerProfileNotificationChannel = async (channelId: ProfileNotificationChannelId) => {
+    const isEnabled = managerProfileNotificationChannels.some((channel) => channel.id === channelId && channel.enabled);
+    if (isEnabled) {
+      const permission = getBrowserNotificationPermission();
+      setProfileNotificationPermission(permission);
+      updateMessageNotificationSettings({
+        ...profileNotificationChannelSettings(channelId, false),
+        browserPermission: permission
+      });
+      showToast(channelId === "messages" ? "Device notifications turned off for app messages." : `${channelId === "liveChats" ? "Live Chat" : "Mention"} notifications turned off.`);
+      return;
+    }
+    if (!canRequestBrowserNotifications()) {
+      setProfileNotificationPermission("unsupported");
+      updateMessageNotificationSettings({
+        ...profileNotificationChannelSettings(channelId, false),
+        browserPermission: "unsupported"
+      });
+      showToast("Device notifications are unavailable in this browser.");
+      return;
+    }
+    const permission = window.Notification.permission === "granted" ? "granted" : await window.Notification.requestPermission();
+    setProfileNotificationPermission(permission);
+    updateMessageNotificationSettings({
+      ...profileNotificationChannelSettings(channelId, permission === "granted"),
+      browserPermission: permission
+    });
+    showToast(
+      permission === "granted"
+        ? channelId === "messages"
+          ? "Device notifications enabled for app messages."
+          : `${channelId === "liveChats" ? "Live Chat" : "Mention"} notifications enabled.`
+        : "Device notifications were not enabled."
+    );
+  };
+
+  const sendManagerProfileTestNotification = async () => {
+    const hasEnabledChannel = managerProfileNotificationChannels.some((channel) => channel.enabled);
+    if (!hasEnabledChannel || profileNotificationPermission !== "granted") {
+      showToast("Enable device notifications before sending a test.");
+      return;
+    }
+    const sent = await showDirectMessageBrowserNotification("Cho's test notification", {
+      body: "Device notifications are ready for app messages.",
+      tag: "chos-test-notification",
+      icon: publicAsset("682e95109aa21_chos-logo.png"),
+      badge: publicAsset("682e95109aa21_chos-logo.png"),
+      data: {
+        url: messagesNotificationUrl()
+      }
+    });
+    showToast(sent ? "Test device notification sent." : "Test device notification could not be shown.");
   };
 
   return (
@@ -8653,6 +9036,13 @@ function ManagerLauncherPage() {
                   />
                   <span>Receive manager updates and reminders</span>
                 </label>
+                <ProfileNotificationSettingsControl
+                  channels={managerProfileNotificationChannels}
+                  onSendTest={sendManagerProfileTestNotification}
+                  onToggle={toggleManagerProfileNotificationChannel}
+                  permission={profileNotificationPermission}
+                  pushSubscriptionReady={managerProfilePushSubscriptionReady}
+                />
               </div>
               <ProfileColorEditingTool sessionEmail={session?.email} showToast={showToast} preview={managerColorPreview} />
             </section>
@@ -10607,9 +10997,11 @@ function MessagesPage() {
   const selectedNotificationCount = selectedUnreadNotificationIds.length;
   const allUnreadNotificationsSelected = Boolean(unreadNotificationIds.length) && selectedNotificationCount === unreadNotificationIds.length;
 
-  useEffect(() => {
-    setBrowserPermission(getBrowserNotificationPermission());
-  }, []);
+  useNotificationDevicePermissionSync({
+    settings: messageNotificationSettings,
+    setPermission: setBrowserPermission,
+    updateSettings: updateMessageNotificationSettings
+  });
 
   useEffect(() => {
     setWebPushPublicKey(messageNotificationSettings.pushPublicKey ?? "");
@@ -11126,7 +11518,7 @@ function MessagesPage() {
   };
 
   const enableDeviceNotifications = async () => {
-    if (typeof window === "undefined" || !("Notification" in window) || !window.Notification.requestPermission) {
+    if (!canRequestBrowserNotifications()) {
       setBrowserPermission("unsupported");
       updateMessageNotificationSettings({ browserNotificationsEnabled: false, browserPermission: "unsupported" });
       showToast("Device notifications are unavailable in this browser.");

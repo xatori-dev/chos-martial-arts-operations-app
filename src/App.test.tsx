@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -100,6 +100,71 @@ function renderLoggedInApp(path = "/", role: "staff" | "student" | "guardian" = 
   );
 }
 
+function SessionBootstrap({ email, role }: { email: string; role: "staff" | "student" | "guardian" }) {
+  const { login } = useAppState();
+  const loggedInRef = useRef(false);
+
+  useEffect(() => {
+    if (loggedInRef.current) return;
+    loggedInRef.current = true;
+    login(email, true, role);
+  }, [email, login, role]);
+
+  return null;
+}
+
+function renderBootstrappedSessionApp(path = "/", role: "student" | "guardian" = "student") {
+  const email = role === "guardian" ? "parent123@chos.prototype" : "student123@chos.prototype";
+  if (role === "student") {
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-talia-brooks-seed",
+        firstName: "Talia",
+        lastName: "Brooks",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email,
+        status: "Active",
+        beltRank: "White",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-student-talia",
+        displayName: "Talia Brooks",
+        username: email,
+        password: "StudentPass123",
+        role: "student",
+        status: "active",
+        access: [],
+        studentId: "student-talia-brooks-seed",
+        createdAt: "2026-05-10T00:00:00.000Z"
+      }
+    ]));
+  } else {
+    window.localStorage.setItem("chos.accounts.v1", JSON.stringify([
+      {
+        email,
+        password: "ParentPass123",
+        role: "guardian",
+        createdAt: "2026-05-10T00:00:00.000Z"
+      }
+    ]));
+  }
+
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <AppStateProvider>
+        <SessionBootstrap email={email} role={role} />
+        <App />
+      </AppStateProvider>
+    </MemoryRouter>
+  );
+}
+
 function renderLoggedInDeveloperApp(path = "/") {
   const email = "dev123@chos.prototype";
   vi.stubEnv("VITE_ENABLE_DEVELOPER_ACCOUNT", "true");
@@ -161,6 +226,38 @@ function loadChoServiceWorkerForTest(
       openWindow
     }
   };
+}
+
+function stubBrowserNotifications(permission: NotificationPermission = "default", requestResult: NotificationPermission = "granted") {
+  const showNotification = vi.fn().mockResolvedValue(undefined);
+  const requestPermission = vi.fn().mockImplementation(async () => {
+    NotificationMock.permission = requestResult;
+    return requestResult;
+  });
+  class NotificationMock {
+    static permission = permission;
+    static requestPermission = requestPermission;
+  }
+  Object.defineProperty(navigator, "serviceWorker", {
+    configurable: true,
+    value: { ready: Promise.resolve({ showNotification }) }
+  });
+  Object.defineProperty(window, "Notification", {
+    configurable: true,
+    value: NotificationMock
+  });
+
+  return {
+    requestPermission,
+    showNotification,
+    setPermission(nextPermission: NotificationPermission) {
+      NotificationMock.permission = nextPermission;
+    }
+  };
+}
+
+function removeBrowserNotifications() {
+  delete (window as unknown as { Notification?: unknown }).Notification;
 }
 
 function renderManagedStaffApp(path: string, account: Record<string, unknown>) {
@@ -3594,6 +3691,122 @@ describe("post-login operations app", () => {
     expect(within(dialog).getByText("Sign-in passwords are managed in Supabase Auth for Manager123 and cannot be changed from profile settings.")).toBeInTheDocument();
   });
 
+  it("lets managers control profile notification categories and reflects Messages in Message Settings", async () => {
+    const { requestPermission, showNotification } = stubBrowserNotifications("default", "granted");
+
+    const managerView = renderLoggedInApp("/manager?profile=settings");
+
+    const dialog = await screen.findByRole("dialog", { name: "Manager profile settings" });
+    const messagesSwitch = within(dialog).getByRole("switch", { name: "Messages notifications" });
+    const liveChatsSwitch = within(dialog).getByRole("switch", { name: "Live Chats notifications" });
+    const mentionsSwitch = within(dialog).getByRole("switch", { name: "Mentions notifications" });
+    expect(messagesSwitch).toHaveAttribute("aria-checked", "false");
+    expect(liveChatsSwitch).toHaveAttribute("aria-checked", "false");
+    expect(mentionsSwitch).toHaveAttribute("aria-checked", "false");
+    expect(within(dialog).getByText("Browser permission: default")).toBeInTheDocument();
+    expect(within(dialog).getByText("Push subscription: not connected")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Send Test Notification" })).toBeDisabled();
+
+    fireEvent.click(messagesSwitch);
+
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Device notifications enabled for app messages.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("switch", { name: "Messages notifications" })).toHaveAttribute("aria-checked", "true");
+    expect(within(dialog).getByText("Browser permission: granted")).toBeInTheDocument();
+
+    fireEvent.click(liveChatsSwitch);
+    expect(await screen.findByText("Live Chat notifications enabled.")).toBeInTheDocument();
+    fireEvent.click(mentionsSwitch);
+    expect(await screen.findByText("Mention notifications enabled.")).toBeInTheDocument();
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send Test Notification" }));
+
+    await waitFor(() => {
+      expect(showNotification).toHaveBeenCalledWith("Cho's test notification", expect.objectContaining({
+        body: "Device notifications are ready for app messages.",
+        tag: "chos-test-notification"
+      }));
+    });
+
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Messages notifications" }));
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Live Chats notifications" }));
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Mentions notifications" }));
+
+    expect(await screen.findByText("Device notifications turned off for app messages.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.v1") ?? "{}")).toEqual(expect.objectContaining({
+      browserNotificationsEnabled: false,
+      liveChatNotificationsEnabled: false,
+      mentionNotificationsEnabled: false,
+      browserPermission: "granted"
+    }));
+
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Messages notifications" }));
+    await waitFor(() => {
+      expect(within(dialog).getByRole("switch", { name: "Messages notifications" })).toHaveAttribute("aria-checked", "true");
+    });
+
+    managerView.unmount();
+    renderLoggedInApp("/messages");
+
+    expect(screen.getByRole("heading", { name: "Notification Center" })).toBeInTheDocument();
+    expect(screen.getByText("Device permission: granted. Preference: enabled.")).toBeInTheDocument();
+  });
+
+  it("keeps manager Profile Settings notifications off when browser notifications are unsupported", async () => {
+    removeBrowserNotifications();
+
+    renderLoggedInApp("/manager?profile=settings");
+
+    const dialog = await screen.findByRole("dialog", { name: "Manager profile settings" });
+    expect(within(dialog).getByText("Browser permission: unavailable")).toBeInTheDocument();
+    const notificationsSwitch = within(dialog).getByRole("switch", { name: "Messages notifications" });
+
+    fireEvent.click(notificationsSwitch);
+
+    expect(await screen.findByText("Device notifications are unavailable in this browser.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("switch", { name: "Messages notifications" })).toHaveAttribute("aria-checked", "false");
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.v1") ?? "{}")).toEqual(expect.objectContaining({
+      browserNotificationsEnabled: false,
+      liveChatNotificationsEnabled: false,
+      mentionNotificationsEnabled: false,
+      browserPermission: "unsupported"
+    }));
+  });
+
+  it("syncs manager Profile Settings notifications when browser permission changes on the device", async () => {
+    const browserNotifications = stubBrowserNotifications("granted", "granted");
+    window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({
+      browserNotificationsEnabled: true,
+      liveChatNotificationsEnabled: true,
+      mentionNotificationsEnabled: true,
+      browserPermission: "granted"
+    }));
+
+    renderLoggedInApp("/manager?profile=settings");
+
+    const dialog = await screen.findByRole("dialog", { name: "Manager profile settings" });
+    expect(within(dialog).getByRole("switch", { name: "Messages notifications" })).toHaveAttribute("aria-checked", "true");
+    expect(within(dialog).getByRole("switch", { name: "Live Chats notifications" })).toHaveAttribute("aria-checked", "true");
+    expect(within(dialog).getByRole("switch", { name: "Mentions notifications" })).toHaveAttribute("aria-checked", "true");
+
+    browserNotifications.setPermission("denied");
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText("Browser permission: denied")).toBeInTheDocument();
+      expect(within(dialog).getByRole("switch", { name: "Messages notifications" })).toHaveAttribute("aria-checked", "false");
+      expect(within(dialog).getByRole("switch", { name: "Live Chats notifications" })).toHaveAttribute("aria-checked", "false");
+      expect(within(dialog).getByRole("switch", { name: "Mentions notifications" })).toHaveAttribute("aria-checked", "false");
+    });
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.notificationSettings.v1") ?? "{}")).toEqual(expect.objectContaining({
+      browserNotificationsEnabled: false,
+      liveChatNotificationsEnabled: false,
+      mentionNotificationsEnabled: false,
+      browserPermission: "denied"
+    }));
+  });
+
   it.skip("opens the staff-only live chat room route", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-12T18:05:00-05:00"));
@@ -5346,6 +5559,92 @@ describe("post-login operations app", () => {
     expect(within(miniScreen).getByText(/Student$/)).toBeInTheDocument();
   });
 
+  it("lets students control profile notification categories from Profile Settings", async () => {
+    const { requestPermission, showNotification } = stubBrowserNotifications("default", "granted");
+
+    renderBootstrappedSessionApp("/", "student");
+
+    const profileOverview = await screen.findByLabelText("Student reference profile card");
+    fireEvent.click(within(profileOverview).getByRole("button", { name: "Profile Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Student profile settings" });
+
+    expect(within(dialog).getByText("Browser permission: default")).toBeInTheDocument();
+    const messagesSwitch = within(dialog).getByRole("switch", { name: "Messages notifications" });
+    const liveChatsSwitch = within(dialog).getByRole("switch", { name: "Live Chats notifications" });
+    const mentionsSwitch = within(dialog).getByRole("switch", { name: "Mentions notifications" });
+    expect(messagesSwitch).toHaveAttribute("aria-checked", "false");
+    expect(liveChatsSwitch).toHaveAttribute("aria-checked", "false");
+    expect(mentionsSwitch).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(messagesSwitch);
+
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Device notifications enabled for your app messages.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("switch", { name: "Messages notifications" })).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(liveChatsSwitch);
+    expect(await screen.findByText("Live Chat notifications enabled.")).toBeInTheDocument();
+    fireEvent.click(mentionsSwitch);
+    expect(await screen.findByText("Mention notifications enabled.")).toBeInTheDocument();
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send Test Notification" }));
+
+    await waitFor(() => {
+      expect(showNotification).toHaveBeenCalledWith("Cho's student test notification", expect.objectContaining({
+        body: "Device notifications are ready for messages in your Profile feed.",
+        tag: "chos-student-test-notification"
+      }));
+    });
+
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Messages notifications" }));
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Live Chats notifications" }));
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Mentions notifications" }));
+
+    expect(await screen.findByText("Device notifications turned off for your app messages.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.homeMessageNotifications.student123-chos.prototype.v1") ?? "{}")).toEqual(expect.objectContaining({
+      browserNotificationsEnabled: false,
+      liveChatNotificationsEnabled: false,
+      mentionNotificationsEnabled: false,
+      browserPermission: "granted"
+    }));
+  });
+
+  it("syncs student Profile Settings notifications when browser permission changes on the device", async () => {
+    const browserNotifications = stubBrowserNotifications("granted", "granted");
+    window.localStorage.setItem("chos.homeMessageNotifications.student123-chos.prototype.v1", JSON.stringify({
+      browserNotificationsEnabled: true,
+      liveChatNotificationsEnabled: true,
+      mentionNotificationsEnabled: true,
+      browserPermission: "granted"
+    }));
+
+    renderBootstrappedSessionApp("/", "student");
+
+    const profileOverview = await screen.findByLabelText("Student reference profile card");
+    fireEvent.click(within(profileOverview).getByRole("button", { name: "Profile Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Student profile settings" });
+    expect(within(dialog).getByRole("switch", { name: "Messages notifications" })).toHaveAttribute("aria-checked", "true");
+    expect(within(dialog).getByRole("switch", { name: "Live Chats notifications" })).toHaveAttribute("aria-checked", "true");
+    expect(within(dialog).getByRole("switch", { name: "Mentions notifications" })).toHaveAttribute("aria-checked", "true");
+
+    browserNotifications.setPermission("denied");
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText("Browser permission: denied")).toBeInTheDocument();
+      expect(within(dialog).getByRole("switch", { name: "Messages notifications" })).toHaveAttribute("aria-checked", "false");
+      expect(within(dialog).getByRole("switch", { name: "Live Chats notifications" })).toHaveAttribute("aria-checked", "false");
+      expect(within(dialog).getByRole("switch", { name: "Mentions notifications" })).toHaveAttribute("aria-checked", "false");
+    });
+    expect(JSON.parse(window.localStorage.getItem("chos.homeMessageNotifications.student123-chos.prototype.v1") ?? "{}")).toEqual(expect.objectContaining({
+      browserNotificationsEnabled: false,
+      liveChatNotificationsEnabled: false,
+      mentionNotificationsEnabled: false,
+      browserPermission: "denied"
+    }));
+  });
+
   it.skip("lets students save Student Panel as their first page from Profile Settings", () => {
     const studentView = renderLoggedInApp("/", "student");
 
@@ -5388,6 +5687,56 @@ describe("post-login operations app", () => {
     fireEvent.click(within(editor).getByRole("button", { name: "Save Colors" }));
 
     expect(JSON.parse(window.localStorage.getItem(visualThemeKey("parent123@chos.prototype")) ?? "{}")).toEqual(expect.objectContaining({ background: "#102030" }));
+  });
+
+  it("lets parents control profile notification categories from Profile Settings", async () => {
+    const { requestPermission, showNotification } = stubBrowserNotifications("default", "granted");
+
+    renderBootstrappedSessionApp("/", "guardian");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Profile Settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Parent profile settings" });
+
+    expect(within(dialog).getByText("Browser permission: default")).toBeInTheDocument();
+    const messagesSwitch = within(dialog).getByRole("switch", { name: "Messages notifications" });
+    const liveChatsSwitch = within(dialog).getByRole("switch", { name: "Live Chats notifications" });
+    const mentionsSwitch = within(dialog).getByRole("switch", { name: "Mentions notifications" });
+    expect(messagesSwitch).toHaveAttribute("aria-checked", "false");
+    expect(liveChatsSwitch).toHaveAttribute("aria-checked", "false");
+    expect(mentionsSwitch).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(messagesSwitch);
+
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Device notifications enabled for parent app messages.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("switch", { name: "Messages notifications" })).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(liveChatsSwitch);
+    expect(await screen.findByText("Live Chat notifications enabled.")).toBeInTheDocument();
+    fireEvent.click(mentionsSwitch);
+    expect(await screen.findByText("Mention notifications enabled.")).toBeInTheDocument();
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send Test Notification" }));
+
+    await waitFor(() => {
+      expect(showNotification).toHaveBeenCalledWith("Cho's parent test notification", expect.objectContaining({
+        body: "Device notifications are ready for messages in your Parent Profile.",
+        tag: "chos-parent-test-notification"
+      }));
+    });
+
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Messages notifications" }));
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Live Chats notifications" }));
+    fireEvent.click(within(dialog).getByRole("switch", { name: "Mentions notifications" }));
+
+    expect(await screen.findByText("Device notifications turned off for parent app messages.")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.homeMessageNotifications.parent123-chos.prototype.v1") ?? "{}")).toEqual(expect.objectContaining({
+      browserNotificationsEnabled: false,
+      liveChatNotificationsEnabled: false,
+      mentionNotificationsEnabled: false,
+      browserPermission: "granted"
+    }));
   });
 
   it.skip("lets parents save Messages as their first page from Profile Settings", () => {
