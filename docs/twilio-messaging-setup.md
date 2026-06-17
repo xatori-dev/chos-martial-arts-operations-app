@@ -4,18 +4,54 @@ Cho's app is currently a static Vite prototype. It can queue SMS work and record
 
 ## Twilio Account Checklist
 
-1. Create or use a Twilio account.
-2. Buy and verify an SMS-capable Twilio phone number, or create a Messaging Service.
-3. Choose the production sender path and complete the required compliance approval before live US traffic:
+1. Use the paid Twilio account under `xatori@xatoridev.com`.
+2. Create or use the Cho/Xatori Twilio subaccount for this app.
+3. Buy an SMS-capable local number and attach it to a Messaging Service for broadcast sends.
+4. Choose the production sender path and complete the required compliance approval before live US traffic:
    - 10DLC long code senders need approved A2P 10DLC Brand and Campaign registration.
    - Toll-free senders need completed and approved toll-free verification.
    - Short code senders need the approved short code provisioning/compliance path for the intended use case.
-4. Configure the server runtime with these private environment variables:
+5. Deploy the Supabase Edge Function relay in Cho's staging project `zfuwbbepsnmmlpgfkmhz`.
+6. Configure the server runtime with these private environment variables:
    - `TWILIO_ACCOUNT_SID`
    - `TWILIO_API_KEY` and `TWILIO_API_KEY_SECRET` for production API authentication, recommended, or `TWILIO_AUTH_TOKEN` for local fallback.
    - `TWILIO_MESSAGING_SERVICE_SID`, recommended for scale, or `TWILIO_FROM_NUMBER` for an approved direct sender.
-5. Add a private app/server auth layer before accepting send requests from managers.
-6. Add rate limits, audit logs, opt-out handling, sender compliance checks, and recipient consent checks before production use.
+   - `TWILIO_AUTH_TOKEN` is still required for webhook signature validation even when outbound sends use API keys.
+   - `TWILIO_FUNCTION_PUBLIC_URL=https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging`
+   - `TWILIO_SENDER_TYPE=10dlc`
+   - `TWILIO_A2P_BRAND_APPROVED=true` and `TWILIO_A2P_CAMPAIGN_APPROVED=true` only after Twilio Console approval.
+7. Keep manager auth, audit logs, opt-out handling, sender compliance checks, recipient consent checks, rate limits, and idempotency active before production use.
+
+## Supabase Twilio Relay
+
+This repo includes a Supabase Edge Function relay at `supabase/functions/twilio-messaging/index.ts` and migration `supabase/migrations/20260617120000_twilio_messaging_relay.sql`.
+
+Current staging state, verified 2026-06-17:
+
+- Supabase migration `twilio_messaging_relay` is applied to staging project `zfuwbbepsnmmlpgfkmhz`.
+- Supabase Edge Function `twilio-messaging` is deployed and active on staging with `verify_jwt = false`; the function validates manager JWTs and Twilio webhook signatures internally.
+- `Manager123` staging Supabase Auth is aligned with the app login mapping and authenticates as active owner `manager123`.
+- Authenticated relay health returns `status: "not-ready"` with `managerAuth: true`, `twilioCredentials: false`, `senderConfigured: false`, `complianceReady: false`, `webhookSignatureValidation: false`, and `relayCanSend: false`.
+- Supabase CLI secret operations against staging currently fail with `403` / `Your account does not have the necessary privileges to access this endpoint`; an owner/admin dashboard step or a privileged Supabase CLI login is still required to set hosted relay secrets.
+- Twilio CLI profile `xatori-dev` can manage Messaging Services. Cho's staging Messaging Service `Cho's Martial Arts Broadcasts` / `MG3f346aee214d3fef62064a1350bd556e` exists with inbound and status callback URLs pointed at this Supabase relay.
+- That Messaging Service has no sender attached and reports `usAppToPersonRegistered: false`. A local SMS-capable number and approved A2P Brand/Campaign remain required before US mass texting can work.
+
+Staging endpoints:
+
+- Health: `https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging/health`
+- Send: `https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging/send`
+- Consent sync: `https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging/consent`
+- Inbound SMS webhook: `https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging/inbound`
+- Status callback template: `https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging/status/{messageId}`
+
+`supabase/config.toml` sets `verify_jwt = false` for `twilio-messaging` so Twilio can call inbound and status webhook URLs. The function enforces its own gates: manager JWT for health/send/consent sync, and `X-Twilio-Signature` validation for inbound/status callbacks.
+
+The migration adds:
+
+- `sms_consent_records`, the server-side opt-in/opt-out table used before live sends.
+- `twilio_relay_attempts`, the idempotency and audit ledger for Twilio relay sends.
+
+The browser Compose panel syncs SMS consent evidence to the relay before live sends, then posts the existing `chos-twilio-relay.v1` payload. The relay revalidates consent from `sms_consent_records`, reserves idempotency attempts, calls Twilio's Messages API with server-held credentials, writes live delivery metadata back to `message_logs`, and returns `{ "results": [...] }` for the browser to reconcile.
 
 ## Twilio Account Launch Profile
 
@@ -34,7 +70,7 @@ The manager Messages page includes **Twilio Account Launch Profile** inside Twil
 
 The saved launch profile is stored in `chos.operations.twilioLaunchProfile.v1` and is included in **Export Integration Manifest** under `twilio.accountProfile`. It intentionally stores non-secret identifiers and URLs only. Do not paste Twilio Auth Tokens, API secrets, account passwords, webhook signing secrets, VAPID private keys, or private push credentials into this form.
 
-Managers can click **Check Relay Health** after entering a Relay health check URL. The browser sends a credentialed `GET` with `credentials: "include"` and `Accept: application/json`, so the private relay can verify the manager session, server-held Twilio environment variables, sender compliance, and webhook configuration without returning secret values. The app validates that response with `validateTwilioRelayHealthResponseForBrowser`; a simple `{ "status": "ready" }` or `{ "ok": true }` response is intentionally rejected because it does not prove the production relay checked the required server-side gates. Private server code can use `buildChoMessagingServerHealthResponse` from `src/messagingServerContract.ts` to create the browser-safe response shape.
+Managers can click **Check Relay Health** after entering a Relay health check URL, or leave the field empty to use the staging Supabase relay health URL. The browser sends a credentialed `GET` with `credentials: "include"` and `Accept: application/json`, plus the Supabase bearer token when the endpoint is the configured Supabase Function. The private relay verifies the manager session, server-held Twilio environment variables, sender compliance, and webhook configuration without returning secret values. The app validates that response with `validateTwilioRelayHealthResponseForBrowser`; a simple `{ "status": "ready" }` or `{ "ok": true }` response is intentionally rejected because it does not prove the production relay checked the required server-side gates. Private server code can use `buildChoMessagingServerHealthResponse` from `src/messagingServerContract.ts` to create the browser-safe response shape.
 
 A browser-safe health response must include a `status` of `ready`, `degraded`, `not-ready`, or `unauthorized`, plus credential-free boolean readiness checks:
 
@@ -77,7 +113,7 @@ The manager Messages page includes **Live Twilio Readiness** inside Twilio Deliv
 
 This checklist is intentionally based on app state the manager can act on before export. A production server still has to validate credentials, manager auth, consent, rate limits, and Twilio signatures with the server-held Auth Token before live sends or webhook persistence.
 
-The browser blocks direct **Send to Twilio Relay** attempts until the launch profile marks the sender compliance path ready. Export-only handoff files can still be downloaded for setup and review, but a live relay POST requires an approved 10DLC profile, approved toll-free sender, or approved short-code path in the non-secret launch profile. The private relay must repeat this check against authoritative Twilio/account records before sending.
+The browser blocks direct **Send to Twilio Relay** attempts until the launch profile marks the sender compliance path ready and relay health has returned every readiness check as ready. Export-only handoff files can still be downloaded for setup and review, but a live relay POST requires an approved 10DLC profile, approved toll-free sender, or approved short-code path in the non-secret launch profile. The private relay repeats this check with hosted secrets before sending.
 
 ## Production Integration Manifest
 
@@ -155,7 +191,7 @@ The manager Messages page includes an **SMS consent guard** in Twilio Delivery S
 - Existing queued text delivery checks.
 - Twilio relay JSON exports.
 
-The Marketing Tool also shows a selected-audience delivery preview before queueing a blast. The preview uses the same local recipient rules as the queueing path and shows total ready contacts plus student, parent, and staff counts. Inactive contacts, missing phone numbers, duplicate phone numbers, local SMS opt-outs, and contacts without SMS consent evidence are excluded before texts are queued.
+The Compose panel also shows a selected-audience delivery preview before queueing a blast. The preview uses the same local recipient rules as the queueing path and shows total ready contacts plus student, parent, and staff counts. Inactive contacts, missing phone numbers, duplicate phone numbers, local SMS opt-outs, and contacts without SMS consent evidence are excluded before texts are queued.
 
 The local prototype stores opt-in and opt-out timestamps on the matching student phone, guardian phone, or staff account phone. The bundled seed contacts include prototype consent timestamps so the local demo can exercise the workflow. A production relay must also enforce consent server-side before calling Twilio because client-side filtering is not a security boundary.
 
@@ -430,9 +466,9 @@ export async function verifyTwilioWebhook({ authToken, signature, url, formParam
 - Queued text logs are tagged with `deliveryChannel: "sms"`, `deliveryProvider: "twilio"`, and `deliveryMode: "prototype"`.
 - Clicking Send Queued Texts marks deliverable queued texts as sent locally and removes stale queued recipients.
 - Export Twilio Relay JSON downloads only currently deliverable queued texts that pass the shared relay contract, normalizes local U.S. numbers to E.164, includes manager identity metadata and deterministic message idempotency keys, and excludes Twilio credentials and account passwords.
-- Send to Twilio Relay self-checks the same credential-free payload, posts it to a configured private relay URL with cookie/session credentials included, then applies the relay response.
+- Send to Twilio Relay self-checks the same credential-free payload, posts it to a configured private relay URL with cookie/session credentials included, adds the Supabase bearer token only for the configured Supabase Function relay, then applies the relay response.
 - The shared relay contract rejects payloads that are not requested by an authenticated staff account, and the private relay must enforce that role from server-side auth before live sends.
-- Direct Send to Twilio Relay also requires the manager-visible sender compliance profile to be ready before the browser attempts the live relay POST.
+- Direct Send to Twilio Relay also requires the manager-visible sender compliance profile and relay health readiness to be ready before the browser attempts the live relay POST.
 - Twilio relay messages include SMS encoding, unit count, segment count, and opt-out-language detection so the private server can audit cost/compliance and reject unexpected campaign sizes before live sending.
 - `buildTwilioRelayExecutionPlan` gives the private relay a tested server-only batch plan with validation output, Twilio request bodies, API-key Basic auth headers, recipient metadata, and durable idempotency keys.
 - `buildTwilioRelayDispatchPlan` compares a valid execution plan with durable relay attempt records, replays completed results, reserves new keys with credential-free audit records, and blocks in-flight duplicates before any Twilio API call.
@@ -444,13 +480,13 @@ export async function verifyTwilioWebhook({ authToken, signature, url, formParam
 - Apply Twilio Results reconciles private relay responses back into the text log, preserving Twilio SIDs, live delivery status, and failed carrier/error details.
 - Apply Twilio Status reconciles asynchronous Twilio delivery callbacks back into existing live text logs by Cho message id or matching Twilio SID.
 - SMS consent guard can record or clear local opt-outs by phone number, and opted-out contacts are treated as non-deliverable.
-- Export Consent Evidence downloads credential-free student, parent, and staff SMS consent state for private relay reconciliation.
+- Export Consent Evidence downloads credential-free student, parent, and staff SMS consent state for private relay reconciliation. Sync Consent to Relay posts the same evidence to the Supabase relay's `sms_consent_records` table for server-side validation.
 - Apply Twilio Inbound can import captured inbound SMS webhooks, route known student/guardian replies into direct messages, and apply STOP/START keyword consent updates.
 - Marketing and Promotion Automation composers show SMS encoding, segment estimates, and opt-out-language compliance warnings before queued texts are created.
-- Marketing Tool delivery preview shows selected-audience student, parent, staff, and total ready counts before queueing mass texts.
+- Compose delivery preview shows selected-audience student, parent, staff, and total ready counts before queueing mass texts.
 - Twilio Account Launch Profile persists non-secret Messaging Service, sender, webhook, relay-health, manager-auth, and sender-compliance setup values for production handoff.
 - Check Relay Health calls the configured private relay health URL with manager browser credentials and displays the returned non-secret readiness status only after the shared browser validator confirms structured readiness checks and no credential-like fields.
-- Production and automation manifests distinguish the required `TWILIO_ACCOUNT_SID`, the production API key pair or local Auth Token fallback, and the Messaging Service or approved `From` sender choice.
+- Production and automation manifests distinguish the required `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` webhook signature secret, production API key pair, public function URL, 10DLC approval flags, and the Messaging Service or approved `From` sender choice.
 - Live Twilio Readiness shows manager-visible preflight status for relay account/auth/sender requirements, deliverable queue size, consent guard, notification readiness, relay result import, status callback import, inbound import, and the webhook signature helper that the private relay must enforce.
 - Export Integration Manifest downloads the credential-free production handoff contract for Twilio relay, webhook, Web Push, and manager-auth server work.
 - Export Automation Manifest downloads the credential-free schedule-runner handoff contract for private cron/manual automation jobs, Twilio relay batching, scheduled promotions, and Web Push notification coordination.

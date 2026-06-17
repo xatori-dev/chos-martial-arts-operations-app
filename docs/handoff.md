@@ -2,7 +2,7 @@
 
 ## Current Status
 
-This project is not ready for client handoff as a production system. It is a Xatori-managed staging pilot with a verified GitHub Pages deployment, an active Supabase staging surface for `Manager123` auth and messaging persistence, and browser-local prototype workflows for the remaining operations data. Public staging intentionally exposes the gated `Dev123` diagnostic login for this pilot. There is no production backend, production database, payments, email provider, or live SMS provider.
+This project is not ready for client handoff as a production system. It is a Xatori-managed staging pilot with a verified GitHub Pages deployment, an active Supabase staging surface for `Manager123` auth and messaging persistence, browser-local prototype workflows for the remaining operations data, and a deployed Supabase Twilio relay that is blocked on hosted secrets, sender attachment, and provider approval. Public staging intentionally exposes the gated `Dev123` diagnostic login for this pilot. There is no production backend, production database, payments, email provider, or approved live SMS provider.
 
 ## Delivery Package
 
@@ -33,11 +33,13 @@ This project is not ready for client handoff as a production system. It is a Xat
 - [x] Google Drive package document exists under the connected `xatori@xatoridev.com` Drive account.
 - [ ] Client-facing production domain and hosting are documented.
 - [ ] Backend/auth/database scope is approved, implemented, and secured if production data is used.
-- [ ] Twilio production sender, compliance, consent, and audit model are approved if live SMS is used.
+- [x] Supabase `twilio-messaging` function is deployed and `sms_consent_records` plus `twilio_relay_attempts` are migrated in staging.
+- [ ] Hosted Twilio secrets are set in Supabase. Current CLI token gets `403` on staging secret operations.
+- [ ] Twilio production sender, 10DLC Brand/Campaign compliance, consent, and audit model are approved if live SMS is used.
 - [ ] Stripe legal/payment ownership is decided if payments are introduced.
 - [ ] 1Password handoff vault contains only intended client/handoff references.
 - [ ] Xatori-only credentials are revoked or reduced if ownership transfers.
 
 ## Support Transition Notes
 
-Until a production backend exists, support should focus on staging manager auth, local prototype behavior, GitHub Pages deployment health, and documented provider-readiness gaps. Do not promise individual staff accounts, real cross-device persistence for all operations workflows, production auth, payments, email, or live SMS from the current app.
+Until the hosted Supabase relay secrets and Twilio 10DLC setup are verified, support should focus on staging manager auth, local prototype behavior, GitHub Pages deployment health, and documented provider-readiness gaps. Do not promise individual staff accounts, real cross-device persistence for all operations workflows, production auth, payments, email, or live SMS from the current hosted app.

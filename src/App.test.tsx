@@ -5961,7 +5961,7 @@ describe("post-login operations app", () => {
     expect(screen.getByRole("heading", { name: "Message Settings" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Messenger Settings" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Follow-Up Automation" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Marketing Tool" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Compose" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Text Log" })).toBeInTheDocument();
     const homeMessengerLink = screen.getByRole("link", { name: "Open Home Page Messages" });
     expect(homeMessengerLink).toHaveAttribute("href", "/profile");
@@ -11842,10 +11842,17 @@ describe("post-login operations app", () => {
         twilio: expect.objectContaining({
           relayEndpoint: "https://relay.cho.example/api/messages/send",
           relayPayloadSchemaVersion: "chos-twilio-relay.v1",
-          requiredServerEnv: ["TWILIO_ACCOUNT_SID"],
+          requiredServerEnv: [
+            "TWILIO_ACCOUNT_SID",
+            "TWILIO_AUTH_TOKEN",
+            "TWILIO_FUNCTION_PUBLIC_URL",
+            "TWILIO_SENDER_TYPE",
+            "TWILIO_A2P_BRAND_APPROVED",
+            "TWILIO_A2P_CAMPAIGN_APPROVED"
+          ],
           authServerEnv: {
             productionRecommended: ["TWILIO_API_KEY", "TWILIO_API_KEY_SECRET"],
-            localFallback: ["TWILIO_AUTH_TOKEN"]
+            webhookSignatureRequired: ["TWILIO_AUTH_TOKEN"]
           },
           senderServerEnv: {
             recommended: ["TWILIO_MESSAGING_SERVICE_SID"],
@@ -11865,8 +11872,8 @@ describe("post-login operations app", () => {
             basicAuthHeaderBuilder: "buildTwilioBasicAuthHeader"
           }),
           webhooks: expect.objectContaining({
-            inboundPath: "/api/messages/inbound",
-            statusCallbackPathTemplate: "/api/messages/status/{messageId}",
+            inboundPath: "/inbound",
+            statusCallbackPathTemplate: "/status/{messageId}",
             signatureHeader: "X-Twilio-Signature",
             requireSignatureVerification: true,
             serverContract: expect.objectContaining({
@@ -12212,10 +12219,17 @@ describe("post-login operations app", () => {
         relay: expect.objectContaining({
           relayEndpoint: "https://relay.cho.example/api/messages/send",
           relayPayloadSchemaVersion: "chos-twilio-relay.v1",
-          requiredServerEnv: ["TWILIO_ACCOUNT_SID"],
+          requiredServerEnv: [
+            "TWILIO_ACCOUNT_SID",
+            "TWILIO_AUTH_TOKEN",
+            "TWILIO_FUNCTION_PUBLIC_URL",
+            "TWILIO_SENDER_TYPE",
+            "TWILIO_A2P_BRAND_APPROVED",
+            "TWILIO_A2P_CAMPAIGN_APPROVED"
+          ],
           authServerEnv: {
             productionRecommended: ["TWILIO_API_KEY", "TWILIO_API_KEY_SECRET"],
-            localFallback: ["TWILIO_AUTH_TOKEN"]
+            webhookSignatureRequired: ["TWILIO_AUTH_TOKEN"]
           },
           senderServerEnv: {
             recommended: ["TWILIO_MESSAGING_SERVICE_SID"],
@@ -13366,18 +13380,34 @@ describe("post-login operations app", () => {
   });
 
   it("posts deliverable queued texts to a private Twilio relay and applies the response", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: vi.fn().mockResolvedValue(JSON.stringify({
-        results: [
-          {
-            id: "message-ari",
-            deliveryStatus: "sent",
-            deliveryProviderMessageId: "SMPRIVATE1111111111111111111111111111"
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          status: "ready",
+          checkedAt: "2026-06-03T15:00:00.000Z",
+          readinessChecks: {
+            managerAuth: true,
+            twilioCredentials: true,
+            senderConfigured: true,
+            complianceReady: true,
+            webhookSignatureValidation: true,
+            relayCanSend: true
           }
-        ]
-      }))
-    });
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          results: [
+            {
+              id: "message-ari",
+              deliveryStatus: "sent",
+              deliveryProviderMessageId: "SMPRIVATE1111111111111111111111111111"
+            }
+          ]
+        }))
+      });
     Object.defineProperty(window, "fetch", {
       configurable: true,
       value: fetchMock
@@ -13431,6 +13461,8 @@ describe("post-login operations app", () => {
     renderLoggedInApp("/messages");
 
     fireEvent.change(screen.getByLabelText("Private Twilio relay URL"), { target: { value: "https://relay.cho.example/api/messages/send" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check Relay Health" }));
+    expect(await screen.findByText("Twilio relay health verified.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Send to Twilio Relay" }));
 
     expect(await screen.findByText("1 Twilio relay result applied.")).toBeInTheDocument();
@@ -13439,7 +13471,7 @@ describe("post-login operations app", () => {
       credentials: "include",
       headers: { "Content-Type": "application/json" }
     }));
-    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const requestBody = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(requestBody).toEqual(expect.objectContaining({
       schemaVersion: "chos-twilio-relay.v1",
       provider: "twilio",
@@ -13456,6 +13488,113 @@ describe("post-login operations app", () => {
         deliveryMode: "live",
         deliveryStatus: "sent",
         deliveryProviderMessageId: "SMPRIVATE1111111111111111111111111111"
+      })
+    ]);
+  });
+
+  it("queues a Compose blast, syncs consent, and sends through the Supabase Twilio relay after health is ready", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "GET") {
+        return {
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            status: "ready",
+            checkedAt: "2026-06-03T15:00:00.000Z",
+            readinessChecks: {
+              managerAuth: true,
+              twilioCredentials: true,
+              senderConfigured: true,
+              complianceReady: true,
+              webhookSignatureValidation: true,
+              relayCanSend: true
+            }
+          })
+        };
+      }
+      if (url.endsWith("/consent")) {
+        return {
+          ok: true,
+          json: vi.fn().mockResolvedValue({ synced: 1 })
+        };
+      }
+      const requestBody = JSON.parse(String(init?.body ?? "{}"));
+      return {
+        ok: true,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          results: [
+            {
+              id: requestBody.messages[0].id,
+              deliveryStatus: "sent",
+              deliveryProviderMessageId: "test-compose-provider-message-id"
+            }
+          ]
+        }))
+      };
+    });
+    Object.defineProperty(window, "fetch", {
+      configurable: true,
+      value: fetchMock
+    });
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
+      {
+        id: "student-ari",
+        firstName: "Ari",
+        lastName: "Nguyen",
+        ...completeStudentSafetyFields,
+        phone: "(262) 555-0101",
+        email: "ari@example.com",
+        studentSmsConsentUpdatedAt: "2026-06-01T10:00:00.000Z",
+        status: "Active",
+        beltRank: "Yellow",
+        classesAttended: 12,
+        missedClassCount: 0,
+        joinedAt: "2026-01-01"
+      }
+    ]));
+    window.localStorage.setItem("chos.operations.messages.v1", JSON.stringify([]));
+    window.localStorage.setItem("chos.operations.twilioLaunchProfile.v1", JSON.stringify({
+      messagingServiceSid: "test-messaging-service-sid",
+      smsSender: "+12625550100",
+      inboundWebhookUrl: "",
+      statusCallbackBaseUrl: "",
+      relayHealthCheckUrl: "",
+      managerAuthMode: "same-site-cookie",
+      senderType: "10dlc",
+      a2pBrandStatus: "approved",
+      a2pCampaignStatus: "approved",
+      tollFreeVerificationStatus: "not-used",
+      complianceNotes: "Approved for Compose live relay send."
+    }));
+
+    renderLoggedInApp("/messages");
+
+    const sendViaTwilio = screen.getByRole("button", { name: "Send via Twilio" });
+    expect(sendViaTwilio).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Marketing message"), { target: { value: "June family night is open. Reply STOP to opt out." } });
+    fireEvent.click(screen.getByRole("button", { name: "Check Relay Health" }));
+    expect(await screen.findByText("Twilio relay health verified.")).toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "Send via Twilio" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Send via Twilio" }));
+
+    expect(await screen.findByText("1 Twilio relay result applied.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+      "https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging/health",
+      "https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging/consent",
+      "https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging/send"
+    ]);
+    const consentPayload = JSON.parse(String(fetchMock.mock.calls[1][1]?.body ?? "{}"));
+    expect(consentPayload.contacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ contactId: "student-ari", role: "student", phone: "+12625550101", consentStatus: "opt-in" })
+    ]));
+    expect(JSON.parse(window.localStorage.getItem("chos.operations.messages.v1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        recipientName: "Ari Nguyen",
+        status: "sent",
+        deliveryMode: "live",
+        deliveryStatus: "sent",
+        deliveryProviderMessageId: "test-compose-provider-message-id"
       })
     ]);
   });

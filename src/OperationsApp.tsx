@@ -70,7 +70,7 @@ import {
 } from "./beltCase";
 import { childUsernameFromName, normalizeChildUsername } from "./childAccountUtils";
 import { beltRanks } from "./data";
-import { isSupabaseAuthConfigured } from "./supabaseAccounts";
+import { getSupabaseBrowserConfig, isSupabaseAuthConfigured, readSupabaseAuthSession } from "./supabaseAccounts";
 import {
   readManagerProfile,
   readGuardianProfile,
@@ -100,9 +100,10 @@ import {
   type VisualColorKey,
   type VisualThemeColors
 } from "./theme";
+import { buildTwilioSupabaseMessagingUrls, isSupabaseTwilioMessagingEndpoint, isTwilioRelayHealthReady, twilioConsentSyncUrlForRelayEndpoint } from "./twilioSupabaseMessaging";
 import { validateTwilioRelayHealthResponseForBrowser, validateTwilioRelayPayloadForServer, type TwilioRelayHealthReadinessChecks } from "./twilioRelayContract";
 import type { AccountRole, BeltRank, ChildAccount, ClassWeekday, DirectMessage, ManagedAccount, ManagerAccessKey, MerchandiseItem, MessageCampaign, MessageLog, MessageNotificationSettings, ScheduledClass, ScheduledTextCampaign, StudioClass, StudyGuideFolder, StudyGuideMaterial, StudentRecord, StudioEvent, TextAutomationRun, TrainingVideo, TrainingVideoFolder } from "./types";
-import { downloadTextFile, formatMoney, isDeveloperAccountEnabled, profileAvatarPathForSession, smsOptOutPreflightText, smsSegmentPreflightText, validateEmail } from "./utils";
+import { downloadTextFile, formatMoney, hasSmsOptOutLanguage, isDeveloperAccountEnabled, profileAvatarPathForSession, smsOptOutPreflightText, smsSegmentPreflightText, validateEmail } from "./utils";
 
 const beltOptions = beltRanks.map((beltRank) => beltRank.name);
 const weekdayOptions: { value: ClassWeekday; label: string; short: string }[] = [
@@ -323,10 +324,17 @@ function automationRunBreakdownSummary(run: Pick<TextAutomationRun, "breakdown">
     : "No automation categories queued texts";
 }
 
-const twilioRequiredServerEnvVars = ["TWILIO_ACCOUNT_SID"];
+const twilioRequiredServerEnvVars = [
+  "TWILIO_ACCOUNT_SID",
+  "TWILIO_AUTH_TOKEN",
+  "TWILIO_FUNCTION_PUBLIC_URL",
+  "TWILIO_SENDER_TYPE",
+  "TWILIO_A2P_BRAND_APPROVED",
+  "TWILIO_A2P_CAMPAIGN_APPROVED"
+];
 const twilioAuthServerEnv = {
   productionRecommended: ["TWILIO_API_KEY", "TWILIO_API_KEY_SECRET"],
-  localFallback: ["TWILIO_AUTH_TOKEN"]
+  webhookSignatureRequired: ["TWILIO_AUTH_TOKEN"]
 };
 const twilioSenderServerEnv = {
   recommended: ["TWILIO_MESSAGING_SERVICE_SID"],
@@ -335,8 +343,10 @@ const twilioSenderServerEnv = {
 const twilioServerEnvLabels = [
   "TWILIO_ACCOUNT_SID",
   "TWILIO_API_KEY + TWILIO_API_KEY_SECRET",
-  "TWILIO_AUTH_TOKEN fallback",
-  "TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER"
+  "TWILIO_AUTH_TOKEN for webhook signatures",
+  "TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER",
+  "TWILIO_FUNCTION_PUBLIC_URL",
+  "10DLC approval flags"
 ];
 const twilioServerReadinessLabel = "Account SID + auth pair + sender option required";
 const twilioRelayServerContract = {
@@ -756,6 +766,18 @@ function writeTwilioRelayEndpoint(value: string) {
   } catch {
     // Relay URL persistence is optional; blocked storage should not break messaging.
   }
+}
+
+function supabaseTwilioRelayAuthHeaders(endpoint: string): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const { url, publicKey } = getSupabaseBrowserConfig();
+  if (!publicKey || !isSupabaseTwilioMessagingEndpoint(endpoint, url)) return {};
+  const session = readSupabaseAuthSession();
+  if (!session) return {};
+  return {
+    apikey: publicKey,
+    Authorization: `Bearer ${session.accessToken}`
+  };
 }
 
 function readPushServerEndpoint() {
@@ -10515,6 +10537,8 @@ function MessagesPage() {
     unreadDirectMessageCount,
     updateMessageNotificationSettings
   } = useAppState();
+  const supabaseBrowserConfig = getSupabaseBrowserConfig();
+  const twilioSupabaseRelayUrls = buildTwilioSupabaseMessagingUrls(supabaseBrowserConfig.url);
   const [marketingMessage, setMarketingMessage] = useState("Monthly special: 10% off gloves and uniforms this week.");
   const [marketingAudience, setMarketingAudience] = useState<MessageCampaign["audience"]>("all-students");
   const [scheduledPromotionMessage, setScheduledPromotionMessage] = useState("Family gear sale starts tonight at 5 PM.");
@@ -10525,9 +10549,10 @@ function MessagesPage() {
   const [smsOptOutPhone, setSmsOptOutPhone] = useState("");
   const [twilioInboundWebhookJson, setTwilioInboundWebhookJson] = useState("");
   const [twilioStatusCallbackJson, setTwilioStatusCallbackJson] = useState("");
-  const [twilioRelayEndpoint, setTwilioRelayEndpoint] = useState(() => readTwilioRelayEndpoint());
+  const [twilioRelayEndpoint, setTwilioRelayEndpoint] = useState(() => readTwilioRelayEndpoint() || twilioSupabaseRelayUrls.sendUrl);
   const [twilioRelayResultsJson, setTwilioRelayResultsJson] = useState("");
   const [isTwilioRelaySending, setIsTwilioRelaySending] = useState(false);
+  const [isSmsConsentSyncing, setIsSmsConsentSyncing] = useState(false);
   const [twilioLaunchProfile, setTwilioLaunchProfile] = useState<TwilioLaunchProfile>(() => readTwilioLaunchProfile());
   const [twilioRelayHealthStatus, setTwilioRelayHealthStatus] = useState("not checked");
   const [twilioRelayHealthChecks, setTwilioRelayHealthChecks] = useState<TwilioRelayHealthReadinessChecks | undefined>();
@@ -10556,6 +10581,17 @@ function MessagesPage() {
   const marketingOptOutPreflight = smsOptOutPreflightText(marketingMessage);
   const scheduledPromotionOptOutPreflight = smsOptOutPreflightText(scheduledPromotionMessage);
   const marketingAudiencePreview = getTextAudiencePreview(marketingAudience);
+  const twilioRelayHealthReady = isTwilioRelayHealthReady(twilioRelayHealthStatus, twilioRelayHealthChecks);
+  const twilioComposeCanLiveSend = Boolean(
+    marketingMessage.trim() &&
+      marketingAudiencePreview.total &&
+      twilioRelayEndpoint.trim() &&
+      twilioRelayHealthReady &&
+      twilioComplianceProfile.readyForUsProductionTraffic &&
+      hasSmsOptOutLanguage(marketingMessage) &&
+      !isTwilioRelaySending &&
+      !isSmsConsentSyncing
+  );
   const activeScheduledPromotions = scheduledTextCampaigns.filter((campaign) => campaign.status === "scheduled");
   const visibleScheduledPromotions = scheduledTextCampaigns.filter((campaign) => campaign.status !== "canceled").slice(0, 4);
   const visibleTextAutomationRuns = textAutomationRuns.slice(0, 3);
@@ -10635,18 +10671,25 @@ function MessagesPage() {
     showToast(result.totalQueued ? `${result.totalQueued} automated text${result.totalQueued === 1 ? "" : "s"} queued.` : "No automated texts are due.");
   };
 
-  const sendMarketing = (event: FormEvent) => {
-    event.preventDefault();
+  const queueMarketingBlast = (showQueuedToast = true) => {
     if (!marketingMessage.trim()) {
       showToast("Enter a marketing message.");
-      return;
+      return 0;
     }
     const count = sendMarketingBlast(marketingMessage, marketingAudience);
     if (count) {
-      showToast(marketingAudience === "all-students" ? `Marketing blast queued for ${count} student${count === 1 ? "" : "s"}.` : `Text blast queued for ${count} ${messageAudienceLabel(marketingAudience)}.`);
-      return;
+      if (showQueuedToast) {
+        showToast(marketingAudience === "all-students" ? `Marketing blast queued for ${count} student${count === 1 ? "" : "s"}.` : `Text blast queued for ${count} ${messageAudienceLabel(marketingAudience)}.`);
+      }
+      return count;
     }
     showToast(marketingAudience === "all-students" ? "No current student phone numbers are available." : `No ${messageAudienceLabel(marketingAudience)} phone numbers are available.`);
+    return 0;
+  };
+
+  const sendMarketing = (event: FormEvent) => {
+    event.preventDefault();
+    queueMarketingBlast();
   };
 
   const schedulePromotion = (event: FormEvent) => {
@@ -10709,6 +10752,12 @@ function MessagesPage() {
     return false;
   };
 
+  const twilioRelayHealthReadyForLiveSend = () => {
+    if (twilioRelayHealthReady) return true;
+    showToast("Check the Twilio relay health and resolve every readiness check before live sends.");
+    return false;
+  };
+
   const exportTwilioRelayPayload = () => {
     const payload = buildTwilioRelayPayload();
     if (!payload.messages.length) {
@@ -10761,7 +10810,7 @@ function MessagesPage() {
   };
 
   const checkTwilioRelayHealth = async () => {
-    const endpoint = twilioLaunchProfile.relayHealthCheckUrl.trim();
+    const endpoint = twilioLaunchProfile.relayHealthCheckUrl.trim() || twilioSupabaseRelayUrls.healthUrl;
     if (!endpoint) {
       setTwilioRelayHealthChecks(undefined);
       showToast("Enter a relay health check URL.");
@@ -10781,7 +10830,7 @@ function MessagesPage() {
       const response = await window.fetch(endpoint, {
         method: "GET",
         credentials: "include",
-        headers: { Accept: "application/json" }
+        headers: { Accept: "application/json", ...supabaseTwilioRelayAuthHeaders(endpoint) }
       });
       if (!response.ok) {
         setTwilioRelayHealthStatus(`HTTP ${response.status}`);
@@ -10858,12 +10907,13 @@ function MessagesPage() {
     }
     if (!twilioSenderComplianceReadyForLiveSend()) return;
     if (!relayPayloadReadyForLiveSend(payload, relayOrigin)) return;
+    if (!twilioRelayHealthReadyForLiveSend()) return;
     setIsTwilioRelaySending(true);
     try {
       const response = await window.fetch(endpoint, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...supabaseTwilioRelayAuthHeaders(endpoint) },
         body: JSON.stringify(payload)
       });
       if (!response.ok) {
@@ -11019,6 +11069,53 @@ function MessagesPage() {
     showToast(`${payload.contacts.length} SMS consent record${payload.contacts.length === 1 ? "" : "s"} exported.`);
   };
 
+  const syncSmsConsentEvidenceToRelay = async (showSuccessToast = true) => {
+    const endpoint = twilioConsentSyncUrlForRelayEndpoint(twilioRelayEndpoint.trim() || twilioSupabaseRelayUrls.sendUrl, supabaseBrowserConfig.url);
+    const payload = buildSmsConsentEvidencePayload();
+    if (!payload.contacts.length) {
+      showToast("No SMS consent records are available to sync.");
+      return false;
+    }
+    setIsSmsConsentSyncing(true);
+    try {
+      const response = await window.fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...supabaseTwilioRelayAuthHeaders(endpoint) },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        showToast(`SMS consent sync failed with HTTP ${response.status}.`);
+        return false;
+      }
+      const result = (await response.json().catch(() => undefined)) as { synced?: unknown } | undefined;
+      const synced = typeof result?.synced === "number" ? result.synced : payload.contacts.length;
+      if (showSuccessToast) showToast(`${synced} SMS consent record${synced === 1 ? "" : "s"} synced to the Twilio relay.`);
+      return true;
+    } catch {
+      showToast("SMS consent sync failed.");
+      return false;
+    } finally {
+      setIsSmsConsentSyncing(false);
+    }
+  };
+
+  const sendMarketingViaTwilio = async () => {
+    if (!twilioComposeCanLiveSend) {
+      if (!hasSmsOptOutLanguage(marketingMessage)) {
+        showToast("Add opt-out language before live marketing sends.");
+        return;
+      }
+      if (!twilioSenderComplianceReadyForLiveSend()) return;
+      if (!twilioRelayHealthReadyForLiveSend()) return;
+    }
+    const count = queueMarketingBlast(false);
+    if (!count) return;
+    const synced = await syncSmsConsentEvidenceToRelay(false);
+    if (!synced) return;
+    await sendToTwilioRelay();
+  };
+
   const clearStaleTexts = () => {
     const count = clearStaleQueuedTexts();
     showToast(count ? `${count} stale queued text${count === 1 ? "" : "s"} removed.` : "No stale queued texts need cleanup.");
@@ -11164,7 +11261,8 @@ function MessagesPage() {
           }
         : undefined,
       twilio: {
-        relayEndpoint: twilioRelayEndpoint.trim() || null,
+        relayEndpoint: twilioRelayEndpoint.trim() || twilioSupabaseRelayUrls.sendUrl,
+        consentSyncEndpoint: twilioConsentSyncUrlForRelayEndpoint(twilioRelayEndpoint.trim() || twilioSupabaseRelayUrls.sendUrl, supabaseBrowserConfig.url),
         relayPayloadSchemaVersion: "chos-twilio-relay.v1",
         relayMethod: "POST",
         browserCredentialMode: "include",
@@ -11172,9 +11270,9 @@ function MessagesPage() {
           messagingServiceSidConfigured: Boolean(twilioLaunchProfile.messagingServiceSid.trim()),
           messagingServiceSid: twilioLaunchProfile.messagingServiceSid.trim() || null,
           smsSender: twilioLaunchProfile.smsSender.trim() || null,
-          inboundWebhookUrl: twilioLaunchProfile.inboundWebhookUrl.trim() || null,
-          statusCallbackBaseUrl: twilioLaunchProfile.statusCallbackBaseUrl.trim() || null,
-          relayHealthCheckUrl: twilioLaunchProfile.relayHealthCheckUrl.trim() || null,
+          inboundWebhookUrl: twilioLaunchProfile.inboundWebhookUrl.trim() || twilioSupabaseRelayUrls.inboundWebhookUrl,
+          statusCallbackBaseUrl: twilioLaunchProfile.statusCallbackBaseUrl.trim() || twilioSupabaseRelayUrls.baseUrl,
+          relayHealthCheckUrl: twilioLaunchProfile.relayHealthCheckUrl.trim() || twilioSupabaseRelayUrls.healthUrl,
           managerAuthMode: twilioLaunchProfile.managerAuthMode,
           savedAt: twilioLaunchProfile.savedAt ?? null,
           credentialStorage: "server-only",
@@ -11189,8 +11287,10 @@ function MessagesPage() {
         maxMessagesPerBatch: 100,
         maxSegmentsPerMessage: 3,
         webhooks: {
-          inboundPath: "/api/messages/inbound",
-          statusCallbackPathTemplate: "/api/messages/status/{messageId}",
+          inboundPath: "/inbound",
+          inboundWebhookUrl: twilioLaunchProfile.inboundWebhookUrl.trim() || twilioSupabaseRelayUrls.inboundWebhookUrl,
+          statusCallbackPathTemplate: "/status/{messageId}",
+          statusCallbackUrlTemplate: twilioSupabaseRelayUrls.statusCallbackUrlTemplate,
           contentType: "application/x-www-form-urlencoded",
           signatureHeader: "X-Twilio-Signature",
           requireSignatureVerification: true,
@@ -11372,7 +11472,8 @@ function MessagesPage() {
         idempotencyRequired: true
       },
       relay: {
-        relayEndpoint: twilioRelayEndpoint.trim() || null,
+        relayEndpoint: twilioRelayEndpoint.trim() || twilioSupabaseRelayUrls.sendUrl,
+        consentSyncEndpoint: twilioConsentSyncUrlForRelayEndpoint(twilioRelayEndpoint.trim() || twilioSupabaseRelayUrls.sendUrl, supabaseBrowserConfig.url),
         relayPayloadSchemaVersion: "chos-twilio-relay.v1",
         relayMethod: "POST",
         browserCredentialMode: "include",
@@ -11380,9 +11481,9 @@ function MessagesPage() {
           messagingServiceSidConfigured: Boolean(twilioLaunchProfile.messagingServiceSid.trim()),
           messagingServiceSid: twilioLaunchProfile.messagingServiceSid.trim() || null,
           smsSender: twilioLaunchProfile.smsSender.trim() || null,
-          inboundWebhookUrl: twilioLaunchProfile.inboundWebhookUrl.trim() || null,
-          statusCallbackBaseUrl: twilioLaunchProfile.statusCallbackBaseUrl.trim() || null,
-          relayHealthCheckUrl: twilioLaunchProfile.relayHealthCheckUrl.trim() || null,
+          inboundWebhookUrl: twilioLaunchProfile.inboundWebhookUrl.trim() || twilioSupabaseRelayUrls.inboundWebhookUrl,
+          statusCallbackBaseUrl: twilioLaunchProfile.statusCallbackBaseUrl.trim() || twilioSupabaseRelayUrls.baseUrl,
+          relayHealthCheckUrl: twilioLaunchProfile.relayHealthCheckUrl.trim() || twilioSupabaseRelayUrls.healthUrl,
           managerAuthMode: twilioLaunchProfile.managerAuthMode,
           credentialStorage: "server-only",
           credentialValuesExcluded: true
@@ -11395,7 +11496,8 @@ function MessagesPage() {
         optionalServerEnv: ["TWILIO_STATUS_CALLBACK_BASE_URL"],
         maxMessagesPerBatch: 100,
         maxSegmentsPerMessage: 3,
-        statusCallbackPathTemplate: "/api/messages/status/{messageId}"
+        statusCallbackPathTemplate: "/status/{messageId}",
+        statusCallbackUrlTemplate: twilioSupabaseRelayUrls.statusCallbackUrlTemplate
       },
       webPush: {
         subscriptionSyncEndpoint: pushServerEndpoint.trim() || null,
@@ -11629,7 +11731,7 @@ function MessagesPage() {
                 type="url"
                 value={twilioLaunchProfile.inboundWebhookUrl}
                 onChange={(event) => updateTwilioLaunchProfile("inboundWebhookUrl", event.target.value)}
-                placeholder="https://relay.example.com/api/messages/inbound"
+                placeholder={twilioSupabaseRelayUrls.inboundWebhookUrl}
               />
             </label>
             <label>
@@ -11638,7 +11740,7 @@ function MessagesPage() {
                 type="url"
                 value={twilioLaunchProfile.statusCallbackBaseUrl}
                 onChange={(event) => updateTwilioLaunchProfile("statusCallbackBaseUrl", event.target.value)}
-                placeholder="https://relay.example.com"
+                placeholder={twilioSupabaseRelayUrls.baseUrl}
               />
             </label>
             <label>
@@ -11647,7 +11749,7 @@ function MessagesPage() {
                 type="url"
                 value={twilioLaunchProfile.relayHealthCheckUrl}
                 onChange={(event) => updateTwilioLaunchProfile("relayHealthCheckUrl", event.target.value)}
-                placeholder="https://relay.example.com/api/health/twilio"
+                placeholder={twilioSupabaseRelayUrls.healthUrl}
               />
             </label>
             <label>
@@ -11728,7 +11830,7 @@ function MessagesPage() {
               type="button"
               className="operations-action secondary"
               onClick={checkTwilioRelayHealth}
-              disabled={!twilioLaunchProfile.relayHealthCheckUrl.trim() || isTwilioRelayHealthChecking}
+              disabled={isTwilioRelayHealthChecking}
             >
               <Server size={18} /> {isTwilioRelayHealthChecking ? "Checking Relay..." : "Check Relay Health"}
             </button>
@@ -11849,6 +11951,9 @@ function MessagesPage() {
               <button type="button" className="operations-action secondary" onClick={exportSmsConsentEvidence}>
                 <FileText size={18} /> Export Consent Evidence
               </button>
+              <button type="button" className="operations-action secondary" onClick={() => void syncSmsConsentEvidenceToRelay()} disabled={isSmsConsentSyncing}>
+                <Server size={18} /> {isSmsConsentSyncing ? "Syncing Consent..." : "Sync Consent to Relay"}
+              </button>
             </div>
             <label>
               Twilio inbound webhook JSON
@@ -11968,9 +12073,12 @@ function MessagesPage() {
               type="url"
               value={twilioRelayEndpoint}
               onChange={(event) => updateTwilioRelayEndpoint(event.target.value)}
-              placeholder="https://relay.example.com/api/messages/send"
+              placeholder={twilioSupabaseRelayUrls.sendUrl}
             />
           </label>
+          <button type="button" className="operations-action secondary" onClick={() => updateTwilioRelayEndpoint(twilioSupabaseRelayUrls.sendUrl)}>
+            <Server size={18} /> Use Supabase Twilio Relay
+          </button>
           <button type="button" className="operations-action secondary" onClick={sendToTwilioRelay} disabled={!queuedCount || !twilioRelayEndpoint.trim() || isTwilioRelaySending}>
             <Server size={18} /> {isTwilioRelaySending ? "Sending to Relay..." : "Send to Twilio Relay"}
           </button>
@@ -11989,7 +12097,7 @@ function MessagesPage() {
           <p className="operations-note">Relay export contains only deliverable queued texts and is designed for a private Twilio server endpoint with manager auth.</p>
         </section>
         <form className="operations-form-panel" onSubmit={sendMarketing}>
-          <h2>Marketing Tool</h2>
+          <h2>Compose</h2>
           <label>
             Audience
             <select value={marketingAudience} onChange={(event) => setMarketingAudience(event.target.value as MessageCampaign["audience"])}>
@@ -12017,6 +12125,10 @@ function MessagesPage() {
           <button type="submit">
             <Mail size={18} /> Send Marketing Blast
           </button>
+          <button type="button" className="operations-action secondary" onClick={() => void sendMarketingViaTwilio()} disabled={!twilioComposeCanLiveSend}>
+            <Server size={18} /> {isTwilioRelaySending || isSmsConsentSyncing ? "Sending via Twilio..." : "Send via Twilio"}
+          </button>
+          <p className="operations-note">Live sends use the Supabase Twilio relay, synced consent evidence, approved sender compliance, and relay health checks before Twilio is called.</p>
           {messageCampaigns[0] && <p className="operations-note">Latest campaign: {messageCampaigns[0].title}</p>}
         </form>
       </div>

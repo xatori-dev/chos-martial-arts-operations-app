@@ -60,7 +60,7 @@ No raw secret values belong in this repository or in chat. Record item names and
 
 Project boundary: MongTeng uses a separate Supabase project, `mongteng-food-market-ordering-app-staging` / `jqvclzlvrhdcsfhhvekr`. Do not use that ref, URL, keys, migrations, Edge Functions, or seed scripts for Cho's work.
 
-Staging has Supabase Auth profiles, RLS, `account_creation_audit`, `live_chat_messages`, `direct_messages`, `message_logs`, and the retired `manager-create-account` Edge Function. The supported staging pilot sign-ins are `Manager123` for owner testing and public-staging `Dev123` for developer diagnostics. Individual non-owner staff profiles are not launch scope yet because the current client rejects them at sign-in. The internal Auth email for `Manager123` is `manager123@accounts.chosmartialarts.app`. The owner password must be generated, meet the Supabase setup policy, and live only in the approved secret store. Rotate any legacy seed password before real user access.
+Staging has Supabase Auth profiles, RLS, `account_creation_audit`, `live_chat_messages`, `direct_messages`, `message_logs`, and the retired `manager-create-account` Edge Function. The `twilio_messaging_relay` migration has been applied to staging, creating `sms_consent_records` and `twilio_relay_attempts`, and the hosted `twilio-messaging` Edge Function is deployed with `verify_jwt = false` for Twilio webhooks. Hosted Twilio secrets are not set yet because `supabase secrets set/list --project-ref zfuwbbepsnmmlpgfkmhz` currently returns `403` / `Your account does not have the necessary privileges to access this endpoint`. The supported staging pilot sign-ins are `Manager123` for owner testing and public-staging `Dev123` for developer diagnostics. Individual non-owner staff profiles are not launch scope yet because the current client rejects them at sign-in. The internal Auth email for `Manager123` is `manager123@accounts.chosmartialarts.app`; staging Auth was aligned to the app password on 2026-06-17 and verifies through the real password grant.
 
 The Xatori Dev Supabase organization is currently on the Free plan. The staging Security Advisor still reports `auth_leaked_password_protection` because Supabase leaked-password protection requires Pro or higher. Until the plan is upgraded and the Auth setting is enabled, the seed script enforces the local 12-character mixed password policy for the owner account.
 
@@ -73,9 +73,10 @@ Production remains uncreated until staging is accepted.
 | Dev subaccount | `xd-chos-martial-arts-operations-app-dev` | Planned |
 | Production subaccount | `xd-chos-martial-arts-operations-app-prod` | Planned |
 | Transactional Messaging Service | `xd-chos-martial-arts-operations-app-txn` | Planned |
-| Broadcast Messaging Service | `xd-chos-martial-arts-operations-app-broadcast` | Planned |
+| Broadcast Messaging Service | `Cho's Martial Arts Broadcasts` / `MG3f346aee214d3fef62064a1350bd556e` | Created in the active `xatori-dev` Twilio profile; inbound/status callbacks point at the Supabase relay |
+| 10DLC sender path | Cho local number + A2P Brand/Campaign | No sender attached and `usAppToPersonRegistered=false`; required before US mass texting |
 
-The browser app currently provides credential-free Twilio relay, consent, webhook, and Web Push contracts. Live SMS requires a private server with manager auth, CSRF protection, consent evidence, rate limits, audit logs, sender compliance checks, and server-held Twilio credentials.
+The browser app currently provides credential-free Twilio relay, consent, webhook, and Web Push contracts. The deployed Supabase `twilio-messaging` relay is the intended private server path for live SMS, with manager JWT checks, server-side consent records, Twilio webhook signature validation, idempotency, and message-log reconciliation. Live SMS still requires hosted Supabase secrets, a Twilio Auth Token for webhook signatures, an attached SMS-capable sender, and Twilio Console 10DLC approval.
 
 ## Stripe
 
