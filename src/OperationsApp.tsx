@@ -3971,136 +3971,15 @@ const liveChatDefaultRooms: LiveChatRoom[] = [
 
 const liveChatPreviewMessages: LiveChatMessage[] = [
   {
-    id: "preview-notice-schedule",
+    id: "preview-manager-intro",
     roomKey: liveChatRoomKey,
     senderUserId: null,
-    senderName: "Notice",
+    senderName: "Cho's App",
     senderRole: "system",
     senderAvatarPath: null,
     messageKind: "notice",
-    body: "Saturday belt testing schedule is live. Check roster updates before dismissing families.",
-    createdAt: "2026-06-12T16:10:00.000Z"
-  },
-  {
-    id: "preview-staff-floor",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "Floor Team",
-    senderRole: "staff",
-    senderAvatarPath: "assets/CheetahProfilePic/Cheetah.png",
-    messageKind: "user",
-    body: "@Cho's Manager Lily and Caleb are ready for forms review after Youth Intermediate.",
-    createdAt: "2026-06-12T16:14:00.000Z"
-  },
-  {
-    id: "preview-reward",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "System",
-    senderRole: "system",
-    senderAvatarPath: null,
-    messageKind: "reward",
-    body: "Talia Brooks completed her fourth class streak this week.",
-    createdAt: "2026-06-12T16:20:00.000Z"
-  },
-  {
-    id: "preview-staff-desk",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "Front Desk",
-    senderRole: "staff",
-    senderAvatarPath: "assets/student-profiles/iris-morgan.webp",
-    messageKind: "user",
-    body: "Parent check-ins are clear. Two trial families need a welcome follow-up.",
-    createdAt: "2026-06-12T16:28:00.000Z"
-  },
-  {
-    id: "preview-system-closeout",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "System",
-    senderRole: "system",
-    senderAvatarPath: null,
-    messageKind: "system",
-    body: "Closeout reminder: verify attendance notes before 8:00 PM.",
-    createdAt: "2026-06-12T16:36:00.000Z"
-  },
-  {
-    id: "preview-staff-mats",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "Coach Mina",
-    senderRole: "staff",
-    senderAvatarPath: "assets/student-profiles/maya-robinson.webp",
-    messageKind: "user",
-    body: "Mat two is open for private lesson warmups.",
-    createdAt: "2026-06-12T16:42:00.000Z"
-  },
-  {
-    id: "preview-notice-uniforms",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "Notice",
-    senderRole: "system",
-    senderAvatarPath: null,
-    messageKind: "notice",
-    body: "Uniform pickup shelf has been restocked for the evening classes.",
-    createdAt: "2026-06-12T16:46:00.000Z"
-  },
-  {
-    id: "preview-staff-family",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "Front Desk",
-    senderRole: "staff",
-    senderAvatarPath: "assets/student-profiles/sophie-jensen.webp",
-    messageKind: "user",
-    body: "New family tour starts at 6:15. Please keep the entry mat clear.",
-    createdAt: "2026-06-12T16:51:00.000Z"
-  },
-  {
-    id: "preview-reward-card",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "System",
-    senderRole: "system",
-    senderAvatarPath: null,
-    messageKind: "reward",
-    body: "Marcus Reid earned leadership card review with Coach Cho.",
-    createdAt: "2026-06-12T16:57:00.000Z"
-  },
-  {
-    id: "preview-staff-sparring",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "Coach Luis",
-    senderRole: "staff",
-    senderAvatarPath: "assets/student-profiles/andre-coleman.webp",
-    messageKind: "user",
-    body: "Sparring gear checks are done for intermediate class.",
-    createdAt: "2026-06-12T17:04:00.000Z"
-  },
-  {
-    id: "preview-system-cleanup",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "System",
-    senderRole: "system",
-    senderAvatarPath: null,
-    messageKind: "system",
-    body: "Lobby cleanup window starts after the 7:15 adult class.",
-    createdAt: "2026-06-12T17:10:00.000Z"
-  },
-  {
-    id: "preview-staff-ready",
-    roomKey: liveChatRoomKey,
-    senderUserId: null,
-    senderName: "Cho's Manager",
-    senderRole: "staff",
-    senderAvatarPath: "assets/CheetahProfilePic/Cheetah.png",
-    messageKind: "user",
-    body: "Thanks team. Keep trial family notes in the front desk thread.",
-    createdAt: "2026-06-12T17:18:00.000Z"
+    body: "Welcome, Manager. Live chat is clean, connected, and ready for testing.",
+    createdAt: "2026-06-17T01:10:24.823Z"
   }
 ];
 

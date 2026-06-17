@@ -3650,7 +3650,7 @@ describe("post-login operations app", () => {
   it("keeps live chat timestamps grouped under the sender name to avoid wasted message row space", () => {
     renderLoggedInApp("/live-chat");
 
-    const firstMessage = screen.getByText("Saturday belt testing schedule is live. Check roster updates before dismissing families.").closest(".live-chat-message");
+    const firstMessage = screen.getByText("Welcome, Manager. Live chat is clean, connected, and ready for testing.").closest(".live-chat-message");
     expect(firstMessage).not.toBeNull();
     const sender = within(firstMessage as HTMLElement).getByText("[Notice]");
     const timestamp = within(firstMessage as HTMLElement).getByText(/\d{1,2}:\d{2} (AM|PM)/);
