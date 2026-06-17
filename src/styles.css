@@ -10099,6 +10099,8 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 
 .manager-home-feed-panel {
   position: relative;
+  container-name: manager-home-feed-panel;
+  container-type: inline-size;
   grid-column: 1;
   grid-row: 2;
   min-width: 0;
@@ -10152,9 +10154,12 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   justify-content: flex-end;
   gap: 5px;
   min-width: 0;
+  max-width: 100%;
 }
 
 .manager-home-bulk-actions {
+  flex: 0 1 auto;
+  min-width: 0;
   min-height: 30px;
   padding: 3px 4px 3px 10px;
   border: 1px solid rgba(255, 255, 255, 0.28);
@@ -10168,6 +10173,9 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 }
 
 .manager-home-bulk-actions strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--font-ui);
   font-size: 0.76rem;
   font-weight: 900;
@@ -10199,6 +10207,52 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   box-shadow:
     0 0 0 3px rgba(255, 255, 255, 0.2),
     0 10px 22px rgba(90, 18, 30, 0.28);
+}
+
+@container manager-home-feed-panel (max-width: 480px) {
+  .manager-home-feed-head {
+    padding-right: 48px;
+  }
+
+  .manager-home-feed-counts {
+    gap: 4px;
+  }
+
+  .manager-home-count {
+    padding: 0 7px;
+    font-size: 0.7rem;
+  }
+
+  .manager-home-compose {
+    padding: 0 7px;
+  }
+
+  .manager-home-bulk-actions {
+    padding: 2px 3px 2px 8px;
+    gap: 4px;
+  }
+
+  .manager-home-bulk-actions strong {
+    max-width: 62px;
+    font-size: 0.68rem;
+  }
+
+  .manager-home-bulk-actions button {
+    width: 26px;
+    min-width: 26px;
+    padding: 0;
+    justify-content: center;
+    gap: 0;
+  }
+
+  .manager-home-bulk-actions button span {
+    display: none;
+  }
+
+  .manager-home-bulk-actions button svg {
+    width: 15px;
+    height: 15px;
+  }
 }
 
 .manager-home-count {
@@ -11621,6 +11675,17 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
 .manager-home-search-close {
   width: 34px;
   height: 34px;
+}
+
+@container manager-home-feed-panel (max-width: 480px) {
+  .manager-home-search-shell {
+    width: 42px;
+  }
+
+  .manager-home-search-trigger {
+    width: 42px;
+    height: 42px;
+  }
 }
 
 .manager-home-inbox-head {
@@ -14602,8 +14667,33 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   }
 
   .manager-home-bulk-actions {
-    width: 100%;
-    justify-content: space-between;
+    flex: 0 1 auto;
+    width: auto;
+    padding: 2px 3px 2px 7px;
+    justify-content: flex-start;
+    gap: 4px;
+  }
+
+  .manager-home-bulk-actions strong {
+    max-width: 68px;
+    font-size: 0.66rem;
+  }
+
+  .manager-home-bulk-actions button {
+    width: 26px;
+    min-width: 26px;
+    padding: 0;
+    justify-content: center;
+    gap: 0;
+  }
+
+  .manager-home-bulk-actions button span {
+    display: none;
+  }
+
+  .manager-home-bulk-actions button svg {
+    width: 15px;
+    height: 15px;
   }
 
   .manager-home-unified-feed {
@@ -19849,8 +19939,11 @@ html[data-theme="light"] .parent-tutorial-actions .parent-tutorial-open-child {
   }
 
   .manager-home-bulk-actions {
-    width: 100%;
-    justify-content: space-between;
+    flex: 0 1 auto;
+    width: auto;
+    padding: 2px 3px 2px 7px;
+    justify-content: flex-start;
+    gap: 4px;
   }
 
   .manager-home-sidebar {
