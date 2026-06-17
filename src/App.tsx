@@ -386,12 +386,6 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
       return;
     }
 
-    const createdAccount = loginCreatedAccount(loginForm);
-    if (createdAccount) {
-      navigate("/");
-      return;
-    }
-
     if (supabaseConfigured && isSupportedSupabaseLoginUsername(loginForm.username)) {
       setLoginPending(true);
       try {
@@ -405,6 +399,14 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
         return;
       } finally {
         setLoginPending(false);
+      }
+    }
+
+    if (!supabaseConfigured) {
+      const createdAccount = loginCreatedAccount(loginForm);
+      if (createdAccount) {
+        navigate("/");
+        return;
       }
     }
 

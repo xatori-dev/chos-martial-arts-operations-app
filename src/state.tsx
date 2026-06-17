@@ -5,8 +5,9 @@ import { getProduct, studio } from "./data";
 import { parseOperationsBackupSnapshot, type OperationsBackupData } from "./operationsBackup";
 import { getClassReminderCandidates, getLeadCandidates, getMerchandiseTargetStock, getStudentCelebrationEvents, getStudentProfileIssues, hasGuardianSmsConsent, hasStaffSmsConsent, hasStudentSmsConsent, isAttendanceGapFollowUpDue, isBeltTestInviteDue, isLowStockMerchandiseItem, isMilestoneEncouragementDue, isMissedClassFollowUpDue, isNewStudentCheckInDue, isPausedStudentReviewDue, isProfileUpdateRequestDue, isQueuedMessageDeliverable, isStaleOneTimeScheduledClass, isTrialConversionDue } from "./operationsReports";
 import { buildStudentBeltProgress } from "./studentProgress";
-import { clearSupabaseAuthSession } from "./supabaseAccounts";
-import { deleteSupabaseDirectMessages, deleteSupabaseMessageLogs, fetchSupabaseDirectMessages, fetchSupabaseMessageLogs, isSupabaseMessagePersistenceAvailable, persistSupabaseDirectMessages, persistSupabaseMessageLogs } from "./supabaseMessagePersistence";
+import { clearSupabaseAuthSession, isSupabaseAuthConfigured } from "./supabaseAccounts";
+import { deleteSupabaseAppStateItem, fetchSupabaseAppStateItem, isSupabaseAppStateRemoteBacked, persistSupabaseAppStateItem } from "./supabaseAppStatePersistence";
+import { deleteSupabaseDirectMessages, deleteSupabaseMessageLogs, fetchSupabaseDirectMessages, fetchSupabaseMessageLogs, persistSupabaseDirectMessages, persistSupabaseMessageLogs } from "./supabaseMessagePersistence";
 import { normalizeTwilioInboundSmsWebhookForServer, normalizeTwilioStatusCallbackForServer, type TwilioInboundSmsWebhook } from "./twilioRelayContract";
 import type {
   AccountRole,
@@ -191,6 +192,7 @@ type StudioEventInput = {
 const seedChildAccounts: ChildAccount[] = [];
 
 type StudentInput = {
+  studentId?: string;
   fullName: string;
   dateOfBirth?: string;
   gender?: string;
@@ -597,19 +599,47 @@ function cleanupRetiredStudentPrototypeStorage() {
   }
 }
 
-function useStoredState<T>(key: string, fallback: T, options?: { remoteBacked?: boolean; remoteFallback?: T }) {
+function useStoredState<T>(
+  key: string,
+  fallback: T,
+  options?: { localDisabled?: boolean; remoteBacked?: boolean; remoteFallback?: T; remoteScope?: string; remoteStore?: "app-state" | "none" }
+) {
   const remoteBacked = Boolean(options?.remoteBacked);
+  const useRemoteAppState = remoteBacked && options?.remoteStore !== "none";
+  const localDisabled = Boolean(options?.localDisabled);
   const remoteFallback = options?.remoteFallback ?? fallback;
-  const [value, setValue] = useState<T>(() => (remoteBacked ? remoteFallback : readStorage<T>(key, fallback)));
+  const [value, setValue] = useState<T>(() => (remoteBacked || localDisabled ? remoteFallback : readStorage<T>(key, fallback)));
 
   useEffect(() => {
     if (remoteBacked) {
+      let cancelled = false;
+      removeStorage(key);
+      setValue(remoteFallback);
+      if (!useRemoteAppState) {
+        return () => {
+          cancelled = true;
+        };
+      }
+      void fetchSupabaseAppStateItem<T>(key).then((result) => {
+        if (cancelled) return;
+        if (result.status !== "ok") return;
+        if (result.data === undefined) {
+          if (remoteFallback !== undefined) void persistSupabaseAppStateItem(key, remoteFallback);
+          return;
+        }
+        setValue(result.data);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (localDisabled) {
       removeStorage(key);
       setValue(remoteFallback);
       return;
     }
     setValue(readStorage<T>(key, fallback));
-  }, [key, remoteBacked]);
+  }, [key, localDisabled, options?.remoteScope, remoteBacked, useRemoteAppState]);
 
   const update = useCallback(
     (next: T | ((previous: T) => T)) => {
@@ -617,13 +647,22 @@ function useStoredState<T>(key: string, fallback: T, options?: { remoteBacked?: 
         const resolved = typeof next === "function" ? (next as (previous: T) => T)(previous) : next;
         if (remoteBacked) {
           removeStorage(key);
+          if (useRemoteAppState) {
+            if (resolved === undefined) {
+              void deleteSupabaseAppStateItem(key);
+            } else {
+              void persistSupabaseAppStateItem(key, resolved);
+            }
+          }
+        } else if (localDisabled) {
+          removeStorage(key);
         } else {
           writeStorage(key, resolved);
         }
         return resolved;
       });
     },
-    [key, remoteBacked]
+    [key, localDisabled, remoteBacked, useRemoteAppState]
   );
   return [value, update] as const;
 }
@@ -1752,34 +1791,40 @@ function isSessionAvailableAfterRestore(
 export function AppStateProvider({ children }: PropsWithChildren) {
   cleanupRetiredStudentPrototypeStorage();
 
-  const [cart, setCart] = useStoredState<CartItem[]>(keys.cart, []);
-  const [orders, setOrders] = useStoredState<Order[]>(keys.orders, []);
-  const [bookings, setBookings] = useStoredState<BookingDetails[]>(keys.bookings, []);
-  const [contacts, setContacts] = useStoredState<ContactSubmission[]>(keys.contacts, []);
-  const [leadReviews, setLeadReviews] = useStoredState<LeadReview[]>(keys.leadReviews, []);
   const [session, setSession] = useSessionState();
-  const supabaseMessagesRemoteBacked = isSupabaseMessagePersistenceAvailable();
-  const [accounts, setAccounts] = useStoredState<AccountRecord[]>(keys.accounts, []);
-  const [accountRoles, setAccountRoles] = useStoredState<AccountRoleRecord[]>(keys.accountRoles, []);
-  const [managedAccounts, setManagedAccounts] = useStoredState<ManagedAccount[]>(keys.managedAccounts, []);
-  const [childAccounts, setChildAccounts] = useStoredState<ChildAccount[]>(keys.childAccounts, seedChildAccounts);
-  const [coupon, setCoupon] = useStoredState<Coupon | undefined>(keys.coupon, undefined);
-  const [students, setStudents] = useStoredState<StudentRecord[]>(keys.students, seedStudents);
-  const [studioClasses, setStudioClasses] = useStoredState<StudioClass[]>(keys.studioClasses, seedStudioClasses);
-  const [scheduledClasses, setScheduledClasses] = useStoredState<ScheduledClass[]>(keys.scheduledClasses, seedScheduledClasses);
-  const [messageCampaigns, setMessageCampaigns] = useStoredState<MessageCampaign[]>(keys.messageCampaigns, []);
-  const [scheduledTextCampaigns, setScheduledTextCampaigns] = useStoredState<ScheduledTextCampaign[]>(keys.scheduledTextCampaigns, []);
-  const [messageLogs, setMessageLogs] = useStoredState<MessageLog[]>(keys.messageLogs, seedMessageLogs, { remoteBacked: supabaseMessagesRemoteBacked, remoteFallback: [] });
-  const [textAutomationRuns, setTextAutomationRuns] = useStoredState<TextAutomationRun[]>(keys.textAutomationRuns, []);
+  const supabaseAppStateRemoteBacked = isSupabaseAppStateRemoteBacked();
+  const supabaseLocalCredentialsDisabled = isSupabaseAuthConfigured();
+  const supabaseRemoteScope = session?.email ?? "signed-out";
+  const supabaseAppStateOptions = { remoteBacked: supabaseAppStateRemoteBacked, remoteScope: supabaseRemoteScope };
+  const supabaseLocalCredentialOptions = { localDisabled: supabaseLocalCredentialsDisabled };
+
+  const [cart, setCart] = useStoredState<CartItem[]>(keys.cart, [], supabaseAppStateOptions);
+  const [orders, setOrders] = useStoredState<Order[]>(keys.orders, [], supabaseAppStateOptions);
+  const [bookings, setBookings] = useStoredState<BookingDetails[]>(keys.bookings, [], supabaseAppStateOptions);
+  const [contacts, setContacts] = useStoredState<ContactSubmission[]>(keys.contacts, [], supabaseAppStateOptions);
+  const [leadReviews, setLeadReviews] = useStoredState<LeadReview[]>(keys.leadReviews, [], supabaseAppStateOptions);
+  const supabaseMessagesRemoteBacked = isSupabaseAuthConfigured();
+  const [accounts, setAccounts] = useStoredState<AccountRecord[]>(keys.accounts, [], supabaseLocalCredentialOptions);
+  const [accountRoles, setAccountRoles] = useStoredState<AccountRoleRecord[]>(keys.accountRoles, [], supabaseLocalCredentialOptions);
+  const [managedAccounts, setManagedAccounts] = useStoredState<ManagedAccount[]>(keys.managedAccounts, [], supabaseLocalCredentialOptions);
+  const [childAccounts, setChildAccounts] = useStoredState<ChildAccount[]>(keys.childAccounts, seedChildAccounts, supabaseLocalCredentialOptions);
+  const [coupon, setCoupon] = useStoredState<Coupon | undefined>(keys.coupon, undefined, supabaseAppStateOptions);
+  const [students, setStudents] = useStoredState<StudentRecord[]>(keys.students, seedStudents, supabaseAppStateOptions);
+  const [studioClasses, setStudioClasses] = useStoredState<StudioClass[]>(keys.studioClasses, seedStudioClasses, supabaseAppStateOptions);
+  const [scheduledClasses, setScheduledClasses] = useStoredState<ScheduledClass[]>(keys.scheduledClasses, seedScheduledClasses, supabaseAppStateOptions);
+  const [messageCampaigns, setMessageCampaigns] = useStoredState<MessageCampaign[]>(keys.messageCampaigns, [], supabaseAppStateOptions);
+  const [scheduledTextCampaigns, setScheduledTextCampaigns] = useStoredState<ScheduledTextCampaign[]>(keys.scheduledTextCampaigns, [], supabaseAppStateOptions);
+  const [messageLogs, setMessageLogs] = useStoredState<MessageLog[]>(keys.messageLogs, seedMessageLogs, { remoteBacked: supabaseMessagesRemoteBacked, remoteFallback: [], remoteScope: supabaseRemoteScope, remoteStore: "none" });
+  const [textAutomationRuns, setTextAutomationRuns] = useStoredState<TextAutomationRun[]>(keys.textAutomationRuns, [], supabaseAppStateOptions);
   const [messageNotificationSettings, setMessageNotificationSettingsState] = useState<MessageNotificationSettings>(() => readMessageNotificationSettingsForSession(session?.email));
-  const [directMessages, setDirectMessages] = useStoredState<DirectMessage[]>(keys.directMessages, seedDirectMessages, { remoteBacked: supabaseMessagesRemoteBacked, remoteFallback: [] });
-  const [studioEvents, setStudioEvents] = useStoredState<StudioEvent[]>(keys.studioEvents, seedStudioEvents);
-  const [merchandiseItems, setMerchandiseItems] = useStoredState<MerchandiseItem[]>(keys.merchandiseItems, seedMerchandiseItems);
-  const [checkIns, setCheckIns] = useStoredState<StudentCheckIn[]>(keys.checkIns, []);
-  const [trainingVideoFolders, setTrainingVideoFolders] = useStoredState<TrainingVideoFolder[]>(keys.videoFolders, []);
-  const [trainingVideos, setTrainingVideos] = useStoredState<TrainingVideo[]>(keys.videos, []);
-  const [studyGuideFolders, setStudyGuideFolders] = useStoredState<StudyGuideFolder[]>(keys.studyGuideFolders, []);
-  const [studyGuideMaterials, setStudyGuideMaterials] = useStoredState<StudyGuideMaterial[]>(keys.studyGuideMaterials, []);
+  const [directMessages, setDirectMessages] = useStoredState<DirectMessage[]>(keys.directMessages, seedDirectMessages, { remoteBacked: supabaseMessagesRemoteBacked, remoteFallback: [], remoteScope: supabaseRemoteScope, remoteStore: "none" });
+  const [studioEvents, setStudioEvents] = useStoredState<StudioEvent[]>(keys.studioEvents, seedStudioEvents, supabaseAppStateOptions);
+  const [merchandiseItems, setMerchandiseItems] = useStoredState<MerchandiseItem[]>(keys.merchandiseItems, seedMerchandiseItems, supabaseAppStateOptions);
+  const [checkIns, setCheckIns] = useStoredState<StudentCheckIn[]>(keys.checkIns, [], supabaseAppStateOptions);
+  const [trainingVideoFolders, setTrainingVideoFolders] = useStoredState<TrainingVideoFolder[]>(keys.videoFolders, [], supabaseAppStateOptions);
+  const [trainingVideos, setTrainingVideos] = useStoredState<TrainingVideo[]>(keys.videos, [], supabaseAppStateOptions);
+  const [studyGuideFolders, setStudyGuideFolders] = useStoredState<StudyGuideFolder[]>(keys.studyGuideFolders, [], supabaseAppStateOptions);
+  const [studyGuideMaterials, setStudyGuideMaterials] = useStoredState<StudyGuideMaterial[]>(keys.studyGuideMaterials, [], supabaseAppStateOptions);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastTimersRef = useRef<Map<string, number>>(new Map());
   const cartRef = useRef(cart);
@@ -2722,7 +2767,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       if (matchingStudent) return matchingStudent;
       const createdStudent: StudentRecord = {
         ...normalizedStudent,
-        id: createPrototypeId("student"),
+        id: student.studentId?.trim() || createPrototypeId("student"),
         classesAttended: 0,
         missedClassCount: 0
       };

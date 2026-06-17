@@ -9151,11 +9151,11 @@ function CreateAccountsPage() {
     access?: ManagerAccessKey[];
     studentId?: string;
   }) => {
-    if (!isSupabaseAuthConfigured()) return false;
+    if (!isSupabaseAuthConfigured()) return "local";
     if (!readSupabaseAuthSession()) {
       showFormMessage("Sign into Supabase Manager123 before creating live accounts.");
       showToast("Supabase Manager123 sign-in required before creating live accounts.");
-      return true;
+      return "handled";
     }
     setIsCreatingAccount(true);
     try {
@@ -9163,12 +9163,12 @@ function CreateAccountsPage() {
       if (result.status === "ok") {
         setFormMessage("");
         showToast("Account created in Supabase.");
-        return true;
+        return "created";
       }
       const message = result.status === "error" ? result.message : "Supabase account creation is not configured.";
       showFormMessage(message);
       showToast(message);
-      return true;
+      return "handled";
     } finally {
       setIsCreatingAccount(false);
     }
@@ -9211,10 +9211,8 @@ function CreateAccountsPage() {
         notes: staffForm.notes,
         access: staffForm.access
       });
-      if (liveCreated) {
-        if (readSupabaseAuthSession()) {
-          setStaffForm({ displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "", title: "Instructor", notes: "", access: defaultStaffAccess });
-        }
+      if (liveCreated !== "local") {
+        if (liveCreated === "created") setStaffForm({ displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "", title: "Instructor", notes: "", access: defaultStaffAccess });
         return;
       }
     }
@@ -9251,6 +9249,11 @@ function CreateAccountsPage() {
       showFormMessage("Enter the student name, username, and password.");
       return;
     }
+    if (!studentForm.studentEmail.trim() || !studentForm.guardianPhone.trim()) {
+      showFormMessage("Enter the student email and parent/guardian phone.");
+      return;
+    }
+    const linkedStudentId = `student-${username.replace(/[^a-z0-9]+/g, "-")}`;
     if (isSupabaseAuthConfigured()) {
       const liveCreated = await createLiveSupabaseAccount({
         displayName: studentName,
@@ -9262,10 +9265,21 @@ function CreateAccountsPage() {
         title: `${studentForm.beltRank.trim() || "White"} Belt Student`,
         notes: studentForm.notes,
         access: [],
-        studentId: `student-${username.replace(/[^a-z0-9]+/g, "-")}`
+        studentId: linkedStudentId
       });
-      if (liveCreated) {
-        if (readSupabaseAuthSession()) {
+      if (liveCreated !== "local") {
+        if (liveCreated === "created") {
+          addOperationsStudent({
+            studentId: linkedStudentId,
+            fullName: studentForm.fullName,
+            studentEmail: studentForm.studentEmail,
+            guardianName: studentForm.guardianName,
+            guardianPhone: studentForm.guardianPhone,
+            guardianEmail: studentForm.guardianEmail,
+            program: studentForm.program,
+            beltRank: studentForm.beltRank,
+            notes: studentForm.notes
+          });
           setStudentForm({ fullName: "", username: "", password: "", confirmPassword: "", studentEmail: "", guardianName: "", guardianPhone: "", guardianEmail: "", program: "Youth Taekwondo", beltRank: "White", notes: "" });
         }
         return;
@@ -9332,10 +9346,8 @@ function CreateAccountsPage() {
         notes: parentForm.notes,
         access: []
       });
-      if (liveCreated) {
-        if (readSupabaseAuthSession()) {
-          setParentForm({ displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "", notes: "" });
-        }
+      if (liveCreated !== "local") {
+        if (liveCreated === "created") setParentForm({ displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "", notes: "" });
         return;
       }
     }
