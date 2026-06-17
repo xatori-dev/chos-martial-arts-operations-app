@@ -7646,13 +7646,13 @@ function ManagerHomePage() {
       <header className="manager-home-profile-title manager-home-profile-title--with-live-chat manager-page-title-bar" aria-label="Profile page header">
         <ManagerPageTitleFrame title={profileTitle} className="manager-home-profile-title-frame" />
         <nav className="manager-home-top-actions" aria-label="Profile quick actions">
-          <Link className="manager-home-top-action manager-home-panel-link" to="/manager" aria-label={panelLabel}>
-            <img className="manager-home-panel-icon" src={managerPageIcon} alt="" draggable="false" />
-            <span className="manager-home-top-action-label">{panelLabel}</span>
-          </Link>
           <Link className="manager-home-top-action manager-home-live-chat-link" to="/live-chat" aria-label="Live Chat">
             <img className="manager-home-live-chat-icon" src={messagesLauncherIcon} alt="" draggable="false" />
             <span className="manager-home-top-action-label">Live Chat</span>
+          </Link>
+          <Link className="manager-home-top-action manager-home-panel-link" to="/manager" aria-label={panelLabel}>
+            <img className="manager-home-panel-icon" src={managerPageIcon} alt="" draggable="false" />
+            <span className="manager-home-top-action-label">{panelLabel}</span>
           </Link>
           <button className="manager-home-top-action manager-home-logout-button" type="button" aria-label="Log Out" onClick={logout}>
             <img className="manager-home-logout-icon" src={managerLogoutIcon} alt="" draggable="false" />

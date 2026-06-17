@@ -3547,6 +3547,17 @@ describe("post-login operations app", () => {
     expect(screen.queryByLabelText("Manager app launcher")).not.toBeInTheDocument();
   }, 10000);
 
+  it("orders manager profile quick actions as Live Chat, Manager's Panel, Log Out", () => {
+    renderLoggedInApp("/profile");
+
+    const profileTitleHeader = screen.getByLabelText("Profile page header");
+    const quickActions = Array.from(profileTitleHeader.querySelectorAll(".manager-home-top-action")).map((action) => action.textContent?.trim());
+
+    expect(quickActions).toEqual(["Live Chat", "Manager's Panel", "Log Out"]);
+    expect(within(profileTitleHeader).getByRole("link", { name: "Live Chat" })).toHaveAttribute("href", "/live-chat");
+    expect(within(profileTitleHeader).getByRole("link", { name: "Manager's Panel" })).toHaveAttribute("href", "/manager");
+  });
+
   it.skip("opens the staff-only live chat room route", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-12T18:05:00-05:00"));
@@ -5573,6 +5584,7 @@ describe("post-login operations app", () => {
     const developerPanelLink = within(profileTitleHeader).getByRole("link", { name: "Developer Panel" });
     expect(developerPanelLink).toHaveAttribute("href", "/manager");
     expect(screen.queryByRole("link", { name: "Manager's Panel" })).not.toBeInTheDocument();
+    expect(Array.from(profileTitleHeader.querySelectorAll(".manager-home-top-action")).map((action) => action.textContent?.trim())).toEqual(["Live Chat", "Developer Panel", "Log Out"]);
 
     const homeOverview = screen.getByLabelText("Developer home overview");
     const profileOverview = within(homeOverview).getByLabelText("Developer profile overview");
