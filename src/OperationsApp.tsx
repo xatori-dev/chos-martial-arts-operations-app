@@ -53,6 +53,7 @@ import studentsLauncherIcon from "./assets/manager-icons/Students.webp";
 import { beltReadinessItems } from "./data";
 import { buildOperationsBackupSnapshot, makeOperationsBackupFilename, type ProductionMessagingSetupBackup } from "./operationsBackup";
 import { buildReportsCommandCenter, getMerchandiseReorderPoint, getMerchandiseTargetStock, isMissedClassFollowUpDue, isQueuedMessageDeliverable, type ReportsAttendanceGapCandidate, type ReportsCelebrationCandidate, type ReportsClassReminderCandidate, type ReportsDirectMessageReplyCandidate, type ReportsNewStudentCheckInCandidate, type ReportsPriorityAction, type ReportsProfileUpdateCandidate } from "./operationsReports";
+import { buildLiveChatNotificationPlan, enabledWebPushNotificationChannels } from "./notificationRouting";
 import { publicAsset } from "./appAssets";
 import {
   fetchLiveChatMessages,
@@ -765,7 +766,8 @@ function buildWebPushSubscriptionPayload(
   notificationUrl: string
 ) {
   const subscription = parsePushSubscriptionJson(settings.pushSubscriptionJson);
-  if (!subscription || !settings.pushSubscriptionEndpoint?.trim()) return undefined;
+  const notificationChannels = enabledWebPushNotificationChannels(settings);
+  if (!subscription || !settings.pushSubscriptionEndpoint?.trim() || !notificationChannels.length) return undefined;
   return {
     schemaVersion: "chos-web-push-subscription.v1",
     provider: "web-push",
@@ -777,6 +779,7 @@ function buildWebPushSubscriptionPayload(
           role: accountRole
         }
       : undefined,
+    notificationChannels,
     notificationUrl,
     pushSubscribedAt: settings.pushSubscribedAt,
     subscription
@@ -786,6 +789,11 @@ function buildWebPushSubscriptionPayload(
 function messagesNotificationUrl() {
   if (typeof window === "undefined") return "messages";
   return new URL(`${import.meta.env.BASE_URL}messages`, window.location.origin).toString();
+}
+
+function liveChatNotificationUrl() {
+  if (typeof window === "undefined") return "live-chat";
+  return new URL(`${import.meta.env.BASE_URL}live-chat`, window.location.origin).toString();
 }
 
 function appHomeNotificationUrl() {
@@ -818,6 +826,8 @@ function readHomeMessageNotificationSettings(email?: string): MessageNotificatio
       mentionNotificationsEnabled: Boolean(parsed?.mentionNotificationsEnabled),
       browserPermission: parsed?.browserPermission,
       lastBrowserNotifiedDirectMessageAt: typeof parsed?.lastBrowserNotifiedDirectMessageAt === "string" ? parsed.lastBrowserNotifiedDirectMessageAt : undefined,
+      lastBrowserNotifiedLiveChatAt: typeof parsed?.lastBrowserNotifiedLiveChatAt === "string" ? parsed.lastBrowserNotifiedLiveChatAt : undefined,
+      lastBrowserNotifiedMentionAt: typeof parsed?.lastBrowserNotifiedMentionAt === "string" ? parsed.lastBrowserNotifiedMentionAt : undefined,
       pushPublicKey: cleanNotificationSettingString(parsed?.pushPublicKey),
       pushSubscriptionEndpoint: cleanNotificationSettingString(parsed?.pushSubscriptionEndpoint),
       pushSubscriptionJson: cleanNotificationSettingString(parsed?.pushSubscriptionJson),
@@ -4528,7 +4538,7 @@ function LiveChatMessageLine({ message }: { message: LiveChatMessage }) {
 }
 
 function LiveChatPage() {
-  const { logout, managerAccountAccess, session, students } = useAppState();
+  const { logout, managerAccountAccess, messageNotificationSettings, session, students, updateMessageNotificationSettings } = useAppState();
   const isManagerOwner = managerAccountAccess.isManagerOwner;
   const isDeveloper = managerAccountAccess.isDeveloper;
   const profileAvatarPath = profileAvatarPathForSession(session?.email);
@@ -4543,6 +4553,7 @@ function LiveChatPage() {
   const [isSending, setIsSending] = useState(false);
   const [isLiveReady, setIsLiveReady] = useState(() => getLiveChatAvailability().available);
   const [liveStatusMessage, setLiveStatusMessage] = useState(() => getLiveChatAvailability().message);
+  const [liveChatNotificationPermission, setLiveChatNotificationPermission] = useState(() => getBrowserNotificationPermission());
   const [sendError, setSendError] = useState("");
   const [isRosterCollapsed, setIsRosterCollapsed] = useState(false);
   const [localPreviewMessages, setLocalPreviewMessages] = useState<LiveChatMessage[]>([]);
@@ -4556,6 +4567,9 @@ function LiveChatPage() {
   const messageFeedRef = useRef<HTMLOListElement | null>(null);
   const roomTabsScrollRef = useRef<HTMLDivElement | null>(null);
   const isMessageFeedPinnedToBottomRef = useRef(true);
+  const liveChatNotificationSettingsRef = useRef(messageNotificationSettings);
+  const liveChatNotificationPermissionRef = useRef(liveChatNotificationPermission);
+  const liveChatProfileNameRef = useRef(managerProfile.name);
   const rosterMembers = useMemo(() => buildLiveChatRoster(students, managerProfile, isManagerOwner, isDeveloper, profileAvatarPath), [isDeveloper, isManagerOwner, managerProfile, profileAvatarPath, students]);
   const profileActionPhoto = managerProfile.photoDataUrl ?? publicAsset(profileAvatarPath);
   const sessionPreviewMessages = useMemo(() => {
@@ -4601,6 +4615,47 @@ function LiveChatPage() {
   }, [readChatProfile, session?.email]);
 
   useEffect(() => {
+    liveChatNotificationSettingsRef.current = messageNotificationSettings;
+  }, [messageNotificationSettings]);
+
+  useEffect(() => {
+    liveChatNotificationPermissionRef.current = liveChatNotificationPermission;
+  }, [liveChatNotificationPermission]);
+
+  useEffect(() => {
+    liveChatProfileNameRef.current = managerProfile.name;
+  }, [managerProfile.name]);
+
+  useNotificationDevicePermissionSync({
+    settings: messageNotificationSettings,
+    setPermission: setLiveChatNotificationPermission,
+    updateSettings: updateMessageNotificationSettings
+  });
+
+  const notifyIncomingLiveChatMessage = useCallback((message: LiveChatMessage) => {
+    const plan = buildLiveChatNotificationPlan({
+      message,
+      settings: liveChatNotificationSettingsRef.current,
+      browserPermission: liveChatNotificationPermissionRef.current,
+      currentUserId: readSupabaseAuthSession()?.userId,
+      profileName: liveChatProfileNameRef.current,
+      notificationUrl: liveChatNotificationUrl()
+    });
+    if (!plan) return;
+
+    liveChatNotificationSettingsRef.current = {
+      ...liveChatNotificationSettingsRef.current,
+      ...plan.settingsPatch
+    };
+    updateMessageNotificationSettings(plan.settingsPatch);
+    void showDirectMessageBrowserNotification(plan.title, {
+      ...plan.options,
+      icon: publicAsset("682e95109aa21_chos-logo.png"),
+      badge: publicAsset("682e95109aa21_chos-logo.png")
+    }).catch(() => undefined);
+  }, [updateMessageNotificationSettings]);
+
+  useEffect(() => {
     const availability = getLiveChatAvailability();
     setIsLiveReady(availability.available);
     setLiveStatusMessage(availability.message);
@@ -4628,7 +4683,10 @@ function LiveChatPage() {
     }, 0);
 
     const subscription = subscribeToLiveChatInserts({
-      onMessage: (message) => setChatMessages((currentMessages) => appendUniqueLiveChatMessage(currentMessages, message)),
+      onMessage: (message) => {
+        setChatMessages((currentMessages) => appendUniqueLiveChatMessage(currentMessages, message));
+        notifyIncomingLiveChatMessage(message);
+      },
       onStatus: (status, message) => {
         if (status === "SUBSCRIBED") {
           setIsLiveReady(true);
@@ -4644,7 +4702,7 @@ function LiveChatPage() {
       window.clearTimeout(loadTimer);
       subscription.cleanup();
     };
-  }, []);
+  }, [notifyIncomingLiveChatMessage]);
 
   useLayoutEffect(() => {
     const feed = messageFeedRef.current;

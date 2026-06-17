@@ -16,6 +16,7 @@ const validSubscriptionPayload = {
     email: "manager123@chos.prototype",
     role: "staff"
   },
+  notificationChannels: ["messages", "liveChats", "mentions"],
   notificationUrl: "https://cho.example.com/chos-martial-arts-prototype/messages",
   pushSubscribedAt: "2026-06-03T14:55:00.000Z",
   subscription: {
@@ -39,6 +40,7 @@ describe("web push contract", () => {
     expect(result.errors).toEqual([]);
     expect(result.subscription?.endpoint).toBe("https://fcm.googleapis.com/fcm/send/subscription-token");
     expect(result.notificationUrl).toBe("https://cho.example.com/chos-martial-arts-prototype/messages");
+    expect(result.notificationChannels).toEqual(["messages", "liveChats", "mentions"]);
     expect(result.requestedBy).toEqual({
       email: "manager123@chos.prototype",
       role: "staff"
@@ -121,6 +123,7 @@ describe("web push contract", () => {
       url: "https://cho.example.com/chos-martial-arts-prototype/messages?thread=student-ari",
       tag: "chos-thread-student-ari",
       threadId: "student-ari",
+      channel: "messages",
       unreadCount: 3
     }, {
       allowedOrigin: "https://cho.example.com",
@@ -141,6 +144,7 @@ describe("web push contract", () => {
       schemaVersion: "chos-web-push-notification.v1",
       title: "New message from Mina Nguyen",
       url: "https://cho.example.com/chos-martial-arts-prototype/messages?thread=student-ari",
+      channel: "messages",
       unreadCount: 3
     }));
     expect(plan.requests).toEqual([
@@ -157,6 +161,55 @@ describe("web push contract", () => {
             auth: "browser-push-auth-secret"
           }
         })
+      })
+    ]);
+  });
+
+  it("filters private server Web Push delivery by stored subscription channel preferences", () => {
+    const liveChatOnlySubscription = {
+      ...validSubscriptionPayload,
+      notificationChannels: ["liveChats"]
+    };
+    const messagesPlan = buildChoWebPushDeliveryPlan([liveChatOnlySubscription], {
+      title: "New message from Mina Nguyen",
+      body: "Can Ari come to the 5 PM class today?",
+      channel: "messages"
+    }, {
+      allowedOrigin: "https://cho.example.com",
+      allowedPathPrefix: "/chos-martial-arts-prototype/",
+      fallbackPath: "/chos-martial-arts-prototype/messages",
+      targetAccount: {
+        email: "manager123@chos.prototype",
+        role: "staff"
+      },
+      now: 1780513200000
+    });
+    const liveChatPlan = buildChoWebPushDeliveryPlan([liveChatOnlySubscription], {
+      title: "New Live Chat from Coach Jordan",
+      body: "Please check the front desk.",
+      channel: "liveChats"
+    }, {
+      allowedOrigin: "https://cho.example.com",
+      allowedPathPrefix: "/chos-martial-arts-prototype/",
+      fallbackPath: "/chos-martial-arts-prototype/live-chat",
+      targetAccount: {
+        email: "manager123@chos.prototype",
+        role: "staff"
+      },
+      now: 1780513200000
+    });
+
+    expect(messagesPlan.ok).toBe(false);
+    expect(messagesPlan.rejected).toEqual([
+      expect.objectContaining({
+        reasons: ["Push subscription is not opted in to messages notifications."]
+      })
+    ]);
+    expect(messagesPlan.requests).toEqual([]);
+    expect(liveChatPlan.ok).toBe(true);
+    expect(liveChatPlan.requests).toEqual([
+      expect.objectContaining({
+        notificationPayload: expect.objectContaining({ channel: "liveChats" })
       })
     ]);
   });

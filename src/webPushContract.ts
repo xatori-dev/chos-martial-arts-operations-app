@@ -4,8 +4,10 @@ const pushProvider = "web-push";
 const pushDeliveryMode = "server-push";
 const credentialFieldPattern = /(?:VAPID_PRIVATE_KEY|PRIVATE_KEY|AUTH_TOKEN|API_SECRET|SECRET|PASSWORD|CREDENTIAL|TWILIO_)/i;
 const supportedChoAccountRoles = new Set(["staff", "student", "guardian"]);
+const supportedNotificationChannels = new Set(["messages", "liveChats", "mentions"]);
 
 type ChoWebPushAccountRole = "staff" | "student" | "guardian";
+export type ChoWebPushNotificationChannel = "messages" | "liveChats" | "mentions";
 
 export type WebPushContractOptions = {
   allowedOrigin: string;
@@ -41,6 +43,7 @@ export type ChoWebPushSubscriptionValidationResult = {
     email: string;
     role: "staff" | "student" | "guardian";
   };
+  notificationChannels?: ChoWebPushNotificationChannel[];
   notificationUrl?: string;
   subscription?: ChoWebPushSubscription;
 };
@@ -51,6 +54,7 @@ export type ChoWebPushNotificationInput = {
   url?: string;
   tag?: string;
   threadId?: string;
+  channel?: ChoWebPushNotificationChannel;
   unreadCount?: number;
   icon?: string;
   badge?: string;
@@ -63,6 +67,7 @@ export type ChoWebPushNotificationPayload = {
   url: string;
   tag: string;
   threadId?: string;
+  channel?: ChoWebPushNotificationChannel;
   unreadCount?: number;
   icon?: string;
   badge?: string;
@@ -186,6 +191,22 @@ function normalizedEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
+function notificationChannelLabel(channel: ChoWebPushNotificationChannel) {
+  return channel;
+}
+
+function normalizeNotificationChannel(value: unknown) {
+  return typeof value === "string" && supportedNotificationChannels.has(value) ? value as ChoWebPushNotificationChannel : undefined;
+}
+
+function normalizeNotificationChannels(value: unknown): ChoWebPushNotificationChannel[] {
+  if (!Array.isArray(value)) return ["messages"];
+  const channels = value
+    .map(normalizeNotificationChannel)
+    .filter((channel): channel is ChoWebPushNotificationChannel => Boolean(channel));
+  return [...new Set(channels)];
+}
+
 function subscriptionId(payload: unknown, fallback: string) {
   if (!isRecord(payload)) return fallback;
   const subscription = payload.subscription;
@@ -217,6 +238,8 @@ export function validateWebPushSubscriptionPayloadForServer(payload: unknown, op
   if (payload.provider !== pushProvider) errors.push(`Web Push payload provider must be ${pushProvider}.`);
   if (payload.deliveryMode !== pushDeliveryMode) errors.push(`Web Push payload deliveryMode must be ${pushDeliveryMode}.`);
   if (!stringField(payload, "generatedAt")) errors.push("Web Push payload generatedAt timestamp is required.");
+  const notificationChannels = normalizeNotificationChannels(payload.notificationChannels);
+  if (!notificationChannels.length) errors.push("Web Push payload must include at least one supported notification channel.");
 
   const requestedBy = payload.requestedBy;
   if (!isRecord(requestedBy) || !stringField(requestedBy, "email")) errors.push("Web Push payload must include authenticated manager identity.");
@@ -265,6 +288,7 @@ export function validateWebPushSubscriptionPayloadForServer(payload: unknown, op
       email: stringField(requestedBy as Record<string, unknown>, "email"),
       role: requestedByRole as "staff" | "student" | "guardian"
     },
+    notificationChannels,
     notificationUrl,
     subscription: {
       endpoint,
@@ -340,6 +364,7 @@ export function buildChoWebPushDeliveryReconciliationPlan(results: readonly ChoW
 export function buildChoWebPushNotificationPayload(input: ChoWebPushNotificationInput, options: WebPushNotificationPayloadOptions): ChoWebPushNotificationPayload {
   const unreadCount = validUnreadCount(input.unreadCount);
   const threadId = input.threadId?.trim();
+  const channel = normalizeNotificationChannel(input.channel);
   const icon = input.icon ? scopedUrl(input.icon, options) : undefined;
   const badge = input.badge ? scopedUrl(input.badge, options) : undefined;
   return {
@@ -349,6 +374,7 @@ export function buildChoWebPushNotificationPayload(input: ChoWebPushNotification
     url: scopedUrl(input.url, options),
     tag: input.tag?.trim() || "chos-message",
     ...(threadId ? { threadId } : {}),
+    ...(channel ? { channel } : {}),
     ...(unreadCount !== undefined ? { unreadCount } : {}),
     ...(icon ? { icon } : {}),
     ...(badge ? { badge } : {})
@@ -387,6 +413,9 @@ export function buildChoWebPushDeliveryPlan(subscriptionPayloads: unknown, input
           normalizedEmail(validation.requestedBy.email) === normalizedEmail(options.targetAccount.email) &&
           validation.requestedBy.role === options.targetAccount.role;
         if (!accountMatches) reasons.push("Push subscription does not belong to the target Cho account.");
+      }
+      if (input.channel && validation.notificationChannels && !validation.notificationChannels.includes(input.channel)) {
+        reasons.push(`Push subscription is not opted in to ${notificationChannelLabel(input.channel)} notifications.`);
       }
       if (validation.subscription.expirationTime !== undefined && validation.subscription.expirationTime !== null && validation.subscription.expirationTime <= now) {
         reasons.push("Push subscription has expired.");

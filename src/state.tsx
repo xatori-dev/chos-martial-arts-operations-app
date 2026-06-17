@@ -712,6 +712,8 @@ function normalizeMessageNotificationSettings(value: unknown): MessageNotificati
     ...(cleanNotificationStringList(settings.seenDirectMessageIds) ? { seenDirectMessageIds: cleanNotificationStringList(settings.seenDirectMessageIds) } : {}),
     ...(cleanNotificationString(settings.lastBrowserNotifiedAt) ? { lastBrowserNotifiedAt: cleanNotificationString(settings.lastBrowserNotifiedAt) } : {}),
     ...(cleanNotificationString(settings.lastBrowserNotifiedDirectMessageAt) ? { lastBrowserNotifiedDirectMessageAt: cleanNotificationString(settings.lastBrowserNotifiedDirectMessageAt) } : {}),
+    ...(cleanNotificationString(settings.lastBrowserNotifiedLiveChatAt) ? { lastBrowserNotifiedLiveChatAt: cleanNotificationString(settings.lastBrowserNotifiedLiveChatAt) } : {}),
+    ...(cleanNotificationString(settings.lastBrowserNotifiedMentionAt) ? { lastBrowserNotifiedMentionAt: cleanNotificationString(settings.lastBrowserNotifiedMentionAt) } : {}),
     ...(cleanNotificationString(settings.pushPublicKey) ? { pushPublicKey: cleanNotificationString(settings.pushPublicKey) } : {}),
     ...(cleanNotificationString(settings.pushSubscriptionEndpoint) ? { pushSubscriptionEndpoint: cleanNotificationString(settings.pushSubscriptionEndpoint) } : {}),
     ...(cleanNotificationString(settings.pushSubscriptionJson) ? { pushSubscriptionJson: cleanNotificationString(settings.pushSubscriptionJson) } : {}),

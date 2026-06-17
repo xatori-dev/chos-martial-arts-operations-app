@@ -12242,6 +12242,7 @@ describe("post-login operations app", () => {
         schemaVersion: "chos-web-push-subscription.v1",
         provider: "web-push",
         deliveryMode: "server-push",
+        notificationChannels: ["messages"],
         requestedBy: expect.objectContaining({ email: "manager123@chos.prototype" }),
         subscription: expect.objectContaining({ endpoint: "https://push.example.test/subscriptions/device-1" })
       }));
@@ -12273,7 +12274,9 @@ describe("post-login operations app", () => {
       value: fetchMock
     });
     window.localStorage.setItem("chos.operations.notificationSettings.v1", JSON.stringify({
-      browserNotificationsEnabled: true,
+      browserNotificationsEnabled: false,
+      liveChatNotificationsEnabled: true,
+      mentionNotificationsEnabled: true,
       browserPermission: "granted",
       pushPublicKey: "BEl6PDiRfYyIRLr1YWkN2v6k3cGv2GvZcK2nXrjZ4g6rPQu4xNfQb3-V6X0c0fPKHM8xojN6F0fJgQI3PNe7RDs",
       pushSubscriptionEndpoint: "https://push.example.test/subscriptions/device-1",
@@ -12304,6 +12307,7 @@ describe("post-login operations app", () => {
       schemaVersion: "chos-web-push-subscription.v1",
       provider: "web-push",
       deliveryMode: "server-push",
+      notificationChannels: ["liveChats", "mentions"],
       requestedBy: expect.objectContaining({ email: "manager123@chos.prototype" }),
       subscription: expect.objectContaining({ endpoint: "https://push.example.test/subscriptions/device-1" })
     }));

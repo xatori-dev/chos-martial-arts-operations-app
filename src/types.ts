@@ -426,6 +426,8 @@ export interface MessageNotificationSettings {
   seenDirectMessageIds?: string[];
   lastBrowserNotifiedAt?: string;
   lastBrowserNotifiedDirectMessageAt?: string;
+  lastBrowserNotifiedLiveChatAt?: string;
+  lastBrowserNotifiedMentionAt?: string;
   pushPublicKey?: string;
   pushSubscriptionEndpoint?: string;
   pushSubscriptionJson?: string;
