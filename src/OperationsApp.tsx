@@ -70,7 +70,7 @@ import {
 } from "./beltCase";
 import { childUsernameFromName, normalizeChildUsername } from "./childAccountUtils";
 import { beltRanks } from "./data";
-import { getSupabaseBrowserConfig, isSupabaseAuthConfigured, readSupabaseAuthSession } from "./supabaseAccounts";
+import { createSupabaseManagedAccount, getSupabaseBrowserConfig, isSupabaseAuthConfigured, readSupabaseAuthSession } from "./supabaseAccounts";
 import {
   readManagerProfile,
   readGuardianProfile,
@@ -9058,27 +9058,430 @@ function ManagerLauncherPage() {
   );
 }
 
+type CreateAccountMode = "staff" | "student" | "parent";
+
+const createdAccountPasswordPolicyText = "Use at least 12 characters with uppercase, lowercase, a number, and a symbol.";
+const createAccountStaffAccessOptions: { key: ManagerAccessKey; label: string; detail: string }[] = [
+  { key: "dashboard", label: "Dashboard", detail: "Calendar and daily overview" },
+  { key: "messages", label: "Messages", detail: "Live chat and text tools" },
+  { key: "students", label: "Students", detail: "Roster and student records" },
+  { key: "classes", label: "Classes", detail: "Class templates" },
+  { key: "studyGuide", label: "Study Guide", detail: "Student study materials" },
+  { key: "events", label: "Events", detail: "Studio events" },
+  { key: "scheduling", label: "Schedule", detail: "Class calendar" },
+  { key: "merchandise", label: "Merchandise", detail: "Inventory tools" },
+  { key: "videos", label: "Videos", detail: "Training video library" },
+  { key: "reports", label: "Reports", detail: "Operations reports" }
+];
+
+function isStrongCreatedAccountPassword(password: string) {
+  return password.length >= 12 && /[a-z]/.test(password) && /[A-Z]/.test(password) && /\d/.test(password) && /[^A-Za-z0-9]/.test(password);
+}
+
+function normalizeCreateUsername(username: string) {
+  return username
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ".")
+    .replace(/[^a-z0-9._-]+/g, "")
+    .replace(/^[._-]+|[._-]+$/g, "");
+}
+
+const defaultStaffAccess = createAccountStaffAccessOptions.map((option) => option.key);
+
 function CreateAccountsPage() {
+  const {
+    accounts,
+    addOperationsStudent,
+    createGuardianAccount,
+    createManagedAccount,
+    managedAccounts,
+    managerAccountAccess,
+    showToast,
+    updateManagedAccountStatus
+  } = useAppState();
+  const [mode, setMode] = useState<CreateAccountMode>("staff");
+  const [formMessage, setFormMessage] = useState("");
+  const [staffForm, setStaffForm] = useState({
+    displayName: "",
+    username: "",
+    password: "",
+    confirmPassword: "",
+    email: "",
+    phone: "",
+    title: "Instructor",
+    notes: "",
+    access: defaultStaffAccess
+  });
+  const [studentForm, setStudentForm] = useState({
+    fullName: "",
+    username: "",
+    password: "",
+    confirmPassword: "",
+    studentEmail: "",
+    guardianName: "",
+    guardianPhone: "",
+    guardianEmail: "",
+    program: "Youth Taekwondo",
+    beltRank: "White",
+    notes: ""
+  });
+  const [parentForm, setParentForm] = useState({
+    displayName: "",
+    username: "",
+    password: "",
+    confirmPassword: "",
+    email: "",
+    phone: "",
+    notes: ""
+  });
+
+  if (!managerAccountAccess.canCreateAccounts) return <Navigate to="/manager" replace />;
+
+  const syncSupabaseAccount = (account: {
+    displayName: string;
+    username: string;
+    password: string;
+    role: AccountRole;
+    email: string;
+    phone?: string;
+    title?: string;
+    notes?: string;
+    access?: ManagerAccessKey[];
+    studentId?: string;
+  }) => {
+    if (!isSupabaseAuthConfigured()) return;
+    if (!readSupabaseAuthSession()) {
+      showToast("Account created locally. Sign into Supabase Manager123 to sync live accounts.");
+      return;
+    }
+    void createSupabaseManagedAccount({ ...account, status: "active" }).then((result) => {
+      if (result.status === "ok") {
+        showToast("Account synced to Supabase.");
+      } else if (result.status === "error") {
+        showToast(`Account created locally. ${result.message}`);
+      }
+    });
+  };
+
+  const validatePasswordFields = (password: string, confirmPassword: string) => {
+    const cleanedPassword = password.trim();
+    if (!cleanedPassword || !confirmPassword.trim()) return "Enter and confirm a password.";
+    if (cleanedPassword !== confirmPassword.trim()) return "Passwords must match.";
+    if (!isStrongCreatedAccountPassword(cleanedPassword)) return createdAccountPasswordPolicyText;
+    return "";
+  };
+
+  const showFormMessage = (message: string) => {
+    setFormMessage(message);
+  };
+
+  const createStaff = (event: FormEvent) => {
+    event.preventDefault();
+    const passwordError = validatePasswordFields(staffForm.password, staffForm.confirmPassword);
+    if (passwordError) {
+      showFormMessage(passwordError);
+      return;
+    }
+    const username = normalizeCreateUsername(staffForm.username);
+    const account = createManagedAccount({
+      displayName: staffForm.displayName,
+      username,
+      password: staffForm.password,
+      role: "staff",
+      email: staffForm.email,
+      phone: staffForm.phone,
+      title: staffForm.title,
+      notes: staffForm.notes,
+      access: staffForm.access
+    });
+    if (!account) {
+      showFormMessage("Enter a unique staff username and profile name.");
+      return;
+    }
+    setFormMessage("");
+    setStaffForm({ displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "", title: "Instructor", notes: "", access: defaultStaffAccess });
+    showToast(`${account.displayName} staff account created.`);
+    syncSupabaseAccount({
+      displayName: account.displayName,
+      username: account.username,
+      password: account.password,
+      role: "staff",
+      email: account.email ?? `${account.username}@chos.prototype`,
+      phone: account.phone,
+      title: account.title,
+      notes: account.notes,
+      access: account.access
+    });
+  };
+
+  const createStudent = (event: FormEvent) => {
+    event.preventDefault();
+    const passwordError = validatePasswordFields(studentForm.password, studentForm.confirmPassword);
+    if (passwordError) {
+      showFormMessage(passwordError);
+      return;
+    }
+    const username = normalizeCreateUsername(studentForm.username);
+    const student = addOperationsStudent({
+      fullName: studentForm.fullName,
+      studentEmail: studentForm.studentEmail,
+      guardianName: studentForm.guardianName,
+      guardianPhone: studentForm.guardianPhone,
+      guardianEmail: studentForm.guardianEmail,
+      program: studentForm.program,
+      status: "Active",
+      beltRank: studentForm.beltRank,
+      notes: studentForm.notes
+    });
+    if (!student) {
+      showFormMessage("Enter the student name, email, guardian phone, and belt rank.");
+      return;
+    }
+    const studentName = fullName(student);
+    const account = createManagedAccount({
+      displayName: studentName,
+      username,
+      password: studentForm.password,
+      role: "student",
+      email: student.email,
+      phone: student.phone,
+      title: `${student.beltRank} Belt Student`,
+      notes: studentForm.notes,
+      access: [],
+      studentId: student.id
+    });
+    if (!account) {
+      showFormMessage("Enter a unique student username linked to an active student.");
+      return;
+    }
+    setFormMessage("");
+    setStudentForm({ fullName: "", username: "", password: "", confirmPassword: "", studentEmail: "", guardianName: "", guardianPhone: "", guardianEmail: "", program: "Youth Taekwondo", beltRank: "White", notes: "" });
+    showToast(`${account.displayName} student account created.`);
+    syncSupabaseAccount({
+      displayName: account.displayName,
+      username: account.username,
+      password: account.password,
+      role: "student",
+      email: account.email ?? `${account.username}@chos.prototype`,
+      phone: account.phone,
+      title: account.title,
+      notes: account.notes,
+      access: [],
+      studentId: account.studentId
+    });
+  };
+
+  const createParent = (event: FormEvent) => {
+    event.preventDefault();
+    const passwordError = validatePasswordFields(parentForm.password, parentForm.confirmPassword);
+    if (passwordError) {
+      showFormMessage(passwordError);
+      return;
+    }
+    const username = normalizeCreateUsername(parentForm.username);
+    const account = createGuardianAccount({
+      displayName: parentForm.displayName,
+      username,
+      password: parentForm.password,
+      email: parentForm.email,
+      phone: parentForm.phone,
+      notes: parentForm.notes
+    });
+    if (!account) {
+      showFormMessage("Enter a unique parent username and profile name.");
+      return;
+    }
+    setFormMessage("");
+    setParentForm({ displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "", notes: "" });
+    showToast(`${account.displayName ?? account.email} parent account created.`);
+    syncSupabaseAccount({
+      displayName: account.displayName ?? account.email,
+      username: account.email,
+      password: account.password ?? parentForm.password,
+      role: "guardian",
+      email: account.contactEmail ?? `${account.email}@chos.prototype`,
+      phone: account.phone,
+      notes: account.notes,
+      access: []
+    });
+  };
+
+  const toggleStaffAccess = (key: ManagerAccessKey) => {
+    setStaffForm((current) => ({
+      ...current,
+      access: current.access.includes(key) ? current.access.filter((item) => item !== key) : [...current.access, key]
+    }));
+  };
+
+  const updateAccountStatus = (account: ManagedAccount, status: ManagedAccount["status"]) => {
+    const updated = updateManagedAccountStatus(account.id, status);
+    if (!updated) {
+      showToast("Unable to update account status.");
+      return;
+    }
+    showToast(`${account.displayName} account ${status === "active" ? "reactivated" : "deactivated"}.`);
+  };
+
+  const parentAccounts = accounts.filter((account) => normalizeCreateUsername(account.email) && account.password?.trim() && account.role === "guardian");
+  const activeManagedAccounts = managedAccounts.filter((account) => account.status !== "inactive");
+
   return (
     <OperationsPage
       className="operations-page--create-accounts"
       title="Create Accounts"
-      text="Custom staff accounts are retired. Manager123 and the gated Dev123 account are the only supported app sign-ins."
+      text="Create local sign-in credentials for staff, students, and parents. Manager and Developer are the only accounts that can open this creator."
     >
       <div className="operations-stats create-account-stats">
-        <StatCard label="Manager accounts" value={1} icon={<ShieldCheck />} />
-        <StatCard label="Staff accounts" value={0} icon={<UserPlus />} />
+        <StatCard label="Owner accounts" value={2} icon={<ShieldCheck />} />
+        <StatCard label="Managed accounts" value={managedAccounts.length} icon={<UserPlus />} />
+        <StatCard label="Parent accounts" value={parentAccounts.length} icon={<Users />} />
       </div>
 
-      <section className="operations-panel create-account-directory" aria-label="Retired custom accounts">
+      <section className="operations-panel create-account-builder" aria-label="Create account panel">
         <div className="student-roster-head">
           <div>
-            <h2>Custom Accounts Retired</h2>
-            <p>Saved staff usernames are ignored at login and cleared during startup cleanup.</p>
+            <h2>Creator</h2>
+            <p>Choose the role, set the username and password, then hand the credentials to the family or staff member.</p>
           </div>
-          <span>0 accounts</span>
         </div>
-        <p className="operations-note">Use Manager123 for owner testing or enable Dev123 for developer diagnostics.</p>
+        <div className="create-account-mode-tabs" role="group" aria-label="Account type">
+          {(["staff", "student", "parent"] as const).map((item) => (
+            <button key={item} type="button" aria-pressed={mode === item} onClick={() => { setMode(item); setFormMessage(""); }}>
+              {item === "staff" ? <UserPlus size={16} /> : item === "student" ? <Award size={16} /> : <Users size={16} />}
+              {item === "staff" ? "Staff" : item === "student" ? "Student" : "Parent"}
+            </button>
+          ))}
+        </div>
+        {formMessage && <p className="operations-note">{formMessage}</p>}
+
+        {mode === "staff" && (
+          <form className="create-account-form" aria-label="Create staff account" onSubmit={createStaff}>
+            <div className="student-form-grid">
+              <label>Staff full name<input value={staffForm.displayName} onChange={(event) => setStaffForm({ ...staffForm, displayName: event.target.value })} /></label>
+              <label>Staff username<input autoComplete="username" value={staffForm.username} onChange={(event) => setStaffForm({ ...staffForm, username: event.target.value })} /></label>
+              <label>Staff password<input type="password" autoComplete="new-password" value={staffForm.password} onChange={(event) => setStaffForm({ ...staffForm, password: event.target.value })} /></label>
+              <label>Confirm staff password<input type="password" autoComplete="new-password" value={staffForm.confirmPassword} onChange={(event) => setStaffForm({ ...staffForm, confirmPassword: event.target.value })} /></label>
+              <label>Staff email<input type="email" value={staffForm.email} onChange={(event) => setStaffForm({ ...staffForm, email: event.target.value })} /></label>
+              <label>Staff phone<input value={staffForm.phone} onChange={(event) => setStaffForm({ ...staffForm, phone: event.target.value })} /></label>
+              <label>Staff title<input value={staffForm.title} onChange={(event) => setStaffForm({ ...staffForm, title: event.target.value })} /></label>
+            </div>
+            <fieldset className="create-account-access-grid">
+              <legend>Staff access</legend>
+              {createAccountStaffAccessOptions.map((option) => (
+                <label key={option.key} className="create-account-access-option">
+                  <input type="checkbox" checked={staffForm.access.includes(option.key)} onChange={() => toggleStaffAccess(option.key)} />
+                  <span><strong>{option.label} access</strong><small>{option.detail}</small></span>
+                </label>
+              ))}
+            </fieldset>
+            <label className="create-account-notes">Staff notes<textarea value={staffForm.notes} onChange={(event) => setStaffForm({ ...staffForm, notes: event.target.value })} /></label>
+            <div className="student-editor-actions">
+              <button type="submit"><CheckCircle2 size={18} /> Create Staff Account</button>
+            </div>
+          </form>
+        )}
+
+        {mode === "student" && (
+          <form className="create-account-form" aria-label="Create student account" onSubmit={createStudent}>
+            <div className="student-form-grid">
+              <label>Student full name<input value={studentForm.fullName} onChange={(event) => setStudentForm({ ...studentForm, fullName: event.target.value })} /></label>
+              <label>Student username<input autoComplete="username" value={studentForm.username} onChange={(event) => setStudentForm({ ...studentForm, username: event.target.value })} /></label>
+              <label>Student password<input type="password" autoComplete="new-password" value={studentForm.password} onChange={(event) => setStudentForm({ ...studentForm, password: event.target.value })} /></label>
+              <label>Confirm student password<input type="password" autoComplete="new-password" value={studentForm.confirmPassword} onChange={(event) => setStudentForm({ ...studentForm, confirmPassword: event.target.value })} /></label>
+              <label>Student email<input type="email" value={studentForm.studentEmail} onChange={(event) => setStudentForm({ ...studentForm, studentEmail: event.target.value })} /></label>
+              <label>Parent/guardian phone<input value={studentForm.guardianPhone} onChange={(event) => setStudentForm({ ...studentForm, guardianPhone: event.target.value })} /></label>
+              <label>Parent/guardian name<input value={studentForm.guardianName} onChange={(event) => setStudentForm({ ...studentForm, guardianName: event.target.value })} /></label>
+              <label>Parent/guardian email<input type="email" value={studentForm.guardianEmail} onChange={(event) => setStudentForm({ ...studentForm, guardianEmail: event.target.value })} /></label>
+              <label>Program<input value={studentForm.program} onChange={(event) => setStudentForm({ ...studentForm, program: event.target.value })} /></label>
+              <label>Belt rank<input value={studentForm.beltRank} onChange={(event) => setStudentForm({ ...studentForm, beltRank: event.target.value })} /></label>
+            </div>
+            <label className="create-account-notes">Student notes<textarea value={studentForm.notes} onChange={(event) => setStudentForm({ ...studentForm, notes: event.target.value })} /></label>
+            <div className="student-editor-actions">
+              <button type="submit"><CheckCircle2 size={18} /> Create Student Account</button>
+            </div>
+          </form>
+        )}
+
+        {mode === "parent" && (
+          <form className="create-account-form" aria-label="Create parent account" onSubmit={createParent}>
+            <div className="student-form-grid">
+              <label>Parent full name<input value={parentForm.displayName} onChange={(event) => setParentForm({ ...parentForm, displayName: event.target.value })} /></label>
+              <label>Parent username<input autoComplete="username" value={parentForm.username} onChange={(event) => setParentForm({ ...parentForm, username: event.target.value })} /></label>
+              <label>Parent password<input type="password" autoComplete="new-password" value={parentForm.password} onChange={(event) => setParentForm({ ...parentForm, password: event.target.value })} /></label>
+              <label>Confirm parent password<input type="password" autoComplete="new-password" value={parentForm.confirmPassword} onChange={(event) => setParentForm({ ...parentForm, confirmPassword: event.target.value })} /></label>
+              <label>Parent email<input type="email" value={parentForm.email} onChange={(event) => setParentForm({ ...parentForm, email: event.target.value })} /></label>
+              <label>Parent phone<input value={parentForm.phone} onChange={(event) => setParentForm({ ...parentForm, phone: event.target.value })} /></label>
+            </div>
+            <label className="create-account-notes">Parent notes<textarea value={parentForm.notes} onChange={(event) => setParentForm({ ...parentForm, notes: event.target.value })} /></label>
+            <div className="student-editor-actions">
+              <button type="submit"><CheckCircle2 size={18} /> Create Parent Account</button>
+            </div>
+          </form>
+        )}
+      </section>
+
+      <section className="operations-panel create-account-directory" aria-label="Created account directory">
+        <div className="student-roster-head">
+          <div>
+            <h2>Account Directory</h2>
+            <p>{activeManagedAccounts.length} active managed account{activeManagedAccounts.length === 1 ? "" : "s"} plus {parentAccounts.length} parent account{parentAccounts.length === 1 ? "" : "s"}.</p>
+          </div>
+          <span>{managedAccounts.length + parentAccounts.length} accounts</span>
+        </div>
+        <div className="create-account-card-grid">
+          {managedAccounts.map((account) => (
+            <article key={account.id} className="create-account-card" aria-label={`${account.displayName} ${account.role} account`}>
+              <div className="create-account-card-main">
+                <span className={`create-account-avatar${account.role === "student" ? " create-account-avatar--student" : ""}`} aria-hidden="true">
+                  {account.role === "student" ? <Award size={20} /> : <UserPlus size={20} />}
+                </span>
+                <div>
+                  <h3>{account.displayName}</h3>
+                  <p>{account.username}</p>
+                </div>
+              </div>
+              <div className="create-account-card-meta">
+                <span>{account.status === "inactive" ? "Inactive" : "Active"}</span>
+                <span>{account.role === "student" ? "Student" : account.title?.trim() || "Staff"}</span>
+              </div>
+              {account.role === "staff" && (
+                <div className="create-account-access-list" aria-label={`${account.displayName} staff access`}>
+                  {(account.access.length ? account.access : ["dashboard"]).map((accessKey) => (
+                    <span key={accessKey}>{createAccountStaffAccessOptions.find((option) => option.key === accessKey)?.label ?? accessKey}</span>
+                  ))}
+                </div>
+              )}
+              <div className="create-account-card-actions">
+                {account.status === "inactive" ? (
+                  <button type="button" onClick={() => updateAccountStatus(account, "active")} aria-label={`Reactivate ${account.displayName} account`}>
+                    <CheckCircle2 size={16} /> Reactivate
+                  </button>
+                ) : (
+                  <button type="button" className="is-warning" onClick={() => updateAccountStatus(account, "inactive")} aria-label={`Deactivate ${account.displayName} account`}>
+                    <X size={16} /> Deactivate
+                  </button>
+                )}
+              </div>
+            </article>
+          ))}
+          {parentAccounts.map((account) => (
+            <article key={account.email} className="create-account-card" aria-label={`${account.displayName ?? account.email} parent account`}>
+              <div className="create-account-card-main">
+                <span className="create-account-avatar" aria-hidden="true"><Users size={20} /></span>
+                <div>
+                  <h3>{account.displayName ?? account.email}</h3>
+                  <p>{account.email}</p>
+                </div>
+              </div>
+              <div className="create-account-card-meta">
+                <span>Active</span>
+                <span>Guardian</span>
+              </div>
+            </article>
+          ))}
+          {!managedAccounts.length && !parentAccounts.length && <p className="operations-note">No created accounts yet.</p>}
+        </div>
       </section>
     </OperationsPage>
   );

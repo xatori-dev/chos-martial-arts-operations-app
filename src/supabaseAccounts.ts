@@ -46,7 +46,7 @@ type SupabaseCreateAccountInput = {
   displayName: string;
   username: string;
   password: string;
-  role: "staff";
+  role: AccountRole;
   status?: ManagedAccount["status"];
   email: string;
   phone?: string;
@@ -58,6 +58,7 @@ type SupabaseCreateAccountInput = {
 
 type SupabaseCreateAccountResult =
   | { status: "not-configured" }
+  | { status: "ok" }
   | { status: "error"; message: string };
 
 const supabaseSessionStorageKey = "chos.supabase.auth.v1";
@@ -125,7 +126,8 @@ export function supabaseAuthEmailForUsername(username: string) {
 }
 
 export function isSupportedSupabaseLoginUsername(username: string) {
-  return username.trim().toLowerCase() === managerUsername;
+  const normalizedUsername = normalizeSupabaseUsername(username);
+  return Boolean(normalizedUsername && normalizedUsername !== "dev123" && !normalizedUsername.endsWith(".child"));
 }
 
 function saveSupabaseAuthSession(response: SupabasePasswordResponse) {
@@ -211,7 +213,7 @@ export async function signInSupabaseAccount(credentials: { username: string; pas
     const profile = await fetchSupabaseProfile(session.user.id, session.access_token);
     if (!profile) return { status: "invalid" };
     if (profile.status !== "active") return { status: "inactive" };
-    if (profile.username !== managerUsername) return { status: "invalid" };
+    if (normalizeSupabaseUsername(profile.username) !== username) return { status: "invalid" };
 
     saveSupabaseAuthSession(session);
     return {
@@ -226,7 +228,46 @@ export async function signInSupabaseAccount(credentials: { username: string; pas
 }
 
 export async function createSupabaseManagedAccount(account: SupabaseCreateAccountInput): Promise<SupabaseCreateAccountResult> {
-  void account;
   if (!isSupabaseAuthConfigured()) return { status: "not-configured" };
-  return { status: "error", message: "Managed staff account creation is retired. Only Manager123 and Dev123 sign-ins are supported." };
+  const session = readSupabaseAuthSession();
+  if (!session) return { status: "error", message: "Sign into the Supabase Manager123 owner account before syncing created accounts." };
+
+  const username = normalizeSupabaseUsername(account.username);
+  const password = account.password.trim();
+  const displayName = account.displayName.trim();
+  const role = account.role === "staff" || account.role === "student" || account.role === "guardian" ? account.role : "staff";
+  if (!username || !password || !displayName) return { status: "error", message: "Enter a display name, username, and password before syncing." };
+
+  const createUrl = `${supabaseUrl().replace(/\/+$/, "")}/functions/v1/manager-create-account`;
+  const payload = {
+    displayName,
+    username,
+    password,
+    role,
+    status: account.status ?? "active",
+    email: account.email.trim(),
+    ...(account.phone?.trim() ? { phone: account.phone.trim() } : {}),
+    ...(account.title?.trim() ? { title: account.title.trim() } : {}),
+    ...(account.notes?.trim() ? { notes: account.notes.trim() } : {}),
+    ...(account.access?.length ? { access: account.access } : {}),
+    ...(account.studentId?.trim() ? { studentId: account.studentId.trim() } : {})
+  };
+
+  try {
+    const response = await fetch(createUrl, {
+      method: "POST",
+      headers: {
+        apikey: supabasePublicKey(),
+        Authorization: `Bearer ${session.accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (response.ok) return { status: "ok" };
+    const body = await response.json().catch(() => undefined) as { error?: string } | undefined;
+    return { status: "error", message: body?.error ?? "Supabase account creation failed." };
+  } catch (error) {
+    return { status: "error", message: error instanceof Error ? error.message : "Supabase account creation failed." };
+  }
 }

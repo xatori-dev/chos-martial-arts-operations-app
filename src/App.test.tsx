@@ -1613,19 +1613,62 @@ function StudentCreationDoubleCallHarness() {
 }
 
 function ManagedStudentAccountCreationHarness({ studentId }: { studentId: string }) {
-  void studentId;
+  const state = useAppState() as unknown as {
+    createManagedAccount?: (account: {
+      displayName: string;
+      username: string;
+      password: string;
+      role: "student";
+      status?: "active" | "inactive";
+      email?: string;
+      phone?: string;
+      title?: string;
+      access?: string[];
+      studentId?: string;
+    }) => { id: string } | undefined;
+  };
   const { managedAccounts } = useAppState();
 
   return (
     <div>
-      <button type="button">Check managed account creation</button>
+      <button
+        type="button"
+        onClick={() => {
+          state.createManagedAccount?.({
+            displayName: "Cora Miles",
+            username: "cora.student",
+            password: "StudentPass123!",
+            role: "student",
+            email: "cora@example.com",
+            phone: "(262) 555-0102",
+            title: "Blue Belt Student",
+            access: [],
+            studentId
+          });
+        }}
+      >
+        Check managed account creation
+      </button>
       <p>Harness managed accounts: {managedAccounts.length}</p>
     </div>
   );
 }
 
 function ManagedAccountDoubleCreateHarness() {
-  const state = useAppState() as unknown as { createManagedAccount?: unknown };
+  const state = useAppState() as unknown as {
+    createManagedAccount?: (account: {
+      displayName: string;
+      username: string;
+      password: string;
+      role: "staff";
+      status?: "active" | "inactive";
+      email?: string;
+      phone?: string;
+      title?: string;
+      notes?: string;
+      access?: string[];
+    }) => { id: string } | undefined;
+  };
   const { accountRoles, managedAccounts } = useAppState();
   const [returnMatch, setReturnMatch] = useState("none");
 
@@ -1633,7 +1676,29 @@ function ManagedAccountDoubleCreateHarness() {
     <div>
       <button
         type="button"
-        onClick={() => setReturnMatch(state.createManagedAccount === undefined ? "retired" : "available")}
+        onClick={() => {
+          const firstAccount = state.createManagedAccount?.({
+            displayName: "Jordan Lee",
+            username: "jordan.staff",
+            password: "StaffPass123!",
+            role: "staff",
+            email: "jordan@chos.prototype",
+            phone: "(262) 555-0111",
+            title: "Instructor",
+            access: ["dashboard", "students", "create"]
+          });
+          const secondAccount = state.createManagedAccount?.({
+            displayName: " Jordan Lee ",
+            username: " JORDAN.STAFF ",
+            password: " StaffPass123! ",
+            role: "staff",
+            email: " jordan@chos.prototype ",
+            phone: "(262) 555-0111",
+            title: "Instructor",
+            access: ["dashboard", "students", "create"]
+          });
+          setReturnMatch(firstAccount && secondAccount && firstAccount.id === secondAccount.id ? "same" : "different");
+        }}
       >
         Check managed account creation
       </button>
@@ -1645,7 +1710,9 @@ function ManagedAccountDoubleCreateHarness() {
 }
 
 function ImmediateManagedAccountLoginHarness() {
-  const state = useAppState() as unknown as { loginManagedAccount?: unknown };
+  const state = useAppState() as unknown as {
+    loginCreatedAccount?: (credentials: { username: string; password: string }) => unknown;
+  };
   const { session } = useAppState();
   const [loginHelper, setLoginHelper] = useState("none");
 
@@ -1653,7 +1720,10 @@ function ImmediateManagedAccountLoginHarness() {
     <div>
       <button
         type="button"
-        onClick={() => setLoginHelper(state.loginManagedAccount === undefined ? "retired" : "available")}
+        onClick={() => {
+          const account = state.loginCreatedAccount?.({ username: "jordan.staff", password: "StaffPass123!" });
+          setLoginHelper(account ? "signed-in" : "missing");
+        }}
       >
         Check managed account login
       </button>
@@ -2365,7 +2435,33 @@ describe("login landing", () => {
       const landing = container.querySelector(".login-landing") as HTMLElement;
 
       await waitFor(() => {
-        expect(landing.style.getPropertyValue("--login-portrait-anchor-y")).toBe("373.52px");
+        expect(landing.style.getPropertyValue("--login-portrait-anchor-y")).toBe("318.8px");
+      });
+    } finally {
+      getBoundingClientRect.mockRestore();
+    }
+  });
+
+  it("keeps the portrait image below the top logo safe zone", async () => {
+    const getBoundingClientRect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("auth-logo")) {
+        return { bottom: 260, height: 120, left: 24, right: 360, top: 140, width: 336, x: 24, y: 140, toJSON: () => ({}) } as DOMRect;
+      }
+      if (this.classList.contains("login-field")) {
+        return { bottom: 568, height: 48, left: 24, right: 360, top: 520, width: 336, x: 24, y: 520, toJSON: () => ({}) } as DOMRect;
+      }
+      if (this.classList.contains("login-portrait-stage")) {
+        return { bottom: 581, height: 412, left: 23, right: 353, top: 169, width: 330, x: 23, y: 169, toJSON: () => ({}) } as DOMRect;
+      }
+      return { bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    });
+
+    try {
+      const { container } = renderLoggedOutApp("/");
+      const landing = container.querySelector(".login-landing") as HTMLElement;
+
+      await waitFor(() => {
+        expect(landing.style.getPropertyValue("--login-portrait-anchor-y")).toBe("396px");
       });
     } finally {
       getBoundingClientRect.mockRestore();
@@ -2376,7 +2472,7 @@ describe("login landing", () => {
     const { container } = renderLoggedOutApp("/");
 
     const shell = screen.getByTestId("portrait-app-shell");
-    expect(shell).toHaveAttribute("data-orientation-lock", "portrait");
+    expect(shell).toHaveAttribute("data-orientation-lock", "portrait-primary");
     expect(shell).toHaveAttribute("aria-label", "Cho's Martial Arts portrait app frame");
     expect(within(shell).getByTestId("auth-gate")).toBeInTheDocument();
     expect(container.querySelector(".portrait-app-frame .auth-gate")).toBeInTheDocument();
@@ -2452,7 +2548,7 @@ describe("login landing", () => {
     expect(window.localStorage.getItem("chos.accountRoles.v1")).toBeNull();
   });
 
-  it("does not sign in saved staff accounts through the public login", () => {
+  it("signs in active saved staff accounts through the public login", async () => {
     window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
       {
         id: "staff-created-login",
@@ -2468,22 +2564,19 @@ describe("login landing", () => {
     renderLoggedOutApp("/");
 
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "jordan.staff" } });
-    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "wrong-password" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
-    expect(screen.getByRole("dialog", { name: "Login failed" })).toBeInTheDocument();
-    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Profile" })).not.toBeInTheDocument();
-    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
-    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).not.toContainEqual({ email: "jordan.staff", role: "staff" });
+    expect(await screen.findByLabelText("Live chat room page")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "jordan.staff", role: "staff" });
   });
 
-  it("does not send retired staff usernames to Supabase when staging auth is configured", async () => {
+  it("sends created-account usernames to Supabase when staging auth is configured and no local account matches", async () => {
     vi.stubEnv("VITE_ENABLE_SUPABASE_IN_TESTS", "true");
     vi.stubEnv("VITE_SUPABASE_URL", "https://zfuwbbepsnmmlpgfkmhz.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const originalFetch = globalThis.fetch;
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: "Invalid login credentials" }), { status: 400, headers: { "Content-Type": "application/json" } }));
     globalThis.fetch = fetchMock as typeof fetch;
 
     try {
@@ -2493,9 +2586,16 @@ describe("login landing", () => {
       fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123!" } });
       fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
-      expect(screen.getByRole("dialog", { name: "Login failed" })).toBeInTheDocument();
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://zfuwbbepsnmmlpgfkmhz.supabase.co/auth/v1/token?grant_type=password",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ email: "jordan.staff@accounts.chosmartialarts.app", password: "StaffPass123!" })
+        })
+      );
+      expect(await screen.findByRole("dialog", { name: "Login failed" })).toBeInTheDocument();
       expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
-      expect(fetchMock).not.toHaveBeenCalled();
       expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
     } finally {
       globalThis.fetch = originalFetch;
@@ -2582,7 +2682,36 @@ describe("login landing", () => {
     expect(window.localStorage.getItem("chos.accountRoles.v1")).toBeNull();
   });
 
-  it("does not sign in stored registered account records through the public login", () => {
+  it("starts with only manager and developer prototype logins until accounts are created", () => {
+    vi.stubEnv("VITE_ENABLE_DEVELOPER_ACCOUNT", "true");
+    const uncreatedCredentials = [
+      { username: "staff.new", password: "StaffPass123!" },
+      { username: "student.new", password: "StudentPass123!" },
+      { username: "parent.new", password: "ParentPass123!" }
+    ];
+
+    uncreatedCredentials.forEach((credentials) => {
+      window.localStorage.clear();
+      window.sessionStorage.clear();
+      resetDocumentTheme();
+      const view = renderLoggedOutApp("/");
+
+      fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: credentials.username } });
+      fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: credentials.password } });
+      fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+      expect(screen.getByRole("dialog", { name: "Login failed" })).toBeInTheDocument();
+      expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
+      expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+      expect(window.localStorage.getItem("chos.accounts.v1")).toBeNull();
+      expect(window.localStorage.getItem("chos.managedAccounts.v1")).toBeNull();
+      expect(window.localStorage.getItem("chos.childAccounts.v1")).toBeNull();
+
+      view.unmount();
+    });
+  });
+
+  it("signs in stored registered guardian account records through the public login", async () => {
     window.localStorage.setItem("chos.accounts.v1", JSON.stringify([
       {
         email: "returning.family@example.com",
@@ -2598,13 +2727,11 @@ describe("login landing", () => {
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "FamilyPass123" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
-    expect(screen.getByRole("dialog", { name: "Login failed" })).toBeInTheDocument();
-    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Parent profile page")).not.toBeInTheDocument();
-    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "returning.family@example.com", remembered: true });
   });
 
-  it("does not sign in stored child account records through the public login", () => {
+  it("signs in stored child account records through the public login", async () => {
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([
       {
         id: "child-created-login",
@@ -2623,10 +2750,8 @@ describe("login landing", () => {
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "Dragon123" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
-    expect(screen.getByRole("dialog", { name: "Login failed" })).toBeInTheDocument();
-    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Student profile page")).not.toBeInTheDocument();
-    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+    expect(await screen.findByLabelText("Student profile page")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "kai-cho.child", remembered: true });
   });
 
   it("clears refreshed guest sessions on startup", () => {
@@ -2641,7 +2766,7 @@ describe("login landing", () => {
     expect(window.sessionStorage.getItem("chos.session.v1")).toBeNull();
   });
 
-  it("clears refreshed registered guardian sessions on startup", () => {
+  it("keeps refreshed registered guardian sessions on startup", () => {
     window.localStorage.setItem("chos.accounts.v1", JSON.stringify([
       {
         email: "returning.family@example.com",
@@ -2655,13 +2780,13 @@ describe("login landing", () => {
 
     renderLoggedOutApp("/");
 
-    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Parent profile page")).not.toBeInTheDocument();
-    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
-    expect(window.sessionStorage.getItem("chos.session.v1")).toBeNull();
+    expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "returning.family@example.com", remembered: true });
+    expect(JSON.parse(window.sessionStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "returning.family@example.com", remembered: true });
   });
 
-  it("clears refreshed child sessions on startup", () => {
+  it("keeps refreshed child sessions on startup", () => {
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([
       {
         id: "child-kai",
@@ -2678,13 +2803,13 @@ describe("login landing", () => {
 
     renderLoggedOutApp("/");
 
-    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Student profile page")).not.toBeInTheDocument();
-    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
-    expect(window.sessionStorage.getItem("chos.session.v1")).toBeNull();
+    expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Student profile page")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "kai-cho.child", remembered: true });
+    expect(JSON.parse(window.sessionStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "kai-cho.child", remembered: true });
   });
 
-  it("clears refreshed active staff managed sessions on startup", () => {
+  it("keeps refreshed active staff managed sessions on startup", () => {
     window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
       {
         id: "managed-staff-session",
@@ -2701,10 +2826,10 @@ describe("login landing", () => {
 
     renderLoggedOutApp("/");
 
-    expect(screen.getByTestId("auth-gate")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Live chat room page")).not.toBeInTheDocument();
-    expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
-    expect(window.sessionStorage.getItem("chos.session.v1")).toBeNull();
+    expect(screen.queryByTestId("auth-gate")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Live chat room page")).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "jordan.staff", remembered: true });
+    expect(JSON.parse(window.sessionStorage.getItem("chos.session.v1") ?? "{}")).toMatchObject({ email: "jordan.staff", remembered: true });
   });
 
   it("keeps a refreshed Manager123 session on Live Chat", () => {
@@ -2789,7 +2914,36 @@ describe("app fullscreen behavior", () => {
     fireEvent.pointerDown(document);
 
     await waitFor(() => expect(requestFullscreen).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(lock).toHaveBeenCalledWith("portrait-primary"));
+  });
+
+  it("falls back to a broad portrait lock if portrait-primary is rejected", async () => {
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined);
+    const lock = stubScreenOrientationLock(vi.fn().mockImplementation((orientation: string) => (
+      orientation === "portrait-primary" ? Promise.reject(new Error("primary lock blocked")) : Promise.resolve()
+    )));
+    Object.defineProperty(document.documentElement, "requestFullscreen", { configurable: true, value: requestFullscreen });
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: true });
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+
+    renderLoggedOutApp("/");
+    fireEvent.pointerDown(document);
+
+    await waitFor(() => expect(lock).toHaveBeenCalledWith("portrait-primary"));
     await waitFor(() => expect(lock).toHaveBeenCalledWith("portrait"));
+  });
+
+  it("retries the portrait-primary lock when the viewport orientation changes", async () => {
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined);
+    const lock = stubScreenOrientationLock(vi.fn().mockResolvedValue(undefined));
+    Object.defineProperty(document.documentElement, "requestFullscreen", { configurable: true, value: requestFullscreen });
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: true });
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, value: document.documentElement });
+
+    renderLoggedOutApp("/");
+    window.dispatchEvent(new Event("orientationchange"));
+
+    await waitFor(() => expect(lock).toHaveBeenCalledWith("portrait-primary"));
   });
 
   it("does not request fullscreen again while already fullscreen", () => {
@@ -3551,10 +3705,19 @@ describe("post-login operations app", () => {
     const { container } = renderLoggedInApp("/");
 
     const shell = screen.getByTestId("portrait-app-shell");
-    expect(shell).toHaveAttribute("data-orientation-lock", "portrait");
+    expect(shell).toHaveAttribute("data-orientation-lock", "portrait-primary");
     expect(shell).toHaveAttribute("aria-label", "Cho's Martial Arts portrait app frame");
     expect(container.querySelector(".portrait-app-frame .authenticated-app-shell")).toBeInTheDocument();
     expect(screen.getByLabelText("Live chat room page")).toBeInTheDocument();
+  });
+
+  it("keeps the students route inside the same standard portrait app shell", () => {
+    const { container } = renderLoggedInApp("/students");
+
+    const shell = screen.getByTestId("portrait-app-shell");
+    expect(shell).toHaveClass("portrait-app-shell");
+    expect(shell).not.toHaveClass("portrait-app-shell--students-board");
+    expect(container.querySelector(".portrait-app-frame .authenticated-app-shell")).toBeInTheDocument();
   });
 
   it("opens Live Chat first for manager sessions by default", () => {
@@ -3998,7 +4161,7 @@ describe("post-login operations app", () => {
     expect(screen.getByRole("heading", { name: "MANAGER PANEL" })).toBeInTheDocument();
   });
 
-  it.skip("lets the manager create a staff account that can log in without Create access", async () => {
+  it("lets the manager create a staff account that can log in without Create access", async () => {
     const managerView = renderLoggedInApp("/manager");
 
     fireEvent.click(screen.getByRole("link", { name: "Create" }));
@@ -4041,7 +4204,7 @@ describe("post-login operations app", () => {
     expect(screen.queryByRole("link", { name: "Create" })).not.toBeInTheDocument();
   });
 
-  it.skip("rejects manager-created Supabase account passwords that do not meet the staging policy", async () => {
+  it("rejects manager-created account passwords that do not meet the staging policy", async () => {
     renderLoggedInApp("/manager?tool=create");
 
     fireEvent.change(screen.getByLabelText("Staff full name"), { target: { value: "Taylor Reed" } });
@@ -4056,7 +4219,7 @@ describe("post-login operations app", () => {
     expect(window.localStorage.getItem("chos.managedAccounts.v1")).toBeNull();
   });
 
-  it.skip("lets managers deactivate and reactivate custom logins", async () => {
+  it("lets managers deactivate and reactivate custom logins", async () => {
     window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
       {
         id: "managed-jordan",
@@ -4116,7 +4279,7 @@ describe("post-login operations app", () => {
     expect(await screen.findByLabelText("Live chat room page")).toBeInTheDocument();
   });
 
-  it.skip("lets the manager create a student account that can log in", async () => {
+  it("lets the manager create a student account that can log in", async () => {
     const managerView = renderLoggedInApp("/manager?tool=create");
 
     fireEvent.click(screen.getByRole("button", { name: "Student" }));
@@ -4154,7 +4317,7 @@ describe("post-login operations app", () => {
     expect(await screen.findByLabelText("Student profile page")).toBeInTheDocument();
   });
 
-  it.skip("keeps managed student roles authoritative over stale stored staff roles", () => {
+  it("keeps managed student roles authoritative over stale stored staff roles", () => {
     const student = {
       id: "student-stale-role",
       firstName: "Avery",
@@ -4283,7 +4446,7 @@ describe("post-login operations app", () => {
     expect(screen.queryByLabelText("Student profile page")).not.toBeInTheDocument();
   });
 
-  it("keeps retired managed student login creation unavailable", async () => {
+  it("does not create managed student logins for inactive student records", async () => {
     window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([
       {
         id: "student-cora",
@@ -4318,7 +4481,7 @@ describe("post-login operations app", () => {
     });
   });
 
-  it("does not expose managed account creation from app state", async () => {
+  it("exposes managed account creation from app state and dedupes repeated staff creation", async () => {
     window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([]));
@@ -4334,16 +4497,34 @@ describe("post-login operations app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check managed account creation" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Harness duplicate managed returns: retired")).toBeInTheDocument();
-      expect(screen.getByText("Harness duplicate managed accounts: 0")).toBeInTheDocument();
-      expect(screen.getByText("Harness duplicate managed roles: 0")).toBeInTheDocument();
-      expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual([]);
-      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([]);
+      expect(screen.getByText("Harness duplicate managed returns: same")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate managed accounts: 1")).toBeInTheDocument();
+      expect(screen.getByText("Harness duplicate managed roles: 1")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual([
+        expect.objectContaining({
+          displayName: "Jordan Lee",
+          username: "jordan.staff",
+          role: "staff",
+          access: expect.not.arrayContaining(["create"])
+        })
+      ]);
+      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "jordan.staff", role: "staff" });
     });
   });
 
-  it("does not expose managed account login from app state", async () => {
-    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([]));
+  it("exposes created-account login from app state", async () => {
+    window.localStorage.setItem("chos.managedAccounts.v1", JSON.stringify([
+      {
+        id: "managed-jordan-login-helper",
+        displayName: "Jordan Lee",
+        username: "jordan.staff",
+        password: "StaffPass123!",
+        role: "staff",
+        status: "active",
+        access: ["dashboard"],
+        createdAt: "2026-06-01T10:00:00.000Z"
+      }
+    ]));
     window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([]));
     window.localStorage.setItem("chos.accountRoles.v1", JSON.stringify([]));
 
@@ -4358,15 +4539,69 @@ describe("post-login operations app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check managed account login" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Harness managed login helper: retired")).toBeInTheDocument();
-      expect(screen.getByText("Harness session email: none")).toBeInTheDocument();
-      expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
-      expect(JSON.parse(window.localStorage.getItem("chos.managedAccounts.v1") ?? "[]")).toEqual([]);
-      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toEqual([]);
+      expect(screen.getByText("Harness managed login helper: signed-in")).toBeInTheDocument();
+      expect(screen.getByText("Harness session email: jordan.staff")).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem("chos.session.v1") ?? "{}")).toEqual(expect.objectContaining({ email: "jordan.staff" }));
+      expect(JSON.parse(window.localStorage.getItem("chos.accountRoles.v1") ?? "[]")).toContainEqual({ email: "jordan.staff", role: "staff" });
     });
   });
 
-  it.skip("hides Create from staff accounts even when older stored access includes Create", () => {
+  it("lets the manager create a parent account that lands on the Parent Profile page", async () => {
+    const managerView = renderLoggedInApp("/manager?tool=create");
+
+    fireEvent.click(screen.getByRole("button", { name: "Parent" }));
+    fireEvent.change(screen.getByLabelText("Parent full name"), { target: { value: "Mina Miles" } });
+    fireEvent.change(screen.getByLabelText("Parent username"), { target: { value: "mina.parent" } });
+    fireEvent.change(screen.getByLabelText("Parent password"), { target: { value: "ParentPass123!" } });
+    fireEvent.change(screen.getByLabelText("Confirm parent password"), { target: { value: "ParentPass123!" } });
+    fireEvent.change(screen.getByLabelText("Parent email"), { target: { value: "mina@chos.prototype" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Parent Account" }));
+
+    expect(screen.getByRole("article", { name: "Mina Miles parent account" })).toHaveTextContent("Guardian");
+    expect(JSON.parse(window.localStorage.getItem("chos.accounts.v1") ?? "[]")).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        email: "mina.parent",
+        password: "ParentPass123!",
+        role: "guardian"
+      })
+    ]));
+
+    managerView.unmount();
+    clearActiveSession();
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "mina.parent" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "ParentPass123!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
+  });
+
+  it("lets the gated developer create local staff accounts", async () => {
+    const developerView = renderLoggedInDeveloperApp("/manager?tool=create");
+
+    expect(screen.getByLabelText("Developer app launcher")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Staff full name"), { target: { value: "Dev Created Staff" } });
+    fireEvent.change(screen.getByLabelText("Staff username"), { target: { value: "dev.staff" } });
+    fireEvent.change(screen.getByLabelText("Staff password"), { target: { value: "StaffPass123!" } });
+    fireEvent.change(screen.getByLabelText("Confirm staff password"), { target: { value: "StaffPass123!" } });
+    fireEvent.change(screen.getByLabelText("Staff email"), { target: { value: "devstaff@chos.prototype" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Staff Account" }));
+
+    expect(screen.getByRole("article", { name: "Dev Created Staff staff account" })).toBeInTheDocument();
+
+    developerView.unmount();
+    clearActiveSession();
+    renderLoggedOutApp("/");
+
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "dev.staff" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "StaffPass123!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    expect(await screen.findByLabelText("Live chat room page")).toBeInTheDocument();
+  });
+
+  it("hides Create from staff accounts even when older stored access includes Create", () => {
     renderManagedStaffApp("/manager", {
       id: "managed-staff-no-create",
       displayName: "Taylor Staff",
@@ -4382,7 +4617,7 @@ describe("post-login operations app", () => {
     expect(screen.queryByRole("link", { name: "Create" })).not.toBeInTheDocument();
   });
 
-  it.skip("falls staff away from direct Create panel links to the first staff tool", () => {
+  it("falls staff away from direct Create panel links to the first staff tool", () => {
     renderManagedStaffApp("/manager?tool=create", {
       id: "managed-staff-stale-create",
       displayName: "Taylor Staff",

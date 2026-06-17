@@ -43,9 +43,10 @@ describe("supabase account adapter", () => {
     expect(supabaseAuthEmailForUsername("Jordan Staff")).toBe("jordan.staff@accounts.chosmartialarts.app");
     expect(isSupportedSupabaseLoginUsername("Manager123")).toBe(true);
     expect(isSupportedSupabaseLoginUsername(" manager123 ")).toBe(true);
-    expect(isSupportedSupabaseLoginUsername("Manager123!")).toBe(false);
+    expect(isSupportedSupabaseLoginUsername("Manager123!")).toBe(true);
     expect(isSupportedSupabaseLoginUsername("Dev123")).toBe(false);
-    expect(isSupportedSupabaseLoginUsername("jordan.staff")).toBe(false);
+    expect(isSupportedSupabaseLoginUsername("jordan.staff")).toBe(true);
+    expect(isSupportedSupabaseLoginUsername("kai.child")).toBe(false);
   });
 
   it("reports not configured when no browser Supabase settings exist", () => {
@@ -118,16 +119,58 @@ describe("supabase account adapter", () => {
     expect(window.localStorage.getItem("chos.supabase.auth.v1")).toContain("manager-access-token");
   });
 
-  it("rejects retired staff usernames before calling Supabase Auth", async () => {
-    const fetchMock = vi.fn();
+  it("signs in created staff usernames through Supabase Auth and stores the JWT", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("/auth/v1/token")) {
+        return jsonResponse({
+          access_token: "staff-access-token",
+          refresh_token: "staff-refresh-token",
+          expires_in: 3600,
+          user: { id: "staff-user-id", email: "jordan.staff@accounts.chosmartialarts.app" }
+        });
+      }
+      if (requestUrl.includes("/rest/v1/profiles")) {
+        return jsonResponse([
+          {
+            id: "staff-user-id",
+            username: "jordan.staff",
+            contact_email: "jordan@example.com",
+            display_name: "Jordan Lee",
+            role: "staff",
+            status: "active",
+            phone: null,
+            title: "Instructor",
+            notes: null,
+            access: ["dashboard"],
+            student_id: null,
+            created_by: "manager-user-id",
+            created_at: "2026-06-09T00:00:00.000Z"
+          }
+        ]);
+      }
+      return jsonResponse({ error: "Unexpected URL" }, { status: 404 });
+    });
     globalThis.fetch = fetchMock as typeof fetch;
 
-    await expect(signInSupabaseAccount({ username: "jordan.staff", password: "StaffPass123!" })).resolves.toEqual({ status: "invalid" });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(window.localStorage.getItem("chos.supabase.auth.v1")).toBeNull();
+    const result = await signInSupabaseAccount({ username: "jordan.staff", password: "StaffPass123!" });
+
+    expect(result).toMatchObject({
+      status: "authenticated",
+      sessionEmail: "jordan.staff",
+      role: "staff"
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://project.supabase.co/auth/v1/token?grant_type=password",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ email: "jordan.staff@accounts.chosmartialarts.app", password: "StaffPass123!" })
+      })
+    );
+    expect(window.localStorage.getItem("chos.supabase.auth.v1")).toContain("staff-access-token");
   });
 
-  it("does not send retired staff account creation through the Edge Function", async () => {
+  it("creates managed accounts through the Edge Function with the stored owner JWT", async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const requestUrl = String(url);
       if (requestUrl.includes("/auth/v1/token")) {
@@ -156,6 +199,16 @@ describe("supabase account adapter", () => {
           }
         ]);
       }
+      if (requestUrl.includes("/functions/v1/manager-create-account")) {
+        return jsonResponse({
+          account: {
+            id: "staff-user-id",
+            username: "jordan.staff",
+            role: "staff",
+            status: "active"
+          }
+        });
+      }
       return jsonResponse({ error: "Unexpected URL" }, { status: 404 });
     });
     globalThis.fetch = fetchMock as typeof fetch;
@@ -170,11 +223,25 @@ describe("supabase account adapter", () => {
       access: ["dashboard"]
     });
 
-    expect(result).toMatchObject({
-      status: "error",
-      message: "Managed staff account creation is retired. Only Manager123 and Dev123 sign-ins are supported."
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ status: "ok" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://project.supabase.co/functions/v1/manager-create-account",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer manager-access-token"
+        }),
+        body: JSON.stringify({
+          displayName: "Jordan Lee",
+          username: "jordan.staff",
+          password: "StaffPass123!",
+          role: "staff",
+          status: "active",
+          email: "jordan@example.com",
+          access: ["dashboard"]
+        })
+      })
+    );
 
     clearSupabaseAuthSession();
     expect(await createSupabaseManagedAccount({
@@ -185,7 +252,7 @@ describe("supabase account adapter", () => {
       email: "no-session@example.com"
     })).toEqual({
       status: "error",
-      message: "Managed staff account creation is retired. Only Manager123 and Dev123 sign-ins are supported."
+      message: "Sign into the Supabase Manager123 owner account before syncing created accounts."
     });
   });
 });

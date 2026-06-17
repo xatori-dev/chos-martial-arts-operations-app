@@ -129,6 +129,10 @@ interface AccountRecord {
   email: string;
   password?: string;
   role?: AccountRole;
+  displayName?: string;
+  contactEmail?: string;
+  phone?: string;
+  notes?: string;
   createdAt: string;
 }
 
@@ -153,6 +157,7 @@ const managerAccessKeys: ManagerAccessKey[] = [
 
 const ownerManagerAccess: ManagerAccessKey[] = managerAccessKeys;
 const staffManagerAccess: ManagerAccessKey[] = managerAccessKeys.filter((key) => key !== "create");
+const managerAccessKeySet = new Set<ManagerAccessKey>(managerAccessKeys);
 
 type StudioClassInput = {
   name: string;
@@ -209,6 +214,31 @@ type RegisteredAccountInput = {
   password: string;
   role?: AccountRole;
 };
+
+type ManagedAccountInput = {
+  displayName: string;
+  username: string;
+  password: string;
+  role: ManagedAccount["role"];
+  status?: ManagedAccount["status"];
+  email?: string;
+  phone?: string;
+  title?: string;
+  notes?: string;
+  access?: ManagerAccessKey[];
+  studentId?: string;
+};
+
+type GuardianAccountInput = {
+  displayName: string;
+  username: string;
+  password: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
+};
+
+type CreatedAccountLoginResult = ManagedAccount | AccountRecord | ChildAccount;
 
 type ManagerAccountAccess = {
   isManagerOwner: boolean;
@@ -389,11 +419,15 @@ interface AppState {
   saveContact: (contact: ContactSubmission) => void;
   login: (email: string, remembered: boolean, role?: AccountRole) => void;
   loginRegisteredAccount: (credentials: { username: string; password: string }) => AccountRecord | undefined;
+  loginCreatedAccount: (credentials: { username: string; password: string }) => CreatedAccountLoginResult | undefined;
   loginChildAccount: (childId: string) => void;
   loginChildCredentials: (credentials: { username: string; password: string }) => ChildAccount | undefined;
   childUsernameExists: (username: string, options?: { excludeChildId?: string }) => boolean;
   logout: () => void;
   register: (account: RegisteredAccountInput) => AccountRecord | undefined;
+  createManagedAccount: (account: ManagedAccountInput) => ManagedAccount | undefined;
+  createGuardianAccount: (account: GuardianAccountInput) => AccountRecord | undefined;
+  updateManagedAccountStatus: (accountId: string, status: ManagedAccount["status"]) => ManagedAccount | undefined;
   setAccountRole: (role: AccountRole) => void;
   addChildAccount: (child: { name: string; age: string; beltSlug: string; username: string; password: string }) => ChildAccount | undefined;
   updateChildAccount: (childId: string, child: { name: string; age: string; beltSlug: string; username: string; password: string }) => ChildAccount | undefined;
@@ -555,42 +589,6 @@ function cleanupRetiredStudentPrototypeStorage() {
     return;
   }
 
-  const accountRoles = readStoredArray<AccountRoleRecord>(keys.accountRoles);
-  const retiredAccountEmails = new Set(retiredStudentPrototypeEmails);
-  accountRoles.forEach((record) => {
-    const email = normalizedStoredEmail(record.email);
-    if (email && !isPrototypeManagerOwnerEmail(email)) retiredAccountEmails.add(email);
-  });
-
-  const managedAccounts = readStoredArray<ManagedAccount>(keys.managedAccounts);
-  const childAccounts = readStoredArray<ChildAccount>(keys.childAccounts);
-  const scheduledClasses = readStoredArray<ScheduledClass>(keys.scheduledClasses);
-  const studioEvents = readStoredArray<StudioEvent>(keys.studioEvents);
-
-  writeStorage(keys.accountRoles, accountRoles.filter((record) => isPrototypeManagerOwnerEmail(record.email)));
-  writeStorage(keys.accounts, [] as AccountRecord[]);
-  writeStorage(keys.managedAccounts, [] as ManagedAccount[]);
-  writeStorage(keys.childAccounts, [] as ChildAccount[]);
-  writeStorage(keys.students, [] as StudentRecord[]);
-  writeStorage(keys.checkIns, [] as StudentCheckIn[]);
-  removeStorage(keys.messageLogs);
-  removeStorage(keys.directMessages);
-  writeStorage(keys.messageCampaigns, [] as MessageCampaign[]);
-  writeStorage(keys.scheduledTextCampaigns, [] as ScheduledTextCampaign[]);
-  writeStorage(keys.scheduledClasses, scheduledClasses.filter((scheduledClass) => !scheduledClass.studentId?.trim()));
-  writeStorage(keys.studioEvents, studioEvents.filter((event) => event.audience === "public"));
-
-  const localSession = readStorage<AccountSession | undefined>(keys.session, undefined);
-  const sessionSession = readSessionStorage<AccountSession | undefined>(keys.session, undefined);
-  if (
-    shouldClearSessionEmail(normalizedStoredEmail(localSession?.email), retiredAccountEmails, managedAccounts, childAccounts) ||
-    shouldClearSessionEmail(normalizedStoredEmail(sessionSession?.email), retiredAccountEmails, managedAccounts, childAccounts)
-  ) {
-    removeStorage(keys.session);
-    removeSessionStorage(keys.session);
-    clearSupabaseAuthSession();
-  }
-
   removeRetiredStudentScopedStorage();
   try {
     window.localStorage.setItem(studentPrototypeDataResetKey, new Date().toISOString());
@@ -726,6 +724,22 @@ function validatePrototypeSession(session: AccountSession | undefined) {
   const normalizedEmail = session.email.toLowerCase();
   if (normalizedEmail === prototypeManagerLogin.email.toLowerCase()) return session;
   if (isPrototypeDeveloperEmail(normalizedEmail)) return session;
+  const managedAccounts = readStoredArray<ManagedAccount>(keys.managedAccounts);
+  const students = readStoredArray<StudentRecord>(keys.students);
+  if (
+    managedAccounts.some(
+      (account) =>
+        account.username.trim().toLowerCase() === normalizedEmail &&
+        account.status !== "inactive" &&
+        hasValidManagedStudentLink(account, students)
+    )
+  ) {
+    return session;
+  }
+  const accounts = readStoredArray<AccountRecord>(keys.accounts);
+  if (accounts.some((account) => account.email.trim().toLowerCase() === normalizedEmail && Boolean(account.password?.trim()))) return session;
+  const childAccounts = readStoredArray<ChildAccount>(keys.childAccounts);
+  if (childAccounts.some((child) => child.username.trim().toLowerCase() === normalizedEmail && Boolean(child.password?.trim()))) return session;
   removeStorage(keys.session);
   return undefined;
 }
@@ -806,6 +820,35 @@ function createPrototypeId(prefix: string) {
 
 function normalizeRegisteredAccountRole(role?: AccountRole): AccountRole {
   return role === "staff" || role === "student" || role === "guardian" ? role : "guardian";
+}
+
+function normalizeCreatedAccountUsername(username: string) {
+  return username
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ".")
+    .replace(/[^a-z0-9._-]+/g, "")
+    .replace(/^[._-]+|[._-]+$/g, "");
+}
+
+function normalizeCreatedAccountName(name: string) {
+  return name.trim().replace(/\s+/g, " ");
+}
+
+function normalizeManagedAccountAccess(role: ManagedAccount["role"], access?: readonly ManagerAccessKey[]) {
+  if (role !== "staff") return [];
+  const requestedAccess = access?.length ? access : staffManagerAccess;
+  return [...new Set(requestedAccess.filter((key) => key !== "create" && managerAccessKeySet.has(key)))];
+}
+
+function managedAccountCreationKey(account: Pick<ManagedAccount, "displayName" | "username" | "password" | "role" | "studentId">) {
+  return [
+    normalizeCreatedAccountName(account.displayName).toLowerCase(),
+    normalizeCreatedAccountUsername(account.username),
+    account.password.trim(),
+    account.role,
+    account.studentId?.trim() ?? ""
+  ].join("::");
 }
 
 function isPrototypeLoginUsername(username: string) {
@@ -2259,7 +2302,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     return {
       isManagerOwner,
       isDeveloper,
-      canCreateAccounts: isManagerOwner || allowedTools.includes("create"),
+      canCreateAccounts: isManagerOwner,
       canGrantCreateAccess: isManagerOwner,
       allowedTools
     };
@@ -2516,6 +2559,54 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     [saveRoleForEmail, setSession]
   );
 
+  const loginCreatedAccount = useCallback(
+    (credentials: { username: string; password: string }) => {
+      const normalizedUsername = normalizeCreatedAccountUsername(credentials.username);
+      const normalizedRegisteredLogin = credentials.username.trim().toLowerCase();
+      const normalizedChildUsername = normalizeChildUsername(credentials.username);
+      const password = credentials.password.trim();
+      if (!password) return undefined;
+
+      if (normalizedUsername && !isBuiltInPrototypeIdentity(normalizedUsername)) {
+        const managedAccount = managedAccountsRef.current.find(
+          (account) =>
+            account.username.trim().toLowerCase() === normalizedUsername &&
+            account.password === password &&
+            account.status !== "inactive" &&
+            hasValidManagedStudentLink(account, studentsRef.current)
+        );
+        if (managedAccount) {
+          saveRoleForEmail(managedAccount.username, managedAccount.role);
+          setSession({ email: managedAccount.username, remembered: true, createdAt: new Date().toISOString() });
+          return managedAccount;
+        }
+      }
+
+      if (normalizedRegisteredLogin && !isBuiltInPrototypeIdentity(normalizedRegisteredLogin)) {
+        const registeredAccount = accountsRef.current.find(
+          (account) => account.email.trim().toLowerCase() === normalizedRegisteredLogin && account.password === password
+        );
+        if (registeredAccount) {
+          saveRoleForEmail(registeredAccount.email, normalizeRegisteredAccountRole(registeredAccount.role));
+          setSession({ email: registeredAccount.email, remembered: true, createdAt: new Date().toISOString() });
+          return registeredAccount;
+        }
+      }
+
+      if (normalizedChildUsername) {
+        const child = childAccountsRef.current.find((item) => item.username.toLowerCase() === normalizedChildUsername.toLowerCase() && item.password === password);
+        if (child) {
+          saveRoleForEmail(child.username, "student");
+          setSession({ email: child.username, remembered: true, createdAt: new Date().toISOString() });
+          return child;
+        }
+      }
+
+      return undefined;
+    },
+    [saveRoleForEmail, setSession]
+  );
+
   const childUsernameExists = useCallback(
     (username: string, options?: { excludeChildId?: string }) => isChildUsernameUnavailable(username, childAccountsRef.current, managedAccountsRef.current, options?.excludeChildId),
     []
@@ -2536,6 +2627,91 @@ export function AppStateProvider({ children }: PropsWithChildren) {
       return createdAccount;
     },
     [updateAccountsState]
+  );
+
+  const createManagedAccount = useCallback(
+    (account: ManagedAccountInput) => {
+      const displayName = normalizeCreatedAccountName(account.displayName);
+      const username = normalizeCreatedAccountUsername(account.username);
+      const password = account.password.trim();
+      const role = account.role === "student" ? "student" : "staff";
+      const studentId = role === "student" ? account.studentId?.trim() : undefined;
+      if (!displayName || !username || !password || isPrototypeLoginUsername(username)) return undefined;
+      if (role === "student" && !hasValidManagedStudentLink({ role, studentId }, studentsRef.current)) return undefined;
+
+      const createdAccount: ManagedAccount = {
+        id: createPrototypeId("managed"),
+        displayName,
+        username,
+        password,
+        role,
+        status: account.status === "inactive" ? "inactive" : "active",
+        ...(account.email?.trim() ? { email: account.email.trim().toLowerCase() } : {}),
+        ...(account.phone?.trim() ? { phone: account.phone.trim() } : {}),
+        ...(account.title?.trim() ? { title: account.title.trim() } : {}),
+        ...(account.notes?.trim() ? { notes: account.notes.trim() } : {}),
+        access: normalizeManagedAccountAccess(role, account.access),
+        ...(studentId ? { studentId } : {}),
+        ...(session?.email ? { createdBy: session.email } : {}),
+        createdAt: new Date().toISOString()
+      };
+
+      const existingManagedAccount = managedAccountsRef.current.find((currentAccount) => currentAccount.username.trim().toLowerCase() === username);
+      if (existingManagedAccount) {
+        return managedAccountCreationKey(existingManagedAccount) === managedAccountCreationKey(createdAccount) ? existingManagedAccount : undefined;
+      }
+      if (accountsRef.current.some((currentAccount) => currentAccount.email.trim().toLowerCase() === username)) return undefined;
+      if (childAccountsRef.current.some((child) => child.username.trim().toLowerCase() === username)) return undefined;
+
+      updateManagedAccountsState((current) => [...current, createdAccount]);
+      saveRoleForEmail(username, role);
+      return createdAccount;
+    },
+    [saveRoleForEmail, session?.email, updateManagedAccountsState]
+  );
+
+  const createGuardianAccount = useCallback(
+    (account: GuardianAccountInput) => {
+      const username = normalizeCreatedAccountUsername(account.username);
+      const password = account.password.trim();
+      const displayName = normalizeCreatedAccountName(account.displayName);
+      if (!username || !password || !displayName || isPrototypeLoginUsername(username)) return undefined;
+      const createdAccount: AccountRecord = {
+        email: username,
+        password,
+        role: "guardian",
+        displayName,
+        ...(account.email?.trim() ? { contactEmail: account.email.trim().toLowerCase() } : {}),
+        ...(account.phone?.trim() ? { phone: account.phone.trim() } : {}),
+        ...(account.notes?.trim() ? { notes: account.notes.trim() } : {}),
+        createdAt: new Date().toISOString()
+      };
+      const existingAccount = accountsRef.current.find((currentAccount) => currentAccount.email.trim().toLowerCase() === username);
+      if (existingAccount) return registeredAccountCreationKey(existingAccount) === registeredAccountCreationKey(createdAccount) ? existingAccount : undefined;
+      if (managedAccountsRef.current.some((currentAccount) => currentAccount.username.trim().toLowerCase() === username)) return undefined;
+      if (childAccountsRef.current.some((child) => child.username.trim().toLowerCase() === username)) return undefined;
+      updateAccountsState((current) => [...current, createdAccount]);
+      saveRoleForEmail(username, "guardian");
+      return createdAccount;
+    },
+    [saveRoleForEmail, updateAccountsState]
+  );
+
+  const updateManagedAccountStatus = useCallback(
+    (accountId: string, status: ManagedAccount["status"]) => {
+      const nextStatus = status === "inactive" ? "inactive" : "active";
+      let updatedAccount: ManagedAccount | undefined;
+      updateManagedAccountsState((current) => {
+        const existingAccount = current.find((account) => account.id === accountId);
+        if (!existingAccount) return current;
+        if (nextStatus === "active" && !hasValidManagedStudentLink(existingAccount, studentsRef.current)) return current;
+        updatedAccount = { ...existingAccount, status: nextStatus };
+        return current.map((account) => (account.id === accountId ? updatedAccount as ManagedAccount : account));
+      });
+      if (updatedAccount && nextStatus === "active") saveRoleForEmail(updatedAccount.username, updatedAccount.role);
+      return updatedAccount;
+    },
+    [saveRoleForEmail, updateManagedAccountsState]
   );
 
   const addOperationsStudent = useCallback(
@@ -3942,11 +4118,15 @@ export function AppStateProvider({ children }: PropsWithChildren) {
     saveContact,
     login,
     loginRegisteredAccount,
+    loginCreatedAccount,
     loginChildAccount,
     loginChildCredentials,
     childUsernameExists,
     logout,
     register,
+    createManagedAccount,
+    createGuardianAccount,
+    updateManagedAccountStatus,
     setAccountRole,
     addChildAccount,
     updateChildAccount,

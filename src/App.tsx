@@ -1,6 +1,6 @@
 import { AlertTriangle, Eye, EyeOff, Lock, User, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { publicAsset } from "./appAssets";
 import { useAppState } from "./state";
 import { isSupabaseAuthConfigured, isSupportedSupabaseLoginUsername, signInSupabaseAccount } from "./supabaseAccounts";
@@ -30,8 +30,10 @@ type FullscreenCapableElement = HTMLElement & {
   msRequestFullscreen?: () => Promise<void> | void;
 };
 
+type PortraitLockOrientation = "portrait-primary" | "portrait";
+
 type PortraitLockableScreenOrientation = ScreenOrientation & {
-  lock?: (orientation: "portrait") => Promise<void> | void;
+  lock?: (orientation: PortraitLockOrientation) => Promise<void> | void;
 };
 
 function getActiveFullscreenElement(doc: FullscreenCapableDocument) {
@@ -57,15 +59,16 @@ function requestPortraitOrientationLock() {
   const lockOrientation = orientation?.lock;
   if (!lockOrientation) return Promise.resolve();
 
-  return Promise.resolve(lockOrientation.call(orientation, "portrait")).catch(() => undefined);
+  return Promise.resolve(lockOrientation.call(orientation, "portrait-primary"))
+    .catch(() => Promise.resolve(lockOrientation.call(orientation, "portrait")).catch(() => undefined));
 }
 
 function useAppPortraitRuntime() {
   useEffect(() => {
     let requestInFlight = false;
 
-    const requestPortraitRuntimeFromGesture = () => {
-      if (requestInFlight) return;
+    const requestPortraitRuntime = () => {
+      if (requestInFlight || document.visibilityState === "hidden") return;
       requestInFlight = true;
       requestDocumentFullscreen()
         .then(() => requestPortraitOrientationLock())
@@ -76,27 +79,43 @@ function useAppPortraitRuntime() {
 
     const interactionEvents = ["pointerdown", "touchstart", "click", "keydown"];
     interactionEvents.forEach((eventName) => {
-      document.addEventListener(eventName, requestPortraitRuntimeFromGesture, { capture: true });
+      document.addEventListener(eventName, requestPortraitRuntime, { capture: true });
     });
+
+    const documentRuntimeEvents = ["fullscreenchange", "webkitfullscreenchange", "msfullscreenchange", "visibilitychange"];
+    documentRuntimeEvents.forEach((eventName) => {
+      document.addEventListener(eventName, requestPortraitRuntime);
+    });
+
+    const windowRuntimeEvents = ["orientationchange", "resize"];
+    windowRuntimeEvents.forEach((eventName) => {
+      window.addEventListener(eventName, requestPortraitRuntime);
+    });
+    window.visualViewport?.addEventListener("resize", requestPortraitRuntime);
 
     return () => {
       interactionEvents.forEach((eventName) => {
-        document.removeEventListener(eventName, requestPortraitRuntimeFromGesture, { capture: true });
+        document.removeEventListener(eventName, requestPortraitRuntime, { capture: true });
       });
+      documentRuntimeEvents.forEach((eventName) => {
+        document.removeEventListener(eventName, requestPortraitRuntime);
+      });
+      windowRuntimeEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, requestPortraitRuntime);
+      });
+      window.visualViewport?.removeEventListener("resize", requestPortraitRuntime);
     };
   }, []);
 }
 
 function App() {
   useAppPortraitRuntime();
-  const location = useLocation();
   useEffect(() => {
     initializeAppTheme();
   }, []);
   const { session } = useAppState();
   const [launchComplete, setLaunchComplete] = useState(false);
   const loginGateState = getLoginGateState(session);
-  const portraitShellVariant = loginGateState !== "login" && location.pathname === "/students" ? "students-board" : undefined;
   const previousLoginGateStateRef = useRef(loginGateState);
   const loginJustCompleted = previousLoginGateStateRef.current === "login" && loginGateState !== "login";
   const [loginTransitionActive, setLoginTransitionActive] = useState(false);
@@ -131,7 +150,7 @@ function App() {
 
   return (
     <>
-      <PortraitAppShell variant={portraitShellVariant}>
+      <PortraitAppShell>
         <div className={`authenticated-app-shell${loginJustCompleted || loginTransitionActive ? " is-login-transitioning" : ""}`} data-testid="authenticated-app-shell">
           {TestOperationsApp ? (
             <TestOperationsApp />
@@ -147,11 +166,9 @@ function App() {
   );
 }
 
-function PortraitAppShell({ children, variant }: { children: ReactNode; variant?: "students-board" }) {
-  const className = `portrait-app-shell${variant === "students-board" ? " portrait-app-shell--students-board" : ""}`;
-
+function PortraitAppShell({ children }: { children: ReactNode }) {
   return (
-    <div className={className} data-testid="portrait-app-shell" data-orientation-lock="portrait" aria-label="Cho's Martial Arts portrait app frame">
+    <div className="portrait-app-shell" data-testid="portrait-app-shell" data-orientation-lock="portrait-primary" aria-label="Cho's Martial Arts portrait app frame">
       <div className="portrait-app-frame">
         {children}
       </div>
@@ -278,7 +295,7 @@ function LaunchLogoAnimation({ onReveal, onComplete }: { onReveal: () => void; o
 }
 
 function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean; handoffActive?: boolean }) {
-  const { login, showToast } = useAppState();
+  const { login, loginCreatedAccount, showToast } = useAppState();
   const navigate = useNavigate();
   const loginLandingRef = useRef<HTMLElement | null>(null);
   const portraitStageRef = useRef<HTMLDivElement | null>(null);
@@ -299,17 +316,34 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
     if (!portraitVisible || !landing || !portraitStage || !usernameField) return undefined;
 
     let animationFrame = 0;
+    const setPortraitAnchor = () => {
+      const usernameRect = usernameField.getBoundingClientRect();
+      const portraitRect = portraitStage.getBoundingClientRect();
+      const portraitStyles = window.getComputedStyle(portraitStage);
+      const portraitHeight = parseFloat(portraitStyles.height) || portraitRect.height;
+      const portraitWidth = parseFloat(portraitStyles.width) || portraitRect.width;
+      if (usernameRect.height <= 0 || portraitHeight <= 0 || portraitWidth <= 0) return;
+
+      const portraitImage = portraitStage.querySelector("img");
+      const portraitImageRatio = portraitImage?.naturalWidth && portraitImage.naturalHeight
+        ? portraitImage.naturalHeight / portraitImage.naturalWidth
+        : 1;
+      const visiblePortraitHeight = Math.min(portraitHeight, portraitWidth * portraitImageRatio);
+      const usernameUnderlap = Math.min(6, Math.max(4, usernameRect.height * 0.1));
+      const fieldAnchoredCenterY = usernameRect.top + usernameUnderlap - portraitHeight / 2;
+      const logo = landing.closest(".auth-gate")?.querySelector(".auth-logo") as HTMLElement | null;
+      const logoRect = logo?.getBoundingClientRect();
+      const logoSafeGap = 12;
+      const logoSafeCenterY = logoRect && logoRect.height > 0
+        ? logoRect.bottom + logoSafeGap + visiblePortraitHeight - portraitHeight / 2
+        : 0;
+      const anchoredCenterY = Math.max(fieldAnchoredCenterY, logoSafeCenterY);
+      landing.style.setProperty("--login-portrait-anchor-y", `${Math.round(anchoredCenterY * 100) / 100}px`);
+    };
     const updatePortraitAnchor = () => {
       window.cancelAnimationFrame(animationFrame);
-      animationFrame = window.requestAnimationFrame(() => {
-        const usernameRect = usernameField.getBoundingClientRect();
-        const portraitHeight = parseFloat(window.getComputedStyle(portraitStage).height) || portraitStage.getBoundingClientRect().height;
-        if (usernameRect.height <= 0 || portraitHeight <= 0) return;
-
-        const usernameUnderlap = Math.min(14, Math.max(8, usernameRect.height * 0.24));
-        const anchoredCenterY = usernameRect.bottom + usernameUnderlap - portraitHeight / 2;
-        landing.style.setProperty("--login-portrait-anchor-y", `${anchoredCenterY}px`);
-      });
+      setPortraitAnchor();
+      animationFrame = window.requestAnimationFrame(setPortraitAnchor);
     };
 
     const resizeObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(updatePortraitAnchor);
@@ -348,6 +382,12 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
 
     if (isPrototypeDeveloperLogin(loginForm)) {
       login(prototypeDeveloperLogin.email, true, prototypeDeveloperLogin.role);
+      navigate("/");
+      return;
+    }
+
+    const createdAccount = loginCreatedAccount(loginForm);
+    if (createdAccount) {
       navigate("/");
       return;
     }

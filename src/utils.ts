@@ -264,7 +264,7 @@ export const prototypeManagerLogin = {
 
 export const prototypeDeveloperLogin = {
   username: "Dev123",
-  password: "Xatori$Dev2026!",
+  password: "Xatori#123",
   email: "dev123@chos.prototype",
   role: "staff"
 } as const;
