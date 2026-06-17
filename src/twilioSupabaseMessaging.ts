@@ -33,7 +33,12 @@ export function isSupabaseTwilioMessagingEndpoint(endpoint: string, supabaseUrl?
   try {
     const endpointUrl = new URL(endpoint.trim());
     const expectedUrl = new URL(buildTwilioSupabaseMessagingUrls(supabaseUrl).baseUrl);
-    return endpointUrl.origin === expectedUrl.origin && endpointUrl.pathname.startsWith(expectedUrl.pathname);
+    const expectedPath = expectedUrl.pathname.replace(/\/+$/g, "");
+    const endpointPath = endpointUrl.pathname.replace(/\/+$/g, "");
+    return (
+      endpointUrl.origin === expectedUrl.origin &&
+      (endpointPath === expectedPath || endpointPath.startsWith(`${expectedPath}/`))
+    );
   } catch {
     return false;
   }

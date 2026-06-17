@@ -205,7 +205,7 @@ export function validateChoMessagingServerRequestGate(input: ChoMessagingServerR
   if (!input.csrfVerified) errors.push("Messaging server mutations require CSRF verification.");
   if (!account) errors.push("Messaging server request requires an authenticated Cho account.");
   if (input.requireStaff && account?.role !== "staff") errors.push("Messaging server request requires an authenticated staff account.");
-  if (input.requiredAccess && Array.isArray(input.authenticatedAccount?.access) && !input.authenticatedAccount.access.includes(input.requiredAccess)) {
+  if (input.requiredAccess && !input.authenticatedAccount?.access?.includes(input.requiredAccess)) {
     errors.push(`Messaging server account must include ${input.requiredAccess} access.`);
   }
 

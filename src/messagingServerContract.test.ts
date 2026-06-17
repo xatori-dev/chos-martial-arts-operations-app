@@ -168,6 +168,33 @@ describe("messaging server contract", () => {
     ]));
   });
 
+  it("requires explicit account access for authenticated server relay mutations", () => {
+    const plan = buildChoMessagingServerRelayPlan({
+      method: "POST",
+      credentialsIncluded: true,
+      csrfVerified: true,
+      authenticatedAccount: {
+        email: "manager123@chos.prototype",
+        role: "staff"
+      },
+      payload: validRelayPayload,
+      twilio: {
+        accountSid: "test-account-sid",
+        apiKeySid: "test-api-key-sid",
+        apiKeySecret: "super-secret",
+        messagingServiceSid: "test-messaging-service-sid",
+        consentEvidence: validConsentEvidence,
+        origin: "https://relay.chos.example"
+      }
+    });
+
+    expect(plan.ok).toBe(false);
+    expect(plan.relayExecutionPlan.requests).toEqual([]);
+    expect(plan.errors).toEqual(expect.arrayContaining([
+      "Messaging server account must include messages access."
+    ]));
+  });
+
   it("adds durable relay dispatch planning to the authenticated Twilio server plan", () => {
     const plan = buildChoMessagingServerRelayPlan({
       method: "POST",

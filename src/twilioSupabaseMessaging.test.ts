@@ -24,6 +24,7 @@ describe("twilio Supabase messaging URLs", () => {
     const supabaseUrl = "https://zfuwbbepsnmmlpgfkmhz.supabase.co";
 
     expect(isSupabaseTwilioMessagingEndpoint("https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging/send", supabaseUrl)).toBe(true);
+    expect(isSupabaseTwilioMessagingEndpoint("https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging-evil/send", supabaseUrl)).toBe(false);
     expect(isSupabaseTwilioMessagingEndpoint("https://relay.example.test/functions/v1/twilio-messaging/send", supabaseUrl)).toBe(false);
     expect(isSupabaseTwilioMessagingEndpoint("https://zfuwbbepsnmmlpgfkmhz.supabase.co/rest/v1/message_logs", supabaseUrl)).toBe(false);
   });
