@@ -7,7 +7,7 @@
     "dev": "vite",
     "dev:network": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
-    "build:pages": "npm run build && node scripts/copy-spa-fallback.mjs",
+    "build:pages": "npm run build && node scripts/write-build-version.mjs && node scripts/copy-spa-fallback.mjs",
     "preview": "vite preview",
     "preview:network": "vite preview --host 0.0.0.0",
     "test": "vitest run"

@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import App from "./App";
+import { startInstalledAppUpdateChecks } from "./appUpdate";
 import { AppStateProvider } from "./state";
 import { registerChoServiceWorker } from "./serviceWorkerRegistration";
 import { initializeAppTheme } from "./theme";
@@ -14,6 +15,7 @@ initializeAppTheme();
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     void registerChoServiceWorker();
+    startInstalledAppUpdateChecks();
   });
 }
 
