@@ -1750,11 +1750,28 @@ function writeRestoredPlainStorageValue(key: string, value?: string) {
   }
 }
 
+function persistRestoredAppStateValue<T>(key: string, value: T | undefined) {
+  if (!isSupabaseAppStateRemoteBacked()) return false;
+  removeStorage(key);
+  if (value === undefined || (typeof value === "string" && !value.trim())) {
+    void deleteSupabaseAppStateItem(key);
+  } else {
+    void persistSupabaseAppStateItem(key, value);
+  }
+  return true;
+}
+
+function restoreProductionMessagingSetupValue(key: string, value?: string) {
+  if (persistRestoredAppStateValue(key, value?.trim() || undefined)) return;
+  writeRestoredPlainStorageValue(key, value);
+}
+
 function restoreProductionMessagingSetupStorage(setup: OperationsBackupData["messagingSetup"][number] | undefined) {
   if (!setup) return;
-  writeRestoredPlainStorageValue(keys.twilioRelayEndpoint, setup.twilioRelayEndpoint);
-  writeRestoredPlainStorageValue(keys.pushServerEndpoint, setup.pushServerEndpoint);
+  restoreProductionMessagingSetupValue(keys.twilioRelayEndpoint, setup.twilioRelayEndpoint);
+  restoreProductionMessagingSetupValue(keys.pushServerEndpoint, setup.pushServerEndpoint);
   if (setup.twilioLaunchProfile) {
+    if (persistRestoredAppStateValue(keys.twilioLaunchProfile, setup.twilioLaunchProfile)) return;
     writeStorage(keys.twilioLaunchProfile, setup.twilioLaunchProfile);
   }
 }

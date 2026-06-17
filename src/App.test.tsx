@@ -12730,6 +12730,108 @@ describe("post-login operations app", () => {
     }
   });
 
+  it("hydrates and saves production messaging setup through Supabase app state when configured", async () => {
+    vi.stubEnv("VITE_ENABLE_SUPABASE_IN_TESTS", "true");
+    vi.stubEnv("VITE_SUPABASE_URL", "https://zfuwbbepsnmmlpgfkmhz.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    window.localStorage.setItem("chos.supabase.auth.v1", JSON.stringify({
+      accessToken: "manager-access-token",
+      expiresAt: Date.now() + 60 * 60 * 1000,
+      userId: "manager-user-id"
+    }));
+    window.localStorage.setItem("chos.operations.twilioRelayEndpoint.v1", "https://local.example.test/relay");
+    window.localStorage.setItem("chos.operations.pushServerEndpoint.v1", "https://local.example.test/push");
+    window.localStorage.setItem("chos.operations.twilioLaunchProfile.v1", JSON.stringify({ messagingServiceSid: "MG_LOCAL" }));
+    const remoteLaunchProfile = {
+      messagingServiceSid: "MG_REMOTE",
+      smsSender: "+12625550100",
+      inboundWebhookUrl: "https://remote.example.test/api/messages/inbound",
+      statusCallbackBaseUrl: "https://remote.example.test",
+      relayHealthCheckUrl: "https://remote.example.test/api/health/twilio",
+      managerAuthMode: "server-session",
+      senderType: "10dlc",
+      a2pBrandStatus: "approved",
+      a2pCampaignStatus: "approved",
+      tollFreeVerificationStatus: "not-used",
+      complianceNotes: "Remote setup.",
+      savedAt: "2026-06-03T10:15:00.000Z"
+    };
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = new URL(String(url));
+      if (requestUrl.pathname === "/rest/v1/app_state_items") {
+        if (init?.method === "POST" || init?.method === "DELETE") {
+          return new Response(null, { status: 204 });
+        }
+        const requestedKey = requestUrl.searchParams.get("key")?.replace(/^eq\./, "");
+        if (requestedKey === "chos.operations.twilioRelayEndpoint.v1") {
+          return new Response(JSON.stringify([{ key: requestedKey, value: "https://remote.example.test/api/messages/twilio" }]), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (requestedKey === "chos.operations.pushServerEndpoint.v1") {
+          return new Response(JSON.stringify([{ key: requestedKey, value: "https://remote.example.test/api/push/subscriptions" }]), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (requestedKey === "chos.operations.twilioLaunchProfile.v1") {
+          return new Response(JSON.stringify([{ key: requestedKey, value: remoteLaunchProfile }]), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (requestUrl.pathname === "/rest/v1/direct_messages" || requestUrl.pathname === "/rest/v1/message_logs") {
+        return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ error: "Unexpected URL" }), { status: 404, headers: { "Content-Type": "application/json" } });
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      renderLoggedInApp("/messages");
+
+      const relayInput = await screen.findByLabelText("Private Twilio relay URL");
+      const pushInput = screen.getByLabelText("Private push server URL");
+      await waitFor(() => expect(relayInput).toHaveValue("https://remote.example.test/api/messages/twilio"));
+      await waitFor(() => expect(pushInput).toHaveValue("https://remote.example.test/api/push/subscriptions"));
+      await waitFor(() => expect(screen.getByLabelText("Twilio Messaging Service SID")).toHaveValue("MG_REMOTE"));
+      expect(window.localStorage.getItem("chos.operations.twilioRelayEndpoint.v1")).toBeNull();
+      expect(window.localStorage.getItem("chos.operations.pushServerEndpoint.v1")).toBeNull();
+      expect(window.localStorage.getItem("chos.operations.twilioLaunchProfile.v1")).toBeNull();
+
+      fireEvent.change(relayInput, { target: { value: "https://saved.example.test/api/messages/twilio" } });
+      fireEvent.change(pushInput, { target: { value: "https://saved.example.test/api/push/subscriptions" } });
+      fireEvent.change(screen.getByLabelText("Twilio Messaging Service SID"), { target: { value: "MG_SAVED" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save Launch Profile" }));
+
+      expect(await screen.findByText("Twilio launch profile saved.")).toBeInTheDocument();
+      await waitFor(() => {
+        const upsertBodies = fetchMock.mock.calls
+          .map(([, init]) => init)
+          .filter((init): init is RequestInit => init?.method === "POST")
+          .map((init) => JSON.parse(String(init.body))) as Array<{ key: string; value: unknown }>;
+        expect(upsertBodies).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            key: "chos.operations.twilioRelayEndpoint.v1",
+            value: "https://saved.example.test/api/messages/twilio"
+          }),
+          expect.objectContaining({
+            key: "chos.operations.pushServerEndpoint.v1",
+            value: "https://saved.example.test/api/push/subscriptions"
+          }),
+          expect.objectContaining({
+            key: "chos.operations.twilioLaunchProfile.v1",
+            value: expect.objectContaining({
+              messagingServiceSid: "MG_SAVED",
+              managerAuthMode: "server-session",
+              senderType: "10dlc"
+            })
+          })
+        ]));
+      });
+      expect(window.localStorage.getItem("chos.operations.twilioRelayEndpoint.v1")).toBeNull();
+      expect(window.localStorage.getItem("chos.operations.pushServerEndpoint.v1")).toBeNull();
+      expect(window.localStorage.getItem("chos.operations.twilioLaunchProfile.v1")).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("checks the private Twilio relay health endpoint with manager credentials", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

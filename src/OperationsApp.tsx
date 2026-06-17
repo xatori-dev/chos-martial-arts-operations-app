@@ -71,6 +71,7 @@ import {
 import { childUsernameFromName, normalizeChildUsername } from "./childAccountUtils";
 import { beltRanks } from "./data";
 import { createSupabaseManagedAccount, getSupabaseBrowserConfig, isSupabaseAuthConfigured, readSupabaseAuthSession } from "./supabaseAccounts";
+import { deleteSupabaseAppStateItem, fetchSupabaseAppStateItem, isSupabaseAppStateRemoteBacked, persistSupabaseAppStateItem } from "./supabaseAppStatePersistence";
 import {
   readManagerProfile,
   readGuardianProfile,
@@ -900,6 +901,24 @@ function sanitizeTwilioLaunchProfile(profile: TwilioLaunchProfile): TwilioLaunch
   };
 }
 
+function normalizeTwilioLaunchProfilePayload(profile?: Partial<TwilioLaunchProfile> | null): TwilioLaunchProfile {
+  const managerAuthMode = profile?.managerAuthMode === "server-session" || profile?.managerAuthMode === "oauth-proxy" ? profile.managerAuthMode : "same-site-cookie";
+  return sanitizeTwilioLaunchProfile({
+    messagingServiceSid: profile?.messagingServiceSid ?? "",
+    smsSender: profile?.smsSender ?? "",
+    inboundWebhookUrl: profile?.inboundWebhookUrl ?? "",
+    statusCallbackBaseUrl: profile?.statusCallbackBaseUrl ?? "",
+    relayHealthCheckUrl: profile?.relayHealthCheckUrl ?? "",
+    managerAuthMode,
+    senderType: normalizeTwilioComplianceSenderType(profile?.senderType),
+    a2pBrandStatus: normalizeTwilioComplianceStatus(profile?.a2pBrandStatus),
+    a2pCampaignStatus: normalizeTwilioComplianceStatus(profile?.a2pCampaignStatus),
+    tollFreeVerificationStatus: normalizeTwilioComplianceStatus(profile?.tollFreeVerificationStatus),
+    complianceNotes: profile?.complianceNotes ?? "",
+    savedAt: profile?.savedAt
+  });
+}
+
 function twilioComplianceReady(profile: TwilioLaunchProfile) {
   if (profile.senderType === "10dlc") return profile.a2pBrandStatus === "approved" && profile.a2pCampaignStatus === "approved";
   if (profile.senderType === "toll-free") return profile.tollFreeVerificationStatus === "approved";
@@ -922,34 +941,46 @@ function buildTwilioComplianceProfile(profile: TwilioLaunchProfile) {
 
 function readTwilioLaunchProfile() {
   if (typeof window === "undefined") return defaultTwilioLaunchProfile;
+  if (isSupabaseAppStateRemoteBacked()) {
+    removeMessagingSetupStorageItem(twilioLaunchProfileStorageKey);
+    return defaultTwilioLaunchProfile;
+  }
   try {
     const rawProfile = window.localStorage.getItem(twilioLaunchProfileStorageKey);
     if (!rawProfile) return defaultTwilioLaunchProfile;
     const parsed = JSON.parse(rawProfile) as Partial<TwilioLaunchProfile>;
-    const managerAuthMode = parsed.managerAuthMode === "server-session" || parsed.managerAuthMode === "oauth-proxy" ? parsed.managerAuthMode : "same-site-cookie";
-    return sanitizeTwilioLaunchProfile({
-      messagingServiceSid: parsed.messagingServiceSid ?? "",
-      smsSender: parsed.smsSender ?? "",
-      inboundWebhookUrl: parsed.inboundWebhookUrl ?? "",
-      statusCallbackBaseUrl: parsed.statusCallbackBaseUrl ?? "",
-      relayHealthCheckUrl: parsed.relayHealthCheckUrl ?? "",
-      managerAuthMode,
-      senderType: normalizeTwilioComplianceSenderType(parsed.senderType),
-      a2pBrandStatus: normalizeTwilioComplianceStatus(parsed.a2pBrandStatus),
-      a2pCampaignStatus: normalizeTwilioComplianceStatus(parsed.a2pCampaignStatus),
-      tollFreeVerificationStatus: normalizeTwilioComplianceStatus(parsed.tollFreeVerificationStatus),
-      complianceNotes: parsed.complianceNotes ?? "",
-      savedAt: parsed.savedAt
-    });
+    return normalizeTwilioLaunchProfilePayload(parsed);
   } catch {
     return defaultTwilioLaunchProfile;
   }
 }
 
-function writeTwilioLaunchProfile(profile: TwilioLaunchProfile) {
+function removeMessagingSetupStorageItem(key: string) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(twilioLaunchProfileStorageKey, JSON.stringify(sanitizeTwilioLaunchProfile(profile)));
+    window.localStorage.removeItem(key);
+  } catch {
+    // Messaging setup persistence is optional; blocked storage should not break messaging.
+  }
+}
+
+function persistMessagingSetupItem<T>(key: string, value: T | undefined) {
+  if (!isSupabaseAppStateRemoteBacked()) return false;
+  removeMessagingSetupStorageItem(key);
+  if (value === undefined || (typeof value === "string" && !value.trim())) {
+    void deleteSupabaseAppStateItem(key);
+  } else {
+    void persistSupabaseAppStateItem(key, value);
+  }
+  return true;
+}
+
+function writeTwilioLaunchProfile(profile: TwilioLaunchProfile) {
+  if (typeof window === "undefined") return;
+  const sanitizedProfile = sanitizeTwilioLaunchProfile(profile);
+  if (persistMessagingSetupItem(twilioLaunchProfileStorageKey, sanitizedProfile)) return;
+  try {
+    window.localStorage.setItem(twilioLaunchProfileStorageKey, JSON.stringify(sanitizedProfile));
   } catch {
     // Launch profile persistence is optional; blocked storage should not break messaging.
   }
@@ -957,6 +988,10 @@ function writeTwilioLaunchProfile(profile: TwilioLaunchProfile) {
 
 function readTwilioRelayEndpoint() {
   if (typeof window === "undefined") return "";
+  if (isSupabaseAppStateRemoteBacked()) {
+    removeMessagingSetupStorageItem(twilioRelayEndpointStorageKey);
+    return "";
+  }
   try {
     return window.localStorage.getItem(twilioRelayEndpointStorageKey) ?? "";
   } catch {
@@ -966,8 +1001,9 @@ function readTwilioRelayEndpoint() {
 
 function writeTwilioRelayEndpoint(value: string) {
   if (typeof window === "undefined") return;
+  const endpoint = value.trim();
+  if (persistMessagingSetupItem(twilioRelayEndpointStorageKey, endpoint || undefined)) return;
   try {
-    const endpoint = value.trim();
     if (endpoint) {
       window.localStorage.setItem(twilioRelayEndpointStorageKey, endpoint);
     } else {
@@ -992,6 +1028,10 @@ function supabaseTwilioRelayAuthHeaders(endpoint: string): Record<string, string
 
 function readPushServerEndpoint() {
   if (typeof window === "undefined") return "";
+  if (isSupabaseAppStateRemoteBacked()) {
+    removeMessagingSetupStorageItem(pushServerEndpointStorageKey);
+    return "";
+  }
   try {
     return window.localStorage.getItem(pushServerEndpointStorageKey) ?? "";
   } catch {
@@ -1001,8 +1041,9 @@ function readPushServerEndpoint() {
 
 function writePushServerEndpoint(value: string) {
   if (typeof window === "undefined") return;
+  const endpoint = value.trim();
+  if (persistMessagingSetupItem(pushServerEndpointStorageKey, endpoint || undefined)) return;
   try {
-    const endpoint = value.trim();
     if (endpoint) {
       window.localStorage.setItem(pushServerEndpointStorageKey, endpoint);
     } else {
@@ -1013,14 +1054,48 @@ function writePushServerEndpoint(value: string) {
   }
 }
 
-function buildProductionMessagingSetupBackupInput(settings: MessageNotificationSettings): ProductionMessagingSetupBackup[] {
+function useSupabaseMessagingSetupString(key: string, onValue: (value: string) => void, fallback = "") {
+  useEffect(() => {
+    if (!isSupabaseAppStateRemoteBacked()) return undefined;
+    let cancelled = false;
+    removeMessagingSetupStorageItem(key);
+    void fetchSupabaseAppStateItem<string>(key).then((result) => {
+      if (cancelled || result.status !== "ok") return;
+      const remoteValue = typeof result.data === "string" ? result.data.trim() : "";
+      onValue(remoteValue || fallback);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fallback, key, onValue]);
+}
+
+function useSupabaseTwilioLaunchProfile(onValue: (profile: TwilioLaunchProfile) => void) {
+  useEffect(() => {
+    if (!isSupabaseAppStateRemoteBacked()) return undefined;
+    let cancelled = false;
+    removeMessagingSetupStorageItem(twilioLaunchProfileStorageKey);
+    void fetchSupabaseAppStateItem<Partial<TwilioLaunchProfile>>(twilioLaunchProfileStorageKey).then((result) => {
+      if (cancelled || result.status !== "ok" || !result.data || typeof result.data !== "object") return;
+      onValue(normalizeTwilioLaunchProfilePayload(result.data));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [onValue]);
+}
+
+function buildProductionMessagingSetupBackupInput(
+  settings: MessageNotificationSettings,
+  setup: { twilioRelayEndpoint?: string; pushServerEndpoint?: string; twilioLaunchProfile?: TwilioLaunchProfile } = {}
+): ProductionMessagingSetupBackup[] {
   return [
     {
       id: "production-messaging",
-      twilioRelayEndpoint: readTwilioRelayEndpoint(),
-      pushServerEndpoint: readPushServerEndpoint(),
+      twilioRelayEndpoint: setup.twilioRelayEndpoint ?? readTwilioRelayEndpoint(),
+      pushServerEndpoint: setup.pushServerEndpoint ?? readPushServerEndpoint(),
       webPushPublicKey: settings.pushPublicKey ?? "",
-      twilioLaunchProfile: readTwilioLaunchProfile()
+      twilioLaunchProfile: setup.twilioLaunchProfile ?? readTwilioLaunchProfile()
     }
   ];
 }
@@ -5439,6 +5514,8 @@ function StudentProfilePage() {
     ]
   };
 
+  useSupabaseMessagingSetupString(pushServerEndpointStorageKey, setStudentPushServerEndpoint);
+
   useEffect(() => {
     setStudentProfile(readStudentProfile(session?.email, selectedStudent, currentChildAccount));
   }, [currentChildAccount, selectedStudent, session?.email]);
@@ -6722,6 +6799,8 @@ function ParentProfilePage() {
       ? `${selectedChild.age ? `Age ${selectedChild.age}` : "Age not set"} - ${childBeltLabel(selectedChild.beltSlug)} Belt`
       : "Add a child profile to unlock student tools."
   };
+
+  useSupabaseMessagingSetupString(pushServerEndpointStorageKey, setParentPushServerEndpoint);
 
   useEffect(() => {
     if (!guardianChildren.length) {
@@ -9732,6 +9811,12 @@ function ReportsPage() {
   } = useAppState();
   const backupRestoreInputRef = useRef<HTMLInputElement>(null);
   const today = toDateKey(useLiveCalendarDate());
+  const [backupTwilioRelayEndpoint, setBackupTwilioRelayEndpoint] = useState(() => readTwilioRelayEndpoint());
+  const [backupPushServerEndpoint, setBackupPushServerEndpoint] = useState(() => readPushServerEndpoint());
+  const [backupTwilioLaunchProfile, setBackupTwilioLaunchProfile] = useState<TwilioLaunchProfile>(() => readTwilioLaunchProfile());
+  useSupabaseMessagingSetupString(twilioRelayEndpointStorageKey, setBackupTwilioRelayEndpoint);
+  useSupabaseMessagingSetupString(pushServerEndpointStorageKey, setBackupPushServerEndpoint);
+  useSupabaseTwilioLaunchProfile(setBackupTwilioLaunchProfile);
   const backupInput = {
     accounts,
     accountRoles,
@@ -9745,7 +9830,11 @@ function ReportsPage() {
     messageLogs,
     automationRuns: textAutomationRuns,
     directMessages,
-    messagingSetup: buildProductionMessagingSetupBackupInput(messageNotificationSettings),
+    messagingSetup: buildProductionMessagingSetupBackupInput(messageNotificationSettings, {
+      twilioRelayEndpoint: backupTwilioRelayEndpoint,
+      pushServerEndpoint: backupPushServerEndpoint,
+      twilioLaunchProfile: backupTwilioLaunchProfile
+    }),
     studioEvents,
     merchandiseItems,
     checkIns,
@@ -11460,6 +11549,10 @@ function MessagesPage() {
   );
   const selectedNotificationCount = selectedUnreadNotificationIds.length;
   const allUnreadNotificationsSelected = Boolean(unreadNotificationIds.length) && selectedNotificationCount === unreadNotificationIds.length;
+
+  useSupabaseMessagingSetupString(twilioRelayEndpointStorageKey, setTwilioRelayEndpoint, twilioSupabaseRelayUrls.sendUrl);
+  useSupabaseMessagingSetupString(pushServerEndpointStorageKey, setPushServerEndpoint);
+  useSupabaseTwilioLaunchProfile(setTwilioLaunchProfile);
 
   useNotificationDevicePermissionSync({
     settings: messageNotificationSettings,
