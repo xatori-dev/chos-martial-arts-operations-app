@@ -463,6 +463,25 @@ async function syncMessageAppBadge(unreadCount: number) {
   return false;
 }
 
+async function clearDisplayedAppMessageNotifications() {
+  await syncMessageAppBadge(0);
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    if (typeof registration.getNotifications !== "function") return;
+    const notifications = await registration.getNotifications();
+    notifications.forEach((notification) => {
+      const data = notification.data as { url?: unknown } | undefined;
+      const notificationUrl = typeof data?.url === "string" ? data.url : "";
+      if (notification.tag.startsWith("chos-") || notificationUrl.includes("/messages")) {
+        notification.close();
+      }
+    });
+  } catch {
+    // Displayed browser notifications are optional and may not be readable in every installed-app context.
+  }
+}
+
 function webPushPublicKeyToBytes(publicKey: string) {
   const cleanKey = publicKey.trim();
   if (!cleanKey || typeof window === "undefined" || typeof window.atob !== "function") return undefined;
@@ -10480,7 +10499,11 @@ function MessagesPage() {
   }, [messageNotificationSettings.pushPublicKey]);
 
   useEffect(() => {
-    void syncMessageAppBadge(unreadDirectMessageCount);
+    if (unreadDirectMessageCount > 0) {
+      void syncMessageAppBadge(unreadDirectMessageCount);
+      return;
+    }
+    void clearDisplayedAppMessageNotifications();
   }, [unreadDirectMessageCount]);
 
   useEffect(() => {
