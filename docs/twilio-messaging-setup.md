@@ -34,7 +34,8 @@ Current staging state, verified 2026-06-17:
 - Authenticated relay health returns `status: "not-ready"` with `managerAuth: true`, `twilioCredentials: false`, `senderConfigured: false`, `complianceReady: false`, `webhookSignatureValidation: false`, and `relayCanSend: false`.
 - Supabase CLI secret operations against staging currently fail with `403` / `Your account does not have the necessary privileges to access this endpoint`; an owner/admin dashboard step or a privileged Supabase CLI login is still required to set hosted relay secrets.
 - Twilio CLI profile `xatori-dev` can manage Messaging Services. Cho's staging Messaging Service `Cho's Martial Arts Broadcasts` / `MG3f346aee214d3fef62064a1350bd556e` exists with inbound and status callback URLs pointed at this Supabase relay.
-- That Messaging Service has no sender attached and reports `usAppToPersonRegistered: false`. A local SMS-capable number and approved A2P Brand/Campaign remain required before US mass texting can work.
+- That Messaging Service has SMS/MMS-capable local sender `+12625003283` / `PN20d1e4fb3d9eb07bcb076cb64558e69a` attached and reports `usAppToPersonRegistered: false`. An approved A2P Brand/Campaign remains required before US mass texting can work.
+- Twilio Trust Hub Customer Profile `Xatori Dev` / `BU2de33a5cd41a39e09907d4390a2cd98a` is still `draft`. Evaluation `EL0d182671c352f2e7f5d7cd0d7836cb79` returned `noncompliant` because `business_registration_identifier` failed with error `22215` / `The Business Registration Type is invalid.`
 
 Staging endpoints:
 

@@ -46,8 +46,8 @@ git diff --check
 - The staging Twilio relay endpoints are deployed under `https://zfuwbbepsnmmlpgfkmhz.supabase.co/functions/v1/twilio-messaging`.
 - Migration `twilio_messaging_relay` is applied and Edge Function `twilio-messaging` is active on staging. Hosted secrets still need an owner/admin Supabase step because the current CLI token gets `403` on `supabase secrets set/list`.
 - Required relay secrets/settings: `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY`, `TWILIO_API_KEY_SECRET`, `TWILIO_AUTH_TOKEN`, `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FUNCTION_PUBLIC_URL`, `TWILIO_SENDER_TYPE=10dlc`, `TWILIO_A2P_BRAND_APPROVED`, and `TWILIO_A2P_CAMPAIGN_APPROVED`.
-- Twilio Messaging Service `Cho's Martial Arts Broadcasts` / `MG3f346aee214d3fef62064a1350bd556e` exists with inbound/status callbacks pointed at the Supabase relay.
-- Live US mass texting remains blocked until Twilio Console shows an SMS-capable local sender attached, A2P Brand and Campaign approved, and the required Twilio Auth Token available as a Supabase secret for webhook signature validation.
+- Twilio Messaging Service `Cho's Martial Arts Broadcasts` / `MG3f346aee214d3fef62064a1350bd556e` exists with inbound/status callbacks pointed at the Supabase relay and SMS/MMS local sender `+12625003283` attached.
+- Live US mass texting remains blocked until Twilio Console shows A2P Brand and Campaign approved and the required Twilio Auth Token available as a Supabase secret for webhook signature validation. Current Trust Hub evaluation `EL0d182671c352f2e7f5d7cd0d7836cb79` is `noncompliant` because `business_registration_identifier` failed with error `22215`.
 - Server implementation must enforce manager auth, server-held credentials, consent evidence, opt-out handling, rate limits, idempotency, audit logs, and Twilio webhook signatures.
 - Individual staff Supabase login is not part of this staging pilot. The current app accepts `Manager123` and the gated `Dev123` diagnostic account; non-owner staff profiles are rejected by the client until a staff-account release is approved.
 
