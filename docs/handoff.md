@@ -36,7 +36,7 @@ This project is not ready for client handoff as a production system. It is a Xat
 - [x] Supabase `twilio-messaging` function is deployed and `sms_consent_records` plus `twilio_relay_attempts` are migrated in staging.
 - [x] Twilio Messaging Service `Cho's Martial Arts Broadcasts` has SMS/MMS sender `+12625003283` attached.
 - [ ] Hosted Twilio secrets are set in Supabase. Current CLI token gets `403` on staging secret operations.
-- [ ] Twilio 10DLC Brand/Campaign compliance, consent, and audit model are approved if live SMS is used. Current Trust Hub Customer Profile evaluation is `noncompliant` due to invalid `business_registration_identifier`.
+- [ ] Twilio 10DLC Brand/Campaign compliance, consent, and audit model are approved if live SMS is used. Current Trust Hub Customer Profile evaluation is `compliant`, but the Primary Customer Profile still needs Twilio Console submission/review before A2P Brand/Campaign approval can proceed.
 - [ ] Stripe legal/payment ownership is decided if payments are introduced.
 - [ ] 1Password handoff vault contains only intended client/handoff references.
 - [ ] Xatori-only credentials are revoked or reduced if ownership transfers.

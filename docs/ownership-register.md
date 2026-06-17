@@ -1,6 +1,6 @@
 # Ownership Register
 
-Last updated: 2026-06-10
+Last updated: 2026-06-17
 
 Default model: agency-master under Xatori Dev, with strict per-app isolation and handoff-ready documentation.
 
@@ -13,7 +13,7 @@ Default model: agency-master under Xatori Dev, with strict per-app isolation and
 | 1Password | xatori@xatoridev.com | xatori@xatoridev.com | xatori@xatoridev.com | Not started | Use `client-chos-martial-arts Development`, `Production`, and `Handoff` vaults. |
 | Cloudflare | Xatori Dev | Xatori Dev | Xatori Dev | Not started | No DNS or production hosting change in phase 1. |
 | Supabase | Xatori Dev | Xatori Dev | Xatori Dev | Started | Staging project `chos-martial-arts-operations-app-staging` is documented for manager auth/account persistence; production remains uncreated. |
-| Twilio | Xatori Dev | Xatori Dev | Xatori Dev | Started | Cho's staging Messaging Service `Cho's Martial Arts Broadcasts` exists with sender `+12625003283`; no live SMS send is verified, and A2P/hosted-secret setup remains blocked. |
+| Twilio | Xatori Dev | Xatori Dev | Xatori Dev | Started | Cho's staging Messaging Service `Cho's Martial Arts Broadcasts` exists with sender `+12625003283`; the Trust Hub profile now evaluates `compliant`, but no live SMS send is verified and Twilio Console A2P plus Supabase hosted-secret setup remain blocked. |
 | Stripe | Xatori Dev, if legally appropriate | Xatori Dev, if legally appropriate | Xatori Dev, if legally appropriate | Not started | No payment integration exists today; separate account may be required for independent legal/payment ownership. |
 | Email provider | Xatori Dev, if needed | Xatori Dev, if needed | Xatori Dev, if needed | Not started | Not integrated today. |
 | Analytics/Monitoring | Xatori Dev, if needed | Xatori Dev, if needed | Xatori Dev, if needed | Not started | Not integrated today. |
