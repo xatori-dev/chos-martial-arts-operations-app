@@ -5388,6 +5388,28 @@ describe("post-login operations app", () => {
     expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
   });
 
+  it("hides the Home feed compose button while feed items are selected", () => {
+    renderLoggedInApp("/profile");
+
+    expect(screen.getByRole("button", { name: "Compose" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+
+    const attendanceCheckbox = screen.getByRole("checkbox", { name: "Select Attendance Confirmation" });
+    fireEvent.click(attendanceCheckbox);
+
+    expect(attendanceCheckbox).toBeChecked();
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete selected" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Compose" })).not.toBeInTheDocument();
+
+    fireEvent.click(attendanceCheckbox);
+
+    expect(attendanceCheckbox).not.toBeChecked();
+    expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compose" })).toBeInTheDocument();
+  });
+
   it("logs out from the manager launcher icon button", () => {
     renderLoggedInApp("/manager");
 

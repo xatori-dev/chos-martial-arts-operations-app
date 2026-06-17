@@ -7782,10 +7782,12 @@ function ManagerHomePage() {
               >
                 {eventCount} Event {eventCount === 1 ? "Notification" : "Notifications"}
               </button>
-              <button className="manager-home-compose" type="button" aria-label="Compose" onClick={() => setIsComposeOpen(true)}>
-                <span>Compose</span>
-                <Plus size={16} />
-              </button>
+              {selectedFeedCount === 0 ? (
+                <button className="manager-home-compose" type="button" aria-label="Compose" onClick={() => setIsComposeOpen(true)}>
+                  <span>Compose</span>
+                  <Plus size={16} />
+                </button>
+              ) : null}
               {selectedFeedCount > 0 && (
                 <span className="manager-home-bulk-actions" aria-live="polite">
                   <strong>{selectedFeedCount} selected</strong>
