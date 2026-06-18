@@ -79,7 +79,6 @@ const keys = {
 } as const;
 
 const studentPrototypeDataResetKey = "chos.prototype.studentDataReset.v1";
-const retiredStudentPrototypeEmails = new Set(["student123@chos.prototype", "parent123@chos.prototype"]);
 const retiredStudentScopedStoragePrefixes = [
   "chos.beltCase.student.",
   "chos.parentTutorial.",
@@ -546,10 +545,6 @@ function removeSessionStorage(key: string) {
   }
 }
 
-function normalizedStoredEmail(value: unknown) {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
 function readStoredArray<T>(key: string): T[] {
   const value = readStorage<unknown>(key, []);
   return Array.isArray(value) ? (value as T[]) : [];
@@ -569,18 +564,6 @@ function removeRetiredStudentScopedStorage() {
   } catch {
     // Best-effort cleanup only; blocked storage should not stop app startup.
   }
-}
-
-function shouldClearSessionEmail(
-  email: string,
-  retiredAccountEmails: ReadonlySet<string>,
-  managedAccounts: readonly ManagedAccount[],
-  childAccounts: readonly ChildAccount[]
-) {
-  if (!email) return false;
-  if (retiredAccountEmails.has(email)) return true;
-  if (managedAccounts.some((account) => account.username.trim().toLowerCase() === email)) return true;
-  return childAccounts.some((child) => child.username.trim().toLowerCase() === email);
 }
 
 function cleanupRetiredStudentPrototypeStorage() {

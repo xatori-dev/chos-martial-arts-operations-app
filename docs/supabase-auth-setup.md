@@ -6,7 +6,7 @@ This app keeps the browser on publishable Supabase credentials only. Manager sig
 
 1. Create or connect the Cho's Supabase project. Current staging is `chos-martial-arts-operations-app-staging` / `zfuwbbepsnmmlpgfkmhz`.
 2. Apply the migrations in `supabase/migrations`.
-3. Deploy `supabase/functions/manager-create-account/index.ts` only if the retired account-creation endpoint must return its explicit 410 response in that environment.
+3. Deploy `supabase/functions/manager-create-account/index.ts` when Manager123 owner-created live staff, student, and parent accounts are in scope for that environment. The function uses `verify_jwt = false` because it performs its own bearer-token, Supabase Auth user, owner-profile, and password-policy checks; do not deploy it without those checks.
 4. Set the deployed app env vars:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_PUBLISHABLE_KEY`
@@ -30,9 +30,11 @@ For an existing staging project, rotate any legacy seeded owner password by reru
 ## Runtime behavior
 
 - `Manager123` signs in through Supabase when `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are configured.
-- Manager-created staff accounts are retired. Only `Manager123` and the gated local `Dev123` diagnostic login are supported.
-- `live_chat_messages`, `direct_messages`, and `message_logs` persist in Supabase when the user is signed in with a valid Supabase manager session.
-- The local prototype fallback is only used when Supabase env vars or a Supabase auth session are unavailable.
+- Manager-created staff, student, and parent accounts are supported when the function is deployed and the manager has a valid `Manager123` Supabase session.
+- The public-staging `Dev123` diagnostic login is local only and cannot create live Supabase accounts because it has no Supabase Auth session.
+- `live_chat_messages`, `direct_messages`, `message_logs`, and `app_state_items` persist in Supabase when the user is signed in with a valid Supabase session.
+- When Supabase env vars are configured but a Supabase auth session is unavailable, operations records do not fall back to localStorage. Device-local preferences and public `Dev123` diagnostics can still use browser storage.
+- The local prototype fallback for credential and operations records is only used when Supabase env vars are absent.
 
 ## Hosted Auth hardening
 

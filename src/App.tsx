@@ -386,6 +386,11 @@ function LoginLandingPage({ visible, handoffActive = false }: { visible: boolean
       return;
     }
 
+    if (supabaseConfigured && isPrototypeManagerLogin(loginForm)) {
+      failLogin("Use the live Supabase password for Manager123.");
+      return;
+    }
+
     if (supabaseConfigured && isSupportedSupabaseLoginUsername(loginForm.username)) {
       setLoginPending(true);
       try {

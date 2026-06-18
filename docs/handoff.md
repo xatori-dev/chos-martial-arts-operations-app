@@ -2,7 +2,7 @@
 
 ## Current Status
 
-This project is not ready for client handoff as a production system. It is a Xatori-managed staging pilot with a verified GitHub Pages deployment, an active Supabase staging surface for `Manager123` auth and messaging persistence, browser-local prototype workflows for the remaining operations data, and a deployed Supabase Twilio relay that is blocked on hosted secrets and provider approval. Public staging intentionally exposes the gated `Dev123` diagnostic login for this pilot. There is no production backend, production database, payments, email provider, or approved live SMS provider.
+This project is not ready for client handoff as a production system. It is a Xatori-managed staging pilot with a verified GitHub Pages deployment, an active Supabase staging surface for `Manager123` auth, owner-provisioned pilot accounts, messaging persistence, and signed-in operations app-state persistence through `app_state_items`. Device-local preferences and diagnostic prototype sessions still use browser storage. The deployed Supabase Twilio relay is blocked on hosted secrets and provider approval. Public staging intentionally exposes the gated `Dev123` diagnostic login for this pilot. There is no production backend, production database, payments, email provider, or approved live SMS provider.
 
 ## Delivery Package
 
@@ -26,7 +26,7 @@ This project is not ready for client handoff as a production system. It is a Xat
 - [x] Xatori GitHub repo exists and `origin/main` is reachable.
 - [x] Xatori GitHub Pages deployment is proven from the target repo.
 - [x] Local `main` tracks `origin/main`.
-- [x] Staging pilot scope is defined as `Manager123` plus public-staging `Dev123`.
+- [x] Staging pilot scope is defined as `Manager123`, manager-created pilot accounts, and public-staging `Dev123`.
 - [ ] Each launch-readiness push is verified against the live Pages URL before pilot users are invited.
 - [ ] GitHub CLI or connector identity is switched to an intended Xatori operator before live repo administration.
 - [ ] Legacy `projektoutside` repo exception is resolved or explicitly retained after Xatori deployment is proven.
@@ -43,4 +43,4 @@ This project is not ready for client handoff as a production system. It is a Xat
 
 ## Support Transition Notes
 
-Until the hosted Supabase relay secrets and Twilio 10DLC setup are verified, support should focus on staging manager auth, local prototype behavior, GitHub Pages deployment health, and documented provider-readiness gaps. Do not promise individual staff accounts, real cross-device persistence for all operations workflows, production auth, payments, email, or live SMS from the current hosted app.
+Until the hosted Supabase relay secrets and Twilio 10DLC setup are verified, support should focus on staging manager auth, owner-created pilot accounts, signed-in Supabase app-state behavior, GitHub Pages deployment health, and documented provider-readiness gaps. Do not promise a production-ready staff account rollout, production auth, payments, email, or live SMS from the current hosted app.

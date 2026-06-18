@@ -172,6 +172,28 @@ describe("Supabase-backed app state provider", () => {
     expect(window.localStorage.getItem("chos.operations.students.v1")).toBeNull();
   });
 
+  it("does not fall back to local operations storage when Supabase is configured without a session", async () => {
+    window.localStorage.removeItem(supabaseSessionStorageKey);
+    window.localStorage.setItem("chos.operations.students.v1", JSON.stringify([{ id: "stale-local-student" }]));
+    const fetchMock = vi.fn(async () => jsonResponse({ error: "Unexpected Supabase request" }, { status: 500 }));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    render(
+      <AppStateProvider>
+        <Harness />
+      </AppStateProvider>
+    );
+
+    expect((await screen.findByTestId("students")).textContent).not.toContain("stale-local-student");
+    await waitFor(() => expect(window.localStorage.getItem("chos.operations.students.v1")).toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Student" }));
+
+    await waitFor(() => expect(screen.getByTestId("students").textContent).toContain("student-"));
+    expect(window.localStorage.getItem("chos.operations.students.v1")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("restores production messaging setup into Supabase app state instead of local storage", async () => {
     window.localStorage.setItem("chos.operations.twilioRelayEndpoint.v1", "https://local.example.test/relay");
     window.localStorage.setItem("chos.operations.pushServerEndpoint.v1", "https://local.example.test/push");

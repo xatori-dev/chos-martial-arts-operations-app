@@ -2602,6 +2602,31 @@ describe("login landing", () => {
     }
   });
 
+  it("does not send the retired prototype manager password to Supabase when staging auth is configured", async () => {
+    vi.stubEnv("VITE_ENABLE_SUPABASE_IN_TESTS", "true");
+    vi.stubEnv("VITE_SUPABASE_URL", "https://zfuwbbepsnmmlpgfkmhz.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: "Unexpected Supabase request" }), { status: 500, headers: { "Content-Type": "application/json" } }));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      renderLoggedOutApp("/");
+
+      fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "Manager123" } });
+      fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: prototypeManagerLogin.password } });
+      fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+      expect(await screen.findByText("Use the live Supabase password for Manager123.")).toBeInTheDocument();
+      expect(screen.getByRole("dialog", { name: "Login failed" })).toBeInTheDocument();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(window.localStorage.getItem("chos.session.v1")).toBeNull();
+      expect(window.localStorage.getItem("chos.accountRoles.v1")).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("rejects the retired prototype student credential at login", () => {
     renderLoggedOutApp("/");
 
@@ -3970,7 +3995,7 @@ describe("post-login operations app", () => {
     }));
   });
 
-  it.skip("opens the staff-only live chat room route", () => {
+  it("opens the staff-only live chat room route", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-12T18:05:00-05:00"));
     renderLoggedInApp("/live-chat");
@@ -3983,7 +4008,8 @@ describe("post-login operations app", () => {
     expect(chatFrame).not.toHaveClass("is-sidebar-collapsed");
     const roster = screen.getByLabelText("Live chat members");
     expect(roster).toHaveClass("manager-launcher-grid", "manager-launcher-sidebar", "live-chat-roster");
-    expect(roster.querySelector(".manager-launcher-item.live-chat-roster-member")).toBeInTheDocument();
+    const rosterMembers = roster.querySelectorAll(".manager-launcher-item.live-chat-roster-member");
+    expect(rosterMembers[0]).toBeInTheDocument();
     const rosterToggle = screen.getByRole("button", { name: "Collapse live chat member list" });
     expect(rosterToggle).toHaveClass("manager-launcher-rail-toggle");
     expect(rosterToggle.querySelector(".manager-launcher-rail-toggle-bar")).toBeInTheDocument();
@@ -3995,7 +4021,7 @@ describe("post-login operations app", () => {
     expect(within(roomTabs).getByRole("tab", { name: /Mentions/i })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "All Messages" })).not.toBeInTheDocument();
     const chatHeader = screen.getByLabelText("Live chat room header");
-    expect(within(chatHeader).getByLabelText("Live chat online count")).toHaveTextContent("18 Online");
+    expect(within(chatHeader).getByLabelText("Live chat online count")).toHaveTextContent(`${rosterMembers.length} Online`);
     expect(screen.queryByLabelText("Live chat preview")).not.toBeInTheDocument();
     expect(within(chatHeader).queryByText(/^Preview$/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Live chat composer")).toBeInTheDocument();
@@ -4141,15 +4167,15 @@ describe("post-login operations app", () => {
     expect(feed.scrollTop).toBe(180);
   });
 
-  it.skip("redirects non-staff users away from the live chat room", () => {
-    const guardianView = renderLoggedInApp("/live-chat", "guardian");
+  it("redirects non-staff users away from the live chat room", async () => {
+    const guardianView = renderBootstrappedSessionApp("/live-chat", "guardian");
     expect(screen.queryByLabelText("Live chat room page")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Parent profile page")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Parent profile page")).toBeInTheDocument();
     guardianView.unmount();
 
-    renderLoggedInApp("/live-chat", "student");
+    renderBootstrappedSessionApp("/live-chat", "student");
     expect(screen.queryByLabelText("Live chat room page")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Student profile page")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Student profile page")).toBeInTheDocument();
   });
 
   it("opens the manager panel from the manager home icon button", () => {
@@ -4659,6 +4685,10 @@ describe("post-login operations app", () => {
       renderLoggedInApp("/manager?tool=create");
       const createAccountCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("/functions/v1/manager-create-account"));
 
+      expect(screen.getByText("Create live Supabase sign-in profiles for staff, students, and parents. A Manager123 Supabase session is required before a live account is created.")).toBeInTheDocument();
+      expect(screen.getByText("Choose the role, set the username and password, then create the account in Supabase for the family or staff member.")).toBeInTheDocument();
+      expect(screen.queryByText(/Create local sign-in credentials/)).not.toBeInTheDocument();
+
       fireEvent.change(screen.getByLabelText("Staff full name"), { target: { value: "Remote Staff" } });
       fireEvent.change(screen.getByLabelText("Staff username"), { target: { value: "remote.staff" } });
       fireEvent.change(screen.getByLabelText("Staff password"), { target: { value: "RemotePass123!" } });
@@ -4866,7 +4896,7 @@ describe("post-login operations app", () => {
     ]));
   });
 
-  it.skip("lets students enable device notifications for unread app messages", async () => {
+  it("lets students enable device notifications for unread app messages", async () => {
     const showNotification = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
@@ -4893,9 +4923,9 @@ describe("post-login operations app", () => {
       }
     ]));
 
-    renderLoggedInApp("/", "student");
+    renderBootstrappedSessionApp("/", "student");
 
-    const actionRow = screen.getByLabelText("Student reference action row");
+    const actionRow = await screen.findByLabelText("Student reference action row");
     fireEvent.click(within(actionRow).getByRole("tab", { name: "Messages" }));
     const feedPanel = await screen.findByRole("tabpanel", { name: "Messages and event notifications" });
 
@@ -4926,7 +4956,7 @@ describe("post-login operations app", () => {
     }));
   });
 
-  it.skip("lets students connect and sync a private web push subscription", async () => {
+  it("lets students connect and sync a private web push subscription", async () => {
     const pushSubscription = {
       endpoint: "https://push.example.test/subscriptions/student-device",
       expirationTime: null,
@@ -4960,9 +4990,9 @@ describe("post-login operations app", () => {
       value: fetchMock
     });
 
-    renderLoggedInApp("/", "student");
+    renderBootstrappedSessionApp("/", "student");
 
-    const actionRow = screen.getByLabelText("Student reference action row");
+    const actionRow = await screen.findByLabelText("Student reference action row");
     fireEvent.click(within(actionRow).getByRole("tab", { name: "Messages" }));
     const feedPanel = await screen.findByRole("tabpanel", { name: "Messages and event notifications" });
 
@@ -5175,7 +5205,7 @@ describe("post-login operations app", () => {
     ]));
   });
 
-  it.skip("lets parents enable device notifications for unread family app messages", async () => {
+  it("lets parents enable device notifications for unread family app messages", async () => {
     const showNotification = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
@@ -5201,10 +5231,22 @@ describe("post-login operations app", () => {
         status: "sent"
       }
     ]));
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([
+      {
+        id: "child-mina-cho",
+        parentEmail: "parent123@chos.prototype",
+        name: "Mina Cho",
+        username: "mina-cho.child",
+        password: "Dragon123",
+        age: "8",
+        beltSlug: "white",
+        createdAt: "2026-05-20T10:00:00.000Z"
+      }
+    ]));
 
-    renderLoggedInApp("/", "guardian");
+    renderBootstrappedSessionApp("/", "guardian");
 
-    const parentTools = screen.getByLabelText("Parent student tools");
+    const parentTools = await screen.findByLabelText("Parent student tools");
     fireEvent.click(within(parentTools).getByRole("button", { name: "Messages" }));
     const messagesView = screen.getByLabelText("Parent messages view");
 
@@ -5235,7 +5277,7 @@ describe("post-login operations app", () => {
     }));
   });
 
-  it.skip("lets parents connect and sync a private web push subscription", async () => {
+  it("lets parents connect and sync a private web push subscription", async () => {
     const pushSubscription = {
       endpoint: "https://push.example.test/subscriptions/parent-device",
       expirationTime: null,
@@ -5269,9 +5311,22 @@ describe("post-login operations app", () => {
       value: fetchMock
     });
 
-    renderLoggedInApp("/", "guardian");
+    window.localStorage.setItem("chos.childAccounts.v1", JSON.stringify([
+      {
+        id: "child-mina-cho",
+        parentEmail: "parent123@chos.prototype",
+        name: "Mina Cho",
+        username: "mina-cho.child",
+        password: "Dragon123",
+        age: "8",
+        beltSlug: "white",
+        createdAt: "2026-05-20T10:00:00.000Z"
+      }
+    ]));
 
-    const parentTools = screen.getByLabelText("Parent student tools");
+    renderBootstrappedSessionApp("/", "guardian");
+
+    const parentTools = await screen.findByLabelText("Parent student tools");
     fireEvent.click(within(parentTools).getByRole("button", { name: "Messages" }));
     const messagesView = screen.getByLabelText("Parent messages view");
 

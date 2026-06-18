@@ -9523,12 +9523,19 @@ function CreateAccountsPage() {
 
   const parentAccounts = accounts.filter((account) => normalizeCreateUsername(account.email) && account.password?.trim() && account.role === "guardian");
   const activeManagedAccounts = managedAccounts.filter((account) => account.status !== "inactive");
+  const liveSupabaseAccountsEnabled = isSupabaseAuthConfigured();
+  const createAccountPageText = liveSupabaseAccountsEnabled
+    ? "Create live Supabase sign-in profiles for staff, students, and parents. A Manager123 Supabase session is required before a live account is created."
+    : "Create local sign-in credentials for staff, students, and parents. Manager and Developer are the only accounts that can open this creator.";
+  const creatorInstructions = liveSupabaseAccountsEnabled
+    ? "Choose the role, set the username and password, then create the account in Supabase for the family or staff member."
+    : "Choose the role, set the username and password, then hand the credentials to the family or staff member.";
 
   return (
     <OperationsPage
       className="operations-page--create-accounts"
       title="Create Accounts"
-      text="Create local sign-in credentials for staff, students, and parents. Manager and Developer are the only accounts that can open this creator."
+      text={createAccountPageText}
     >
       <div className="operations-stats create-account-stats">
         <StatCard label="Owner accounts" value={2} icon={<ShieldCheck />} />
@@ -9540,7 +9547,7 @@ function CreateAccountsPage() {
         <div className="student-roster-head">
           <div>
             <h2>Creator</h2>
-            <p>Choose the role, set the username and password, then hand the credentials to the family or staff member.</p>
+            <p>{creatorInstructions}</p>
           </div>
         </div>
         <div className="create-account-mode-tabs" role="group" aria-label="Account type">

@@ -99,7 +99,7 @@ The launch profile also tracks a credential-free `twilio.complianceProfile` hand
 
 Twilio's A2P 10DLC docs state that application-to-person traffic to US users over 10DLC long-code numbers must be registered through A2P 10DLC, with Brand and Campaign information used to identify the sender, consent path, opt-out behavior, help flow, and message purpose. Twilio's toll-free verification docs state that toll-free numbers cannot send SMS to the United States and Canada until toll-free verification is completed and approved.
 
-This app only stores the manager's non-secret readiness record. The production relay must still verify the official Twilio status server-side before live sends, because localStorage and exported manifests are not authoritative compliance records.
+This app stores the manager's non-secret readiness record in Supabase app state for signed-in staging sessions and uses browser storage only for local diagnostic/device preference fallback. The production relay must still verify the official Twilio status server-side before live sends, because client-stored settings and exported manifests are not authoritative compliance records.
 
 ## Manager Live Readiness Panel
 
@@ -500,7 +500,7 @@ export async function verifyTwilioWebhook({ authToken, signature, url, formParam
 - Connect This Device creates a browser PushSubscription using a public VAPID key, Sync Push Subscription posts it to a configured private push server URL with cookie/session credentials included, and Export Push Subscription JSON preserves a credential-free fallback payload for staff/manager server storage. Student and parent profile feeds support the direct sync path with `student` and `guardian` roles.
 - Operations backups include the portable `messagingSetup` handoff record and restore non-secret Twilio/Web Push setup without restoring raw PushSubscription key material.
 - `src/webPushContract.ts` validates server-bound push subscriptions for supported staff, student, and guardian account roles and builds app-scoped `chos-web-push-notification.v1` payloads for private push-server sends.
-- Audience blasts can target students, parents, staff, or everyone with localStorage-backed audit records.
+- Audience blasts can target students, parents, staff, or everyone with Supabase-backed audit records for signed-in staging sessions.
 - Promotion Automation stores future promotional blasts with local send date/time, queues only due promotions through Run Text Automations, and keeps scheduled promotion records plus automation run audit history in operations backups.
 - Event reminder automation can queue family, student, or public event SMS reminders for the next 7 days and dedupes same-day recipient/body work.
 - Run Text Automations queues the local prototype follow-up/reminder/promotional candidates in one manager action and records a run ledger for queued and no-op checks. A production version should move the schedule trigger to a trusted server job or cron worker and use `buildTextAutomationExecutionPlan` with relay attempt records so repeated jobs reserve, replay, or block idempotency keys before Twilio sends.

@@ -1,6 +1,6 @@
 # Platform Inventory
 
-Last updated: 2026-06-17
+Last updated: 2026-06-18
 
 ## GitHub
 
@@ -60,7 +60,7 @@ No raw secret values belong in this repository or in chat. Record item names and
 
 Project boundary: MongTeng uses a separate Supabase project, `mongteng-food-market-ordering-app-staging` / `jqvclzlvrhdcsfhhvekr`. Do not use that ref, URL, keys, migrations, Edge Functions, or seed scripts for Cho's work.
 
-Staging has Supabase Auth profiles, RLS, `account_creation_audit`, `live_chat_messages`, `direct_messages`, `message_logs`, and the retired `manager-create-account` Edge Function. The `twilio_messaging_relay` migration has been applied to staging, creating `sms_consent_records` and `twilio_relay_attempts`, and the hosted `twilio-messaging` Edge Function is deployed with `verify_jwt = false` for Twilio webhooks. Hosted Twilio secrets are not set yet because `supabase secrets set/list --project-ref zfuwbbepsnmmlpgfkmhz` currently returns `403` / `Your account does not have the necessary privileges to access this endpoint`. The supported staging pilot sign-ins are `Manager123` for owner testing and public-staging `Dev123` for developer diagnostics. Individual non-owner staff profiles are not launch scope yet because the current client rejects them at sign-in. The internal Auth email for `Manager123` is `manager123@accounts.chosmartialarts.app`; staging Auth was aligned to the app password on 2026-06-17 and verifies through the real password grant.
+Staging has Supabase Auth profiles, RLS, `account_creation_audit`, `live_chat_messages`, `direct_messages`, `message_logs`, and an active `manager-create-account` Edge Function for Manager123 owner-created staff, student, and parent profiles. No-auth calls return 401, and the function validates the bearer token, Supabase Auth user, owner profile, requested role, and password policy before using the service role internally. The `twilio_messaging_relay` migration has been applied to staging, creating `sms_consent_records` and `twilio_relay_attempts`, and the hosted `twilio-messaging` Edge Function is deployed with `verify_jwt = false` for Twilio webhooks. Hosted Twilio secrets are not set yet because `supabase secrets set/list --project-ref zfuwbbepsnmmlpgfkmhz` currently returns `403` / `Your account does not have the necessary privileges to access this endpoint`. The supported staging pilot sign-ins are `Manager123` for owner testing, manager-created pilot accounts after provisioning, and public-staging `Dev123` for developer diagnostics. `Dev123` cannot create live Supabase accounts because it has no Supabase Auth session. The internal Auth email for `Manager123` is `manager123@accounts.chosmartialarts.app`; staging Auth was aligned to the app password on 2026-06-17 and verifies through the real password grant.
 
 The Xatori Dev Supabase organization is currently on the Free plan. The staging Security Advisor still reports `auth_leaked_password_protection` because Supabase leaked-password protection requires Pro or higher. Until the plan is upgraded and the Auth setting is enabled, the seed script enforces the local 12-character mixed password policy for the owner account.
 
